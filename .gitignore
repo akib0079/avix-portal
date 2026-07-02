@@ -43,3 +43,6 @@ next-env.d.ts
 # local env + uploaded files
 .env
 uploads/
+
+# server backups
+backups/
