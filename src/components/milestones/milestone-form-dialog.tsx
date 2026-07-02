@@ -131,7 +131,9 @@ export function MilestoneFormDialog({
               )}
             />
 
-            <PricingFields form={form} />
+            <PricingFields
+              form={form as unknown as Parameters<typeof PricingFields>[0]["form"]}
+            />
 
             <DialogFooter>
               <Button

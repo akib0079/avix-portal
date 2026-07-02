@@ -1,7 +1,7 @@
 "use client";
 
 import type { UseFormReturn } from "react-hook-form";
-import type { MilestoneInput } from "@/lib/validation/milestone";
+import type { ApprovalPricingInput } from "@/lib/validation/task-request";
 import { usd } from "@/lib/format";
 import { Input } from "@/components/ui/input";
 import {
@@ -19,7 +19,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-export function PricingFields({ form }: { form: UseFormReturn<MilestoneInput> }) {
+// Any form whose values include the pricing fields can pass its form object
+// here (the milestone dialog casts — the shapes are structurally identical).
+export function PricingFields({ form }: { form: UseFormReturn<ApprovalPricingInput> }) {
   const pricingType = form.watch("pricingType");
   const hourlyRate = form.watch("hourlyRate");
   const estimatedHours = form.watch("estimatedHours");
