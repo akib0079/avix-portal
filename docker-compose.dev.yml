@@ -1,0 +1,16 @@
+# Optional: local Postgres via Docker instead of Homebrew.
+#   docker compose -f docker-compose.dev.yml up -d
+services:
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: portal
+      POSTGRES_PASSWORD: portal
+      POSTGRES_DB: portal
+    volumes:
+      - dev_db_data:/var/lib/postgresql/data
+
+volumes:
+  dev_db_data:
