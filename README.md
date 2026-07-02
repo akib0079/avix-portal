@@ -28,6 +28,8 @@ private, real-time view of their project with the ability to request new work.
 
 **Security**
 - better-auth (scrypt hashing, Postgres sessions, login rate limiting)
+- Optional Google sign-in — invite-only preserved: Google signs in accounts
+  the admin created, unknown Google accounts are rejected
 - Every query is scoped in the data-access layer — clients can only ever see
   rows tied to their own account; cross-client access reads as 404
 - Uploads validated by magic bytes (no SVG), stored outside the web root, and

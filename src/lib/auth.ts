@@ -34,6 +34,26 @@ export const auth = betterAuth({
       });
     },
   },
+  socialProviders:
+    process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            // Invite-only portal: Google can sign in EXISTING users but must
+            // never create accounts. Unknown emails are rejected.
+            disableImplicitSignUp: true,
+          },
+        }
+      : undefined,
+  account: {
+    accountLinking: {
+      enabled: true,
+      // Google verifies email ownership, so it may link to the existing
+      // admin-created user with the same address.
+      trustedProviders: ["google"],
+    },
+  },
   user: {
     modelName: "User",
     additionalFields: {

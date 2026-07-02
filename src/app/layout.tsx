@@ -32,7 +32,9 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${bricolage.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      {/* suppressHydrationWarning: browser extensions (e.g. Grammarly) inject
+          attributes into <body> before React hydrates */}
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         {children}
         <Toaster position="top-right" richColors />
       </body>

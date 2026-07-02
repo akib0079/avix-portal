@@ -91,6 +91,35 @@ this resolves.
    in step 5. Sending address: `portal@avixdigital.com` (already the default
    `EMAIL_FROM`).
 
+## 4½. Enable Google sign-in (optional, ~10 min)
+
+The login page shows a **Continue with Google** button once these two env
+vars are set. It's still invite-only: Google can sign in accounts **you
+created**, but unknown Google accounts are rejected.
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com) → create a
+   project (e.g. "Avix Portal").
+2. **APIs & Services → OAuth consent screen**: User type **External**, fill
+   in the app name ("Avix Digital Portal"), your email, and the domain
+   `avixdigital.com`. You don't need to submit for verification for basic
+   sign-in scopes.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+   - Application type: **Web application**
+   - Authorized JavaScript origins:
+     `https://portal.avixdigital.com` (and `http://localhost:3000` for dev)
+   - Authorized redirect URIs:
+     `https://portal.avixdigital.com/api/auth/callback/google`
+     (and `http://localhost:3000/api/auth/callback/google` for dev)
+4. Copy the **Client ID** and **Client secret** into `.env`:
+
+```env
+GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+```
+
+Skip this section entirely if you don't want Google login — the button
+simply won't appear.
+
 ## 5. First deploy (~10 min)
 
 **GitHub deploy key** (lets the VPS pull your private repo, read-only):
