@@ -14,6 +14,7 @@ import { hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import TaskRequestSubmittedEmail from "@/emails/task-request-submitted";
+import TaskRequestReceivedEmail from "@/emails/task-request-received";
 import TaskRequestApprovedEmail from "@/emails/task-request-approved";
 import TaskRequestRejectedEmail from "@/emails/task-request-rejected";
 import { formatPricing } from "@/lib/format";
@@ -76,6 +77,21 @@ export async function submitTaskRequest(
       devHint: `task request "${data.title}" → ${adminEmail}`,
     });
   }
+
+  // Automated confirmation back to the client.
+  await sendEmail({
+    to: user.email,
+    subject: `We received your request — ${data.title}`,
+    react: (
+      <TaskRequestReceivedEmail
+        firstName={user.name.split(" ")[0] || "there"}
+        title={data.title}
+        projectName={project.projectName}
+        portalUrl={`${appUrl()}/portal/requests`}
+      />
+    ),
+    devHint: `request confirmation → ${user.email}`,
+  });
 
   revalidatePath("/portal/requests");
   revalidatePath("/admin/task-requests");

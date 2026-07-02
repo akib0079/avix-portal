@@ -4,7 +4,50 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
+import {
+  sendMilestoneCompletedEmail,
+  sendMilestoneUpdatedEmail,
+} from "@/lib/email/milestone-emails";
 import type { Prisma, MilestoneStatus } from "@prisma/client";
+
+const clientInclude = {
+  project: {
+    select: {
+      id: true,
+      projectName: true,
+      client: {
+        select: { id: true, firstName: true, email: true, status: true },
+      },
+    },
+  },
+} as const;
+
+/** Active client of the milestone's project, or null for independent projects. */
+function activeClient(milestone: {
+  project: { client: { id: string; firstName: string; email: string; status: string } | null };
+}) {
+  const client = milestone.project.client;
+  return client && client.status === "ACTIVE" ? client : null;
+}
+
+/**
+ * JSON.stringify with recursively sorted object keys. Postgres jsonb does not
+ * preserve key order, so a naive stringify comparison of stored vs incoming
+ * Tiptap docs reports false differences.
+ */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -61,19 +104,59 @@ export async function updateMilestone(
   }
   const data = parsed.data;
 
-  const milestone = await prisma.milestone.findUnique({ where: { id } });
+  const milestone = await prisma.milestone.findUnique({
+    where: { id },
+    include: clientInclude,
+  });
   if (!milestone) return { ok: false, error: "Milestone not found." };
 
+  const pricing = pricingData(data);
   await prisma.milestone.update({
     where: { id },
     data: {
       title: data.title,
       description: (data.description as Prisma.InputJsonValue) ?? undefined,
-      ...pricingData(data),
+      ...pricing,
     },
   });
 
+  // Automated "task details updated" email — only when something actually
+  // changed, so re-saving an unchanged dialog doesn't spam the client.
+  // description === undefined means "not touched" (Prisma skips the column).
+  const descriptionChanged =
+    data.description !== undefined &&
+    stableStringify(milestone.description ?? null) !==
+      stableStringify(data.description ?? null);
+  const changed =
+    milestone.title !== data.title ||
+    descriptionChanged ||
+    milestone.pricingType !== pricing.pricingType ||
+    Number(milestone.hourlyRate ?? 0) !== Number(pricing.hourlyRate ?? 0) ||
+    Number(milestone.estimatedHours ?? 0) !== Number(pricing.estimatedHours ?? 0) ||
+    Number(milestone.fixedPrice ?? 0) !== Number(pricing.fixedPrice ?? 0);
+
+  const client = activeClient(milestone);
+  if (changed && client) {
+    await prisma.notification.create({
+      data: {
+        userId: client.id,
+        type: "MILESTONE_UPDATED",
+        title: `Task updated: ${data.title}`,
+        body: `on ${milestone.project.projectName}`,
+        link: `/portal/projects/${milestone.projectId}`,
+      },
+    });
+    await sendMilestoneUpdatedEmail({
+      to: client.email,
+      firstName: client.firstName,
+      milestoneTitle: data.title,
+      projectName: milestone.project.projectName,
+      projectId: milestone.projectId,
+    });
+  }
+
   revalidatePath(`/admin/projects/${milestone.projectId}`);
+  revalidatePath(`/portal/projects/${milestone.projectId}`);
   return { ok: true };
 }
 
@@ -82,11 +165,45 @@ export async function setMilestoneStatus(
   status: MilestoneStatus,
 ): Promise<ActionResult> {
   await requireAdmin();
-  const milestone = await prisma.milestone.findUnique({ where: { id } });
+  const milestone = await prisma.milestone.findUnique({
+    where: { id },
+    include: clientInclude,
+  });
   if (!milestone) return { ok: false, error: "Milestone not found." };
 
   await prisma.milestone.update({ where: { id }, data: { status } });
+
+  // Automated "task done" response — only on the transition into COMPLETED.
+  const client = activeClient(milestone);
+  if (status === "COMPLETED" && milestone.status !== "COMPLETED" && client) {
+    const [done, total] = await Promise.all([
+      prisma.milestone.count({
+        where: { projectId: milestone.projectId, status: "COMPLETED" },
+      }),
+      prisma.milestone.count({ where: { projectId: milestone.projectId } }),
+    ]);
+    await prisma.notification.create({
+      data: {
+        userId: client.id,
+        type: "MILESTONE_COMPLETED",
+        title: `Completed: ${milestone.title}`,
+        body: `${done} of ${total} milestones done on ${milestone.project.projectName}`,
+        link: `/portal/projects/${milestone.projectId}`,
+      },
+    });
+    await sendMilestoneCompletedEmail({
+      to: client.email,
+      firstName: client.firstName,
+      milestoneTitle: milestone.title,
+      projectName: milestone.project.projectName,
+      projectId: milestone.projectId,
+      done,
+      total,
+    });
+  }
+
   revalidatePath(`/admin/projects/${milestone.projectId}`);
+  revalidatePath(`/portal/projects/${milestone.projectId}`);
   return { ok: true };
 }
 
