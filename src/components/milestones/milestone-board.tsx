@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -183,8 +183,12 @@ export function MilestoneBoard({
   const [deleting, setDeleting] = useState<MilestoneView | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Keep local order in sync when the server list changes.
-  useEffect(() => setItems(milestones), [milestones]);
+  // Keep local order in sync when the server list changes (adjust-during-render).
+  const [prevMilestones, setPrevMilestones] = useState(milestones);
+  if (milestones !== prevMilestones) {
+    setPrevMilestones(milestones);
+    setItems(milestones);
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
