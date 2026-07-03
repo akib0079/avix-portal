@@ -51,6 +51,22 @@ export async function GET() {
         prismaError: (e.message ?? "").split("\n").filter(Boolean).pop()?.slice(0, 200) ?? null,
         rawPg: raw,
         dbConfig: maskedDbUrl(),
+        // Compares DATABASE_URL vs DIRECT_URL credentials without exposing
+        // them — detects hand-edit mangling of one but not the other.
+        credCheck: (() => {
+          try {
+            const a = new URL(process.env.DATABASE_URL ?? "");
+            const b = new URL(process.env.DIRECT_URL ?? "");
+            return {
+              samePassword: a.password === b.password,
+              sameUser: a.username === b.username,
+              dbPwLen: a.password.length,
+              directPwLen: b.password.length,
+            };
+          } catch {
+            return null;
+          }
+        })(),
         env: {
           DATABASE_URL: Boolean(process.env.DATABASE_URL),
           BETTER_AUTH_SECRET: Boolean(process.env.BETTER_AUTH_SECRET),
