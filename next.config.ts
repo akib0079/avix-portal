@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // standalone is for the Docker/VPS image; Hostinger web apps run `next start`
+  output: process.env.DOCKER_BUILD ? "standalone" : undefined,
   async headers() {
     return [
       {

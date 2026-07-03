@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
-import { resolveUpload, fileStream } from "@/lib/uploads";
+import { openUpload } from "@/lib/uploads";
 
 export async function GET(
   _request: Request,
@@ -23,11 +23,11 @@ export async function GET(
   });
   if (!invoice?.pdfPath) return new NextResponse(null, { status: 404 });
 
-  const filePath = resolveUpload("invoices", invoice.pdfPath);
-  if (!filePath) return new NextResponse(null, { status: 404 });
+  const data = await openUpload("invoices", invoice.pdfPath);
+  if (!data) return new NextResponse(null, { status: 404 });
 
   const downloadName = invoice.pdfOriginalName ?? `${invoice.invoiceNumber}.pdf`;
-  return new NextResponse(fileStream(filePath), {
+  return new NextResponse(new Uint8Array(data), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${downloadName.replace(/[^\w.\- ]/g, "_")}"`,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
-import { resolveUpload, fileStream } from "@/lib/uploads";
+import { openUpload } from "@/lib/uploads";
 
 export async function GET(
   _request: Request,
@@ -28,10 +28,10 @@ export async function GET(
     record.uploader.role === "ADMIN";
   if (!allowed) return new NextResponse(null, { status: 404 });
 
-  const filePath = resolveUpload("images", fileName);
-  if (!filePath) return new NextResponse(null, { status: 404 });
+  const data = await openUpload("images", fileName);
+  if (!data) return new NextResponse(null, { status: 404 });
 
-  return new NextResponse(fileStream(filePath), {
+  return new NextResponse(new Uint8Array(data), {
     headers: {
       "Content-Type": record.mimeType,
       "Cache-Control": "private, max-age=3600",

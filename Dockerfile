@@ -10,6 +10,7 @@ COPY prisma ./prisma
 RUN npm ci
 
 COPY . .
+ENV DOCKER_BUILD=1
 RUN npx prisma generate && npm run build
 
 # ---- Runtime stage ----

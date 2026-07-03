@@ -5,6 +5,9 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Used only by prisma migrate. On Supabase this must be the direct
+  // (non-pooled) connection string; locally it's the same as DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
