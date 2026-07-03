@@ -93,10 +93,28 @@ local uploads. Hostinger installs dependencies and builds from it.
 - [ ] Client can't open `/admin` (404)
 - [ ] Supabase dashboard → Database → Backups: free tier keeps daily backups
 
-## Trade-offs vs the VPS path (for honesty)
+## 5. Keep-alive + uptime alerts (kills the free-tier pause, ~5 min)
 
-- Two dashboards (Hostinger + Supabase) instead of one server
-- Free-tier Supabase pauses projects after ~1 week of **zero** traffic
-  (a visit wakes it; paid tier removes this)
-- Shared CPU limits — fine for a client portal, not for heavy traffic
+Supabase's free tier pauses projects after ~1 week of zero activity. The app
+ships a heartbeat endpoint at `/api/health` that touches the database — ping
+it on a schedule and the project simply never idles:
+
+1. Sign up free at [uptimerobot.com](https://uptimerobot.com) →
+   **Add New Monitor** → type **HTTP(s)**.
+2. URL: `https://portal.avixdigital.com/api/health` — interval **5 minutes**.
+3. Add your email as the alert contact.
+
+You get two things at once: the database never pauses, and you're emailed
+within minutes if the portal ever goes down. (Alternative without a third
+party: hPanel → Advanced → **Cron Jobs** →
+`curl -fsS https://portal.avixdigital.com/api/health > /dev/null`, every 5
+minutes.)
+
+## Trade-offs vs the VPS path — and their fixes
+
+- ~~Free-tier Supabase pauses when idle~~ → eliminated by the keep-alive above
+- Two dashboards (Hostinger + Supabase) → day-to-day you only use the portal;
+  Supabase needs zero maintenance and keeps its own daily database backups
+- Shared CPU limits → a client portal's traffic is tiny; if you ever outgrow
+  it, the same repo deploys to a VPS via DEPLOYMENT.md with no code changes
 - Upside: $0 extra cost, no server maintenance, auto-deploys from GitHub
