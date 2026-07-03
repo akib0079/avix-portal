@@ -46,3 +46,4 @@ uploads/
 
 # server backups
 backups/
+.claude/scheduled_tasks.lock
