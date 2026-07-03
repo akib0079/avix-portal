@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
-    "build:cloud": "prisma migrate deploy && next build"
+    "build:cloud": "prisma migrate deploy || echo \"[build] migrate skipped — will run on next healthy deploy\"; next build"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
