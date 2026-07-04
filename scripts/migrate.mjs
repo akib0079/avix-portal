@@ -1,7 +1,11 @@
-// Runs `prisma migrate deploy` using the persistent secrets file so migrations
-// apply with the correct DATABASE_URL/DIRECT_URL even when the host's build
-// environment injects stale values. Mirrors src/lib/load-persistent-env.ts.
-import { readFileSync, existsSync } from "fs";
+// Build-time step for the fragile host:
+//  1. Reads the persistent secrets file (~/portal-secrets.env) so migrations
+//     apply with the correct DATABASE_URL/DIRECT_URL.
+//  2. Writes .env.production.local + .env.local into the app dir so the running
+//     Next.js server loads the correct DB URL at runtime — this is the ONLY
+//     mechanism that reliably overrides Hostinger's (corrupted) panel env,
+//     which LiteSpeed injects and which no server-side patch could beat.
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import os from "os";
 import path from "path";
 import { execSync } from "child_process";
@@ -12,11 +16,14 @@ const candidates = [
   path.join(process.cwd(), "..", "public_html", "portal-secrets.env"),
 ].filter(Boolean);
 
+let secretsFileContents = null;
+
 for (const file of candidates) {
   try {
     if (!existsSync(file)) continue;
+    const contents = readFileSync(file, "utf8");
     let applied = 0;
-    for (const rawLine of readFileSync(file, "utf8").split(/\r?\n/)) {
+    for (const rawLine of contents.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) continue;
       const eq = line.indexOf("=");
@@ -34,11 +41,27 @@ for (const file of candidates) {
       applied++;
     }
     if (applied > 0) {
+      secretsFileContents = contents;
       console.log(`[migrate] applied ${applied} secrets from ${file}`);
       break;
     }
   } catch (err) {
     console.warn(`[migrate] could not read ${file}: ${err.message}`);
+  }
+}
+
+// Persist the DB env for the runtime server (survives this deploy; regenerated
+// on every deploy so it never goes stale).
+if (secretsFileContents) {
+  try {
+    for (const envFile of [".env.production.local", ".env.local"]) {
+      writeFileSync(path.join(process.cwd(), envFile), secretsFileContents, {
+        mode: 0o600,
+      });
+    }
+    console.log("[migrate] wrote .env.production.local + .env.local for runtime");
+  } catch (err) {
+    console.warn(`[migrate] could not write runtime env files: ${err.message}`);
   }
 }
 
