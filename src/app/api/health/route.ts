@@ -1,78 +1,22 @@
 import { NextResponse } from "next/server";
-import { Client } from "pg";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Health check + keep-alive + sanitized self-diagnostics.
- * On failure it reports the runtime DB configuration (password masked) and
- * the raw driver error, so platform issues are debuggable without shell
- * access. Never exposes secret values.
+ * Health check + keep-alive. An external monitor (e.g. UptimeRobot) pings
+ * this every few minutes, which (a) alerts on downtime and (b) keeps the
+ * database active so free-tier hosts never pause it for inactivity.
+ * No auth: it reveals nothing but liveness.
  */
-
-function maskedDbUrl(): string {
-  const url = process.env.DATABASE_URL ?? "(unset)";
-  return url.replace(/:\/\/([^:]+):[^@]*@/, "://$1:****@");
-}
-
-async function rawPgTest() {
-  const connectionString = process.env.DATABASE_URL ?? "";
-  const needsSsl = /supabase\.(co|com)/i.test(connectionString);
-  const client = new Client({
-    connectionString,
-    ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
-    connectionTimeoutMillis: 8000,
-  });
-  try {
-    await client.connect();
-    await client.query("SELECT 1");
-    await client.end();
-    return { ok: true as const };
-  } catch (err) {
-    await client.end().catch(() => {});
-    return { ok: false as const, error: (err as Error).message.slice(0, 250) };
-  }
-}
-
 export async function GET() {
   try {
     await prisma.$queryRaw`SELECT 1`;
     return NextResponse.json(
-      { ok: true, driver: "pg-adapter" },
+      { ok: true },
       { headers: { "Cache-Control": "no-store" } },
     );
-  } catch (err) {
-    const e = err as { code?: string; name?: string; message?: string };
-    const raw = await rawPgTest();
+  } catch {
     return NextResponse.json(
-      {
-        ok: false,
-        driver: "pg-adapter",
-        code: e.code ?? e.name ?? "unknown",
-        prismaError: (e.message ?? "").split("\n").filter(Boolean).pop()?.slice(0, 200) ?? null,
-        rawPg: raw,
-        dbConfig: maskedDbUrl(),
-        // Compares DATABASE_URL vs DIRECT_URL credentials without exposing
-        // them — detects hand-edit mangling of one but not the other.
-        credCheck: (() => {
-          try {
-            const a = new URL(process.env.DATABASE_URL ?? "");
-            const b = new URL(process.env.DIRECT_URL ?? "");
-            return {
-              samePassword: a.password === b.password,
-              sameUser: a.username === b.username,
-              dbPwLen: a.password.length,
-              directPwLen: b.password.length,
-            };
-          } catch {
-            return null;
-          }
-        })(),
-        env: {
-          DATABASE_URL: Boolean(process.env.DATABASE_URL),
-          BETTER_AUTH_SECRET: Boolean(process.env.BETTER_AUTH_SECRET),
-          SUPABASE_URL: Boolean(process.env.SUPABASE_URL),
-        },
-      },
+      { ok: false },
       { status: 503, headers: { "Cache-Control": "no-store" } },
     );
   }
