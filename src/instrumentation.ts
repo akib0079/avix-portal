@@ -3,7 +3,8 @@ export async function register() {
 
   // Apply persistent secrets before anything reads process.env (durable env
   // on hosts whose launcher injects stale values). Safe no-op locally.
-  await import("@/lib/load-persistent-env");
+  const { applyPersistentEnv } = await import("@/lib/load-persistent-env");
+  applyPersistentEnv();
 
   const { prisma } = await import("@/lib/prisma");
 

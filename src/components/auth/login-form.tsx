@@ -7,7 +7,8 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Loader2, Eye, EyeOff, Mail, Lock, AlertCircle } from "lucide-react";
 
 function GoogleIcon() {
   return (
@@ -37,6 +38,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(
     searchParams.get("error")
       ? "That Google account doesn't have portal access. Sign in with your invited email, or contact Avix Digital."
@@ -71,7 +73,6 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
       callbackURL: "/",
       errorCallbackURL: "/login",
     });
-    // On success the browser redirects to Google; we only get here on error.
     if (error) {
       setGoogleLoading(false);
       setError(error.message ?? "Google sign-in failed. Try again.");
@@ -80,44 +81,55 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
   return (
     <div>
-      <h2 className="font-heading text-2xl font-bold">Sign in</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Welcome back — enter your portal credentials.
-      </p>
+      <div className="mb-8">
+        <h2 className="font-heading text-3xl font-bold tracking-tight">
+          Welcome back
+        </h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          Sign in to your Avix Digital portal.
+        </p>
+      </div>
 
       {googleEnabled && (
         <>
           <Button
             type="button"
             variant="outline"
-            className="mt-8 w-full"
+            className="h-11 w-full"
             onClick={signInWithGoogle}
             disabled={googleLoading || loading}
           >
             {googleLoading ? <Loader2 className="animate-spin" /> : <GoogleIcon />}
             Continue with Google
           </Button>
-          <div className="mt-6 flex items-center gap-3">
+          <div className="my-6 flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
-            <span className="text-xs text-muted-foreground">or with email</span>
+            <span className="text-xs font-medium text-muted-foreground">
+              or with email
+            </span>
             <div className="h-px flex-1 bg-border" />
           </div>
         </>
       )}
 
-      <form onSubmit={onSubmit} className={googleEnabled ? "mt-6 space-y-5" : "mt-8 space-y-5"}>
+      <form onSubmit={onSubmit} className="space-y-5">
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            autoComplete="email"
-            placeholder="you@company.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <Mail className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="h-11 pl-9"
+            />
+          </div>
         </div>
+
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Password</Label>
@@ -128,29 +140,51 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
               Forgot password?
             </Link>
           </div>
-          <Input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <Lock className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="current-password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="h-11 px-9"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {showPassword ? (
+                <EyeOff className="size-4" />
+              ) : (
+                <Eye className="size-4" />
+              )}
+            </button>
+          </div>
         </div>
 
         {error && (
-          <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
+          <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <span>{error}</span>
           </p>
         )}
 
-        <Button type="submit" className="w-full" disabled={loading || googleLoading}>
+        <Button
+          type="submit"
+          className={cn("h-11 w-full text-[15px]")}
+          disabled={loading || googleLoading}
+        >
           {loading && <Loader2 className="animate-spin" />}
           Sign in
         </Button>
       </form>
 
-      <p className="mt-6 text-center text-xs text-muted-foreground">
+      <p className="mt-8 text-center text-xs text-muted-foreground">
         Client accounts are created by Avix Digital. Need access?{" "}
         <a
           href="mailto:avixdigitalagency@gmail.com"
