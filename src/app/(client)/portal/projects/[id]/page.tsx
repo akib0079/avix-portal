@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getMyProject, listMyProjectOptions } from "@/lib/dal/portal";
+import { getProjectMessages } from "@/lib/dal/messages";
 import { ClientProjectTimeline } from "@/components/projects/client-project-timeline";
+import { MessageThread } from "@/components/messages/message-thread";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
 import { ProjectProgress } from "@/components/projects/project-progress";
 import { ProjectStatusBadge } from "@/components/status-badges";
@@ -24,6 +26,7 @@ export default async function MyProjectPage({
 
   const milestones = project.milestones.map(toMilestoneView);
   const options = await listMyProjectOptions();
+  const messages = await getProjectMessages(project.id);
 
   return (
     <div>
@@ -63,10 +66,23 @@ export default async function MyProjectPage({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="mb-6">
         <CardContent className="pt-6">
           <h2 className="font-heading mb-6 text-lg font-semibold">Project timeline</h2>
           <ClientProjectTimeline milestones={milestones} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-6">
+          <h2 className="font-heading mb-4 text-lg font-semibold">
+            Messages with Avix Digital
+          </h2>
+          <MessageThread
+            projectId={project.id}
+            viewerRole="CLIENT"
+            initialMessages={messages}
+          />
         </CardContent>
       </Card>
     </div>

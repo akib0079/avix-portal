@@ -57,6 +57,14 @@ export async function listMyInvoices() {
   });
 }
 
+export async function getMyInvoice(id: string) {
+  const user = await requireClient();
+  return prisma.invoice.findFirst({
+    where: { id, clientId: user.id },
+    include: { project: { select: { id: true, projectName: true } } },
+  });
+}
+
 export async function listMyProjectOptions() {
   const user = await requireClient();
   return prisma.project.findMany({

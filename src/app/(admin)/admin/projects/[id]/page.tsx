@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProject } from "@/lib/dal/projects";
+import { getProjectMessages } from "@/lib/dal/messages";
 import { MilestoneBoard } from "@/components/milestones/milestone-board";
+import { MessageThread } from "@/components/messages/message-thread";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
 import { ProjectStatusBadge, PriorityBadge, InvoiceStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
@@ -36,6 +38,7 @@ export default async function ProjectDetailPage({
 
   const milestones = project.milestones.map(toMilestoneView);
   const showDates = project.startDate || project.dueDate;
+  const messages = await getProjectMessages(project.id);
 
   return (
     <div>
@@ -142,6 +145,30 @@ export default async function ProjectDetailPage({
                 ))}
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">
+            Messages
+            {project.client
+              ? ` with ${project.client.firstName} ${project.client.lastName}`
+              : ""}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {project.client ? (
+            <MessageThread
+              projectId={project.id}
+              viewerRole="ADMIN"
+              initialMessages={messages}
+            />
+          ) : (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Assign a client to this project to start a conversation.
+            </p>
           )}
         </CardContent>
       </Card>

@@ -176,7 +176,19 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
   });
   if (!invoice) return { ok: false, error: "Invoice not found." };
 
-  const portalUrl = `${process.env.NEXT_PUBLIC_APP_URL}/portal/invoices`;
+  const accounts = await prisma.paymentAccount.findMany({
+    where: { isActive: true },
+    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+  });
+  const paymentAccounts = accounts.map((a) => ({
+    title: a.title,
+    holderName: a.holderName,
+    bankName: a.bankName,
+    bankNote: a.bankNote,
+    fields: (a.fields as { label: string; value: string }[]) ?? [],
+  }));
+
+  const portalUrl = `${process.env.NEXT_PUBLIC_APP_URL}/portal/invoices/${invoice.id}`;
   const sent = await sendEmail({
     to: invoice.client.email,
     subject: `Invoice ${invoice.invoiceNumber} from Avix Digital`,
@@ -187,6 +199,7 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
         amount={usd.format(Number(invoice.amount))}
         projectName={invoice.project?.projectName}
         portalUrl={portalUrl}
+        paymentAccounts={paymentAccounts}
       />
     ),
     devHint: `invoice ${invoice.invoiceNumber} → ${invoice.client.email}`,
@@ -210,7 +223,7 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
         type: "INVOICE_SENT",
         title: `Invoice ${invoice.invoiceNumber} is ready`,
         body: `${usd.format(Number(invoice.amount))}${invoice.project ? ` · ${invoice.project.projectName}` : ""}`,
-        link: "/portal/invoices",
+        link: `/portal/invoices/${invoice.id}`,
       },
     }),
   ]);

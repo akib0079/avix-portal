@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { NotificationBell } from "@/components/layout/notification-bell";
 import {
   LayoutGrid,
   Users,
@@ -19,6 +20,8 @@ import {
   LogOut,
   Menu,
   MessageSquarePlus,
+  Settings,
+  CreditCard,
 } from "lucide-react";
 
 type NavItem = {
@@ -35,12 +38,14 @@ const adminNav: NavItem[] = [
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
+  { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
 const clientNav: NavItem[] = [
   { href: "/portal", label: "Overview", icon: LayoutGrid },
   { href: "/portal/projects", label: "My Projects", icon: FolderKanban },
   { href: "/portal/invoices", label: "Invoices", icon: FileText },
+  { href: "/portal/payment", label: "How to Pay", icon: CreditCard },
   { href: "/portal/requests", label: "Task Requests", icon: MessageSquarePlus },
 ];
 
@@ -207,10 +212,17 @@ export function AppShell({
           height={28}
           className="brightness-0 invert"
         />
+        <div className="ml-auto">
+          <NotificationBell tone="dark" />
+        </div>
       </div>
 
       {/* Main content */}
       <main className="min-w-0 flex-1 pt-14 lg:pt-0 lg:pl-60">
+        {/* Desktop topbar */}
+        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
+          <NotificationBell tone="light" />
+        </div>
         <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
           {children}
         </div>

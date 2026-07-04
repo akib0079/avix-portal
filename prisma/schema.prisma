@@ -82,6 +82,18 @@ enum NotificationType {
   INVOICE_SENT
   MILESTONE_COMPLETED
   MILESTONE_UPDATED
+  MESSAGE_RECEIVED
+}
+
+enum PaymentRegion {
+  US_ACH
+  INTERNATIONAL_SWIFT
+  EU_SEPA
+}
+
+enum MessageSenderRole {
+  ADMIN
+  CLIENT
 }
 
 model User {
@@ -106,6 +118,7 @@ model User {
   taskRequests  TaskRequest[]
   notifications Notification[]
   imageUploads  ImageUpload[]
+  messages      Message[]
 
   @@index([role, status])
   @@map("users")
@@ -176,6 +189,7 @@ model Project {
   milestones   Milestone[]
   invoices     Invoice[]
   taskRequests TaskRequest[]
+  messages     Message[]
 
   @@index([clientId])
   @@index([status])
@@ -282,4 +296,42 @@ model Counter {
   value Int    @default(0)
 
   @@map("counters")
+}
+
+/// Bank-transfer payment accounts shown to clients (admin-managed). The
+/// `fields` JSON is an ordered [{label, value}] list so each region can carry
+/// its own set (ACH routing/account vs IBAN/SWIFT vs IBAN/sort-code).
+model PaymentAccount {
+  id         String        @id @default(cuid())
+  title      String
+  region     PaymentRegion
+  holderName String
+  bankName   String
+  bankNote   String?
+  fields     Json
+  note       String?
+  isActive   Boolean       @default(true)
+  position   Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([isActive, position])
+  @@map("payment_accounts")
+}
+
+/// A message in a per-project thread between the agency (admin) and the client.
+model Message {
+  id             String            @id @default(cuid())
+  projectId      String
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderRole     MessageSenderRole
+  body           Json
+  readByAdminAt  DateTime?
+  readByClientAt DateTime?
+  createdAt      DateTime          @default(now())
+
+  @@index([projectId, createdAt])
+  @@map("messages")
 }
