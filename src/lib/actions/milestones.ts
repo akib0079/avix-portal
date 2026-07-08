@@ -4,10 +4,6 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
-import {
-  sendMilestoneCompletedEmail,
-  sendMilestoneUpdatedEmail,
-} from "@/lib/email/milestone-emails";
 import type { Prisma, MilestoneStatus } from "@prisma/client";
 
 const clientInclude = {
@@ -135,6 +131,8 @@ export async function updateMilestone(
     Number(milestone.estimatedHours ?? 0) !== Number(pricing.estimatedHours ?? 0) ||
     Number(milestone.fixedPrice ?? 0) !== Number(pricing.fixedPrice ?? 0);
 
+  // In-app notification only (no email) — clients found per-milestone emails
+  // noisy, so milestone changes surface via the notification bell instead.
   const client = activeClient(milestone);
   if (changed && client) {
     await prisma.notification.create({
@@ -145,13 +143,6 @@ export async function updateMilestone(
         body: `on ${milestone.project.projectName}`,
         link: `/portal/projects/${milestone.projectId}`,
       },
-    });
-    await sendMilestoneUpdatedEmail({
-      to: client.email,
-      firstName: client.firstName,
-      milestoneTitle: data.title,
-      projectName: milestone.project.projectName,
-      projectId: milestone.projectId,
     });
   }
 
@@ -173,7 +164,8 @@ export async function setMilestoneStatus(
 
   await prisma.milestone.update({ where: { id }, data: { status } });
 
-  // Automated "task done" response — only on the transition into COMPLETED.
+  // In-app notification only (no email) on the transition into COMPLETED —
+  // progress shows in the notification bell; no per-milestone emails.
   const client = activeClient(milestone);
   if (status === "COMPLETED" && milestone.status !== "COMPLETED" && client) {
     const [done, total] = await Promise.all([
@@ -190,15 +182,6 @@ export async function setMilestoneStatus(
         body: `${done} of ${total} milestones done on ${milestone.project.projectName}`,
         link: `/portal/projects/${milestone.projectId}`,
       },
-    });
-    await sendMilestoneCompletedEmail({
-      to: client.email,
-      firstName: client.firstName,
-      milestoneTitle: milestone.title,
-      projectName: milestone.project.projectName,
-      projectId: milestone.projectId,
-      done,
-      total,
     });
   }
 

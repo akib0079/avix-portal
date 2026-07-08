@@ -7,11 +7,10 @@ import { messageSchema, type MessageInput } from "@/lib/validation/message";
 import { hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { sendEmail } from "@/lib/email/resend";
 import MessageReceivedEmail from "@/emails/message-received";
+import { appUrl } from "@/lib/app-url";
 import type { Prisma } from "@prisma/client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
-
-const appUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 /** Flattens Tiptap JSON to a short plain-text preview. */
 function toPreview(doc: unknown, max = 140): string {

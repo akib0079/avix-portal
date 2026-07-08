@@ -10,6 +10,7 @@ import {
   Text,
 } from "@react-email/components";
 import type { ReactNode } from "react";
+import { appUrl as getAppUrl } from "@/lib/app-url";
 
 export const brand = {
   orange: "#F65D0B",
@@ -19,7 +20,7 @@ export const brand = {
   bg: "#F8FAFC",
 };
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const appUrl = getAppUrl();
 
 export function EmailShell({
   preview,

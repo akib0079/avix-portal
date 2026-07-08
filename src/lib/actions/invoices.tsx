@@ -9,6 +9,7 @@ import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { sendEmail } from "@/lib/email/resend";
 import InvoiceSentEmail from "@/emails/invoice-sent";
 import { usd } from "@/lib/format";
+import { appUrl } from "@/lib/app-url";
 import type { InvoiceStatus } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
@@ -188,7 +189,7 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
     fields: (a.fields as { label: string; value: string }[]) ?? [],
   }));
 
-  const portalUrl = `${process.env.NEXT_PUBLIC_APP_URL}/portal/invoices/${invoice.id}`;
+  const portalUrl = `${appUrl()}/portal/invoices/${invoice.id}`;
   const sent = await sendEmail({
     to: invoice.client.email,
     subject: `Invoice ${invoice.invoiceNumber} from Avix Digital`,

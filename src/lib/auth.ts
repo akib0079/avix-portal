@@ -5,6 +5,7 @@ import { nextCookies } from "better-auth/next-js";
 import { APIError } from "better-auth/api";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordLinkEmail } from "@/lib/email/auth-emails";
+import { appUrl } from "@/lib/app-url";
 
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL,
@@ -18,7 +19,7 @@ export const auth = betterAuth({
     // A user who has never completed their invite has emailVerified=false,
     // so they get the welcome template; everyone else gets the reset one.
     sendResetPassword: async ({ user, token }) => {
-      const url = `${process.env.NEXT_PUBLIC_APP_URL}/reset-password?token=${token}`;
+      const url = `${appUrl()}/reset-password?token=${token}`;
       await sendPasswordLinkEmail({
         to: user.email,
         name: user.name,

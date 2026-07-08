@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { projectSchema, type ProjectInput } from "@/lib/validation/project";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
+import { sendProjectCreatedEmail } from "@/lib/email/project-emails";
+import { projectTypeLabels } from "@/lib/format";
 import type { Prisma } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
@@ -60,6 +62,25 @@ export async function createProject(
       },
     },
   });
+
+  // Send exactly ONE email to the client when their project is created.
+  // Milestones (auto-populated + later edits) intentionally do NOT email —
+  // they surface only via the in-app notification bell to avoid inbox spam.
+  if (clientId) {
+    const client = await prisma.user.findUnique({
+      where: { id: clientId },
+      select: { email: true, firstName: true, status: true },
+    });
+    if (client && client.status === "ACTIVE") {
+      await sendProjectCreatedEmail({
+        to: client.email,
+        firstName: client.firstName,
+        projectName: project.projectName,
+        projectType: projectTypeLabels[project.type],
+        projectId: project.id,
+      });
+    }
+  }
 
   revalidatePath("/admin/projects");
   revalidatePath("/admin");

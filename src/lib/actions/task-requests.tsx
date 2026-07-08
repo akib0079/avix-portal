@@ -22,7 +22,7 @@ import type { Prisma } from "@prisma/client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-const appUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+import { appUrl } from "@/lib/app-url";
 
 export async function submitTaskRequest(
   input: TaskRequestInput,
