@@ -40,13 +40,32 @@ export function MessageThread({
 
   async function onSend() {
     if (!draft) return;
-    setSending(true);
-    const result = await sendMessage({ projectId, body: draft });
-    setSending(false);
-    if (!result.ok) return void toast.error(result.error);
+    const body = draft;
+    // Optimistic: show the message and clear the composer immediately;
+    // the server round-trip confirms (or reverts) in the background.
+    const optimistic: MessageView = {
+      id: `optimistic-${Date.now()}`,
+      senderId: "me",
+      senderRole: viewerRole,
+      senderName: "You",
+      body,
+      createdAt: new Date().toISOString(),
+    };
     setDraft(null);
     setResetKey((k) => k + 1);
-    mutate();
+    setSending(true);
+    mutate(
+      (current) => ({ messages: [...(current?.messages ?? messages), optimistic] }),
+      { revalidate: false },
+    );
+    const result = await sendMessage({ projectId, body });
+    setSending(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      setDraft(body); // restore the unsent draft
+      setResetKey((k) => k + 1);
+    }
+    mutate(); // reconcile with the server either way
     router.refresh();
   }
 

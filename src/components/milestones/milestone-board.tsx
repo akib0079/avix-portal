@@ -69,6 +69,7 @@ function SortableRow({
   onEdit,
   onDelete,
   onLogTime,
+  onStatusChange,
 }: {
   milestone: MilestoneView;
   index: number;
@@ -76,8 +77,8 @@ function SortableRow({
   onEdit: () => void;
   onDelete: () => void;
   onLogTime: () => void;
+  onStatusChange: (status: MilestoneStatus) => void;
 }) {
-  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: milestone.id });
@@ -89,12 +90,6 @@ function SortableRow({
     billingType === "MILESTONE" &&
     milestone.pricingType === "HOURLY" &&
     milestone.estimatedHours != null;
-
-  async function changeStatus(status: MilestoneStatus) {
-    const result = await setMilestoneStatus(milestone.id, status);
-    if (!result.ok) return void toast.error(result.error);
-    router.refresh();
-  }
 
   return (
     <div
@@ -129,18 +124,13 @@ function SortableRow({
               <BadgeDollarSign className="size-3.5" /> {pricing}
             </p>
           )}
-          <button
-            type="button"
-            onClick={onLogTime}
-            className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <Clock className="size-3.5" />
-            {milestone.loggedHours > 0
-              ? `${formatHours(milestone.loggedHours)} logged${
-                  showEstimate ? ` of ${formatHours(milestone.estimatedHours!)} est` : ""
-                }`
-              : "Log time"}
-          </button>
+          {milestone.loggedHours > 0 && (
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="size-3.5" />
+              {formatHours(milestone.loggedHours)} logged
+              {showEstimate ? ` of ${formatHours(milestone.estimatedHours!)} est` : ""}
+            </p>
+          )}
           {hasDescription && (
             <button
               type="button"
@@ -154,9 +144,28 @@ function SortableRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="hidden text-xs sm:flex"
+            onClick={onLogTime}
+            title="Log time on this milestone"
+          >
+            <Clock className="size-3.5" />
+            {milestone.loggedHours > 0 ? formatHours(milestone.loggedHours) : "Log time"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 sm:hidden"
+            onClick={onLogTime}
+          >
+            <Clock className="size-4" />
+            <span className="sr-only">Log time</span>
+          </Button>
           <Select
             value={milestone.status}
-            onValueChange={(v) => changeStatus(v as MilestoneStatus)}
+            onValueChange={(v) => onStatusChange(v as MilestoneStatus)}
           >
             <SelectTrigger size="sm" className="hidden w-[130px] sm:flex">
               <SelectValue />
@@ -222,6 +231,20 @@ export function MilestoneBoard({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // Optimistic: paint the new status immediately, then confirm with the
+  // server — revert (with a toast) only if the action fails.
+  async function changeStatus(id: string, status: MilestoneStatus) {
+    const previous = items;
+    setItems(items.map((m) => (m.id === id ? { ...m, status } : m)));
+    const result = await setMilestoneStatus(id, status);
+    if (!result.ok) {
+      setItems(previous);
+      toast.error(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
   async function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -279,6 +302,7 @@ export function MilestoneBoard({
                   }}
                   onDelete={() => setDeleting(milestone)}
                   onLogTime={() => setLoggingId(milestone.id)}
+                  onStatusChange={(status) => changeStatus(milestone.id, status)}
                 />
               ))}
             </div>
@@ -318,12 +342,19 @@ export function MilestoneBoard({
               disabled={busy}
               onClick={async () => {
                 if (!deleting) return;
+                // Optimistic: drop the row and close instantly; restore on failure.
+                const previous = items;
+                setItems(items.filter((m) => m.id !== deleting.id));
+                setDeleting(null);
                 setBusy(true);
                 const result = await deleteMilestone(deleting.id);
                 setBusy(false);
-                if (!result.ok) return void toast.error(result.error);
+                if (!result.ok) {
+                  setItems(previous);
+                  toast.error(result.error);
+                  return;
+                }
                 toast.success("Milestone deleted.");
-                setDeleting(null);
                 router.refresh();
               }}
             >

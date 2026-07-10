@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { getProject } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { MilestoneBoard } from "@/components/milestones/milestone-board";
-import { MessageThread } from "@/components/messages/message-thread";
+import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
 import { ProjectTimeSummary } from "@/components/projects/project-time-summary";
 import { ProjectStatusBadge, PriorityBadge, InvoiceStatusBadge } from "@/components/status-badges";
@@ -171,29 +171,14 @@ export default async function ProjectDetailPage({
         </CardContent>
       </Card>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle className="font-heading text-lg">
-            Messages
-            {project.client
-              ? ` with ${project.client.firstName} ${project.client.lastName}`
-              : ""}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {project.client ? (
-            <MessageThread
-              projectId={project.id}
-              viewerRole="ADMIN"
-              initialMessages={messages}
-            />
-          ) : (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              Assign a client to this project to start a conversation.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      {project.client && (
+        <ChatWidget
+          projectId={project.id}
+          viewerRole="ADMIN"
+          initialMessages={messages}
+          title={`Chat with ${project.client.firstName} ${project.client.lastName}`}
+        />
+      )}
     </div>
   );
 }
