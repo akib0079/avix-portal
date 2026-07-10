@@ -20,22 +20,21 @@ import {
   ImagePlus,
 } from "lucide-react";
 
-/**
- * Turn common share links into direct image URLs so they render in an <img>.
- * Google Drive:  drive.google.com/file/d/<id>/view → lh3.googleusercontent.com/d/<id>
- * Dropbox:       ...dropbox.com/...?...dl=0        → raw=1
- * Anything else passes through untouched.
- */
-function normalizeImageUrl(raw: string): string {
-  const drive = raw.match(
-    /drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([\w-]{20,})/,
-  );
-  if (drive) return `https://lh3.googleusercontent.com/d/${drive[1]}`;
-  if (/dropbox\.com\//.test(raw)) {
-    const url = raw.replace(/([?&])dl=0/, "$1raw=1");
-    return url.includes("raw=1") ? url : url + (url.includes("?") ? "&" : "?") + "raw=1";
+/** Short display label for an inserted image link, e.g. "mockup.png". */
+function imageLinkLabel(url: string): string {
+  try {
+    const name = decodeURIComponent(
+      new URL(url).pathname.split("/").filter(Boolean).pop() ?? "",
+    );
+    // Only use the path segment when it looks like a real filename
+    // (Drive/Dropbox share URLs end in generic segments like "view").
+    if (name && name.length <= 60 && /\.[a-z0-9]{2,5}$/i.test(name)) {
+      return `📎 ${name}`;
+    }
+  } catch {
+    /* fall through */
   }
-  return raw;
+  return "📎 View image";
 }
 
 function ToolbarButton({
@@ -68,8 +67,8 @@ function ToolbarButton({
 }
 
 function Toolbar({ editor, allowImages }: { editor: Editor; allowImages: boolean }) {
-  // File uploads are disabled — images are added by URL (e.g. a Google Drive
-  // or Dropbox share link, which we normalize to a direct-view URL).
+  // File uploads are disabled. An image is shared as a LINK (Google Drive /
+  // Dropbox share URL) — no embedded <img>, the reader clicks through.
   function insertImageByUrl() {
     const raw = window.prompt(
       "Image URL (e.g. a Google Drive or Dropbox share link)",
@@ -81,7 +80,18 @@ function Toolbar({ editor, allowImages }: { editor: Editor; allowImages: boolean
       toast.error("Image URLs must start with http(s)://");
       return;
     }
-    editor.chain().focus().setImage({ src: normalizeImageUrl(trimmed) }).run();
+    editor
+      .chain()
+      .focus()
+      .insertContent([
+        {
+          type: "text",
+          text: imageLinkLabel(trimmed),
+          marks: [{ type: "link", attrs: { href: trimmed } }],
+        },
+        { type: "text", text: " " },
+      ])
+      .run();
   }
 
   function setLink() {
@@ -164,7 +174,7 @@ function Toolbar({ editor, allowImages }: { editor: Editor; allowImages: boolean
         <Link2 className="size-4" />
       </ToolbarButton>
       {allowImages && (
-        <ToolbarButton label="Insert image by URL" onClick={insertImageByUrl}>
+        <ToolbarButton label="Insert image link" onClick={insertImageByUrl}>
           <ImagePlus className="size-4" />
         </ToolbarButton>
       )}
@@ -200,7 +210,10 @@ export function RichTextEditor({
       Placeholder.configure({ placeholder }),
     ],
     content: value ?? undefined,
-    onUpdate: ({ editor }) => onChange(editor.getJSON()),
+    // JSON round-trip: ProseMirror emits null-prototype objects (mark attrs),
+    // which React refuses to serialize into server actions ("temporary
+    // client reference"). Re-cloning yields plain Object.prototype objects.
+    onUpdate: ({ editor }) => onChange(JSON.parse(JSON.stringify(editor.getJSON()))),
     editorProps: {
       attributes: {
         class: "rich-text px-3 py-2 min-h-32 max-h-96 overflow-y-auto",
