@@ -21,12 +21,15 @@ export default async function MyProjectPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const project = await getMyProject(id);
+  const [project, options] = await Promise.all([
+    getMyProject(id),
+    listMyProjectOptions(),
+  ]);
   if (!project) notFound();
+  // After ownership is confirmed above (getMyProject scopes to the session).
+  const messages = await getProjectMessages(project.id);
 
   const milestones = project.milestones.map(toMilestoneView);
-  const options = await listMyProjectOptions();
-  const messages = await getProjectMessages(project.id);
 
   return (
     <div>

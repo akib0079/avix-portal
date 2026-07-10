@@ -34,12 +34,14 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const project = await getProject(id);
+  const [project, messages] = await Promise.all([
+    getProject(id),
+    getProjectMessages(id),
+  ]);
   if (!project) notFound();
 
   const milestones = project.milestones.map(toMilestoneView);
   const showDates = project.startDate || project.dueDate;
-  const messages = await getProjectMessages(project.id);
 
   return (
     <div>
