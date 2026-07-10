@@ -44,7 +44,12 @@ export async function getMyProject(id: string) {
   const user = await requireClient();
   return prisma.project.findFirst({
     where: { id, clientId: user.id },
-    include: { milestones: { orderBy: { position: "asc" } } },
+    include: {
+      milestones: {
+        orderBy: { position: "asc" },
+        include: { timeEntries: { orderBy: [{ date: "desc" }, { createdAt: "desc" }] } },
+      },
+    },
   });
 }
 

@@ -5,6 +5,7 @@ import { getProjectMessages } from "@/lib/dal/messages";
 import { MilestoneBoard } from "@/components/milestones/milestone-board";
 import { MessageThread } from "@/components/messages/message-thread";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
+import { ProjectTimeSummary } from "@/components/projects/project-time-summary";
 import { ProjectStatusBadge, PriorityBadge, InvoiceStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,13 @@ export default async function ProjectDetailPage({
                   {formatDate(project.startDate)} → {formatDate(project.dueDate)}
                 </p>
               )}
+              {project.billingType === "CONTRACT" && (
+                <p className="mt-1 text-sm font-medium text-primary">
+                  {project.contractPrice != null
+                    ? `${usd.format(Number(project.contractPrice))} fixed contract`
+                    : "Fixed contract"}
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <PriorityBadge priority={project.priority} />
@@ -94,9 +102,21 @@ export default async function ProjectDetailPage({
         </CardContent>
       </Card>
 
+      <ProjectTimeSummary
+        milestones={milestones}
+        billingType={project.billingType}
+        contractPrice={
+          project.contractPrice == null ? null : Number(project.contractPrice)
+        }
+      />
+
       <Card className="mb-6">
         <CardContent className="pt-6">
-          <MilestoneBoard projectId={project.id} milestones={milestones} />
+          <MilestoneBoard
+            projectId={project.id}
+            milestones={milestones}
+            billingType={project.billingType}
+          />
         </CardContent>
       </Card>
 

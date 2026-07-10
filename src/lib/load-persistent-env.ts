@@ -58,6 +58,13 @@ function parseEnv(contents: string): Secrets {
 /** Parsed secrets (memoized). Empty object when no file is found. */
 export function getPersistentSecrets(): Secrets {
   if (cache) return cache;
+  // The override exists purely for the production host. In local dev the
+  // developer's ~/portal-secrets.env (kept for deploys) must NOT hijack
+  // DATABASE_URL — that points dev at the production database.
+  if (process.env.NODE_ENV === "development") {
+    cache = {};
+    return cache;
+  }
   for (const filePath of candidatePaths()) {
     try {
       if (!filePath || !existsSync(filePath)) continue;

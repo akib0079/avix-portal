@@ -96,6 +96,18 @@ enum MessageSenderRole {
   CLIENT
 }
 
+enum ProjectBillingType {
+  MILESTONE
+  CONTRACT
+}
+
+enum CampaignStatus {
+  DRAFT
+  SENDING
+  SENT
+  FAILED
+}
+
 model User {
   id            String     @id @default(cuid())
   email         String     @unique
@@ -111,14 +123,18 @@ model User {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  sessions      Session[]
-  accounts      Account[]
-  projects      Project[]
-  invoices      Invoice[]
-  taskRequests  TaskRequest[]
-  notifications Notification[]
-  imageUploads  ImageUpload[]
-  messages      Message[]
+  /// Opted out of marketing campaign emails (transactional emails unaffected).
+  marketingOptOut Boolean @default(false)
+
+  sessions           Session[]
+  accounts           Account[]
+  projects           Project[]
+  invoices           Invoice[]
+  taskRequests       TaskRequest[]
+  notifications      Notification[]
+  imageUploads       ImageUpload[]
+  messages           Message[]
+  campaignRecipients CampaignRecipient[]
 
   @@index([role, status])
   @@map("users")
@@ -180,6 +196,10 @@ model Project {
   source      ProjectSource @default(INDEPENDENT)
   priority    Priority      @default(MEDIUM)
   status      ProjectStatus @default(PLANNING)
+  /// MILESTONE = per-milestone pricing (default); CONTRACT = one fixed
+  /// whole-project price (milestone pricing hidden/ignored, not deleted).
+  billingType   ProjectBillingType @default(MILESTONE)
+  contractPrice Decimal?           @db.Decimal(10, 2)
   description Json?
   startDate   DateTime?
   dueDate     DateTime?
@@ -213,8 +233,26 @@ model Milestone {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
+  timeEntries TimeEntry[]
+
   @@index([projectId, position])
   @@map("milestones")
+}
+
+/// A logged unit of work on a milestone: when, how many hours, and an
+/// optional progress note. Admin-created; shown to the client on the
+/// portal timeline. Deliberately creates NO notifications or emails.
+model TimeEntry {
+  id          String    @id @default(cuid())
+  milestoneId String
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  date        DateTime  @db.Date
+  hours       Decimal   @db.Decimal(6, 2)
+  note        String?
+  createdAt   DateTime  @default(now())
+
+  @@index([milestoneId, date])
+  @@map("time_entries")
 }
 
 model Invoice {
@@ -334,4 +372,49 @@ model Message {
 
   @@index([projectId, createdAt])
   @@map("messages")
+}
+
+/// Reusable marketing email template (subject + Tiptap body).
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  subject   String
+  body      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns Campaign[]
+
+  @@map("email_templates")
+}
+
+/// A marketing send: snapshot of subject/body plus per-recipient status rows.
+model Campaign {
+  id         String         @id @default(cuid())
+  subject    String
+  body       Json
+  templateId String?
+  template   EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  status     CampaignStatus @default(DRAFT)
+  sentAt     DateTime?
+  createdAt  DateTime       @default(now())
+
+  recipients CampaignRecipient[]
+
+  @@index([createdAt])
+  @@map("campaigns")
+}
+
+model CampaignRecipient {
+  id         String    @id @default(cuid())
+  campaignId String
+  campaign   Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sentAt     DateTime?
+  error      String?
+
+  @@unique([campaignId, userId])
+  @@index([userId])
+  @@map("campaign_recipients")
 }

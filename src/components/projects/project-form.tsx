@@ -59,6 +59,8 @@ export function ProjectForm({
       source: project?.source ?? "INDEPENDENT",
       priority: project?.priority ?? "MEDIUM",
       status: project?.status ?? "PLANNING",
+      billingType: project?.billingType ?? "MILESTONE",
+      contractPrice: project?.contractPrice ?? null,
       description: project?.description ?? undefined,
       startDate: project?.startDate ?? "",
       dueDate: project?.dueDate ?? "",
@@ -229,6 +231,67 @@ export function ProjectForm({
               </FormItem>
             )}
           />
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="billingType"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Billing type</FormLabel>
+                <Select
+                  value={field.value}
+                  onValueChange={(v) => {
+                    field.onChange(v);
+                    if (v === "MILESTONE") form.setValue("contractPrice", null);
+                  }}
+                >
+                  <FormControl>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="MILESTONE">Milestone pricing</SelectItem>
+                    <SelectItem value="CONTRACT">Fixed contract price</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {field.value === "CONTRACT"
+                    ? "One price for the whole project; per-milestone pricing is hidden."
+                    : "Each milestone carries its own hourly or fixed price."}
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {form.watch("billingType") === "CONTRACT" && (
+            <FormField
+              control={form.control}
+              name="contractPrice"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contract price ($)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 4500"
+                      value={field.value ?? ""}
+                      onChange={(e) =>
+                        field.onChange(
+                          e.target.value === "" ? null : Number(e.target.value),
+                        )
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">

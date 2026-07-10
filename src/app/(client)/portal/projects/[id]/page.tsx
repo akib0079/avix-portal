@@ -10,8 +10,8 @@ import { ProjectStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { RequestFormDialog } from "@/components/task-requests/request-form-dialog";
 import { Card, CardContent } from "@/components/ui/card";
-import { projectTypeLabels, formatDate } from "@/lib/format";
-import { ArrowLeft, CalendarDays } from "lucide-react";
+import { projectTypeLabels, formatDate, usd } from "@/lib/format";
+import { ArrowLeft, CalendarDays, BadgeDollarSign } from "lucide-react";
 
 export const metadata = { title: "Project" };
 
@@ -51,6 +51,12 @@ export default async function MyProjectPage({
                   {formatDate(project.startDate)} → {formatDate(project.dueDate)}
                 </p>
               )}
+              {project.billingType === "CONTRACT" && project.contractPrice != null && (
+                <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-primary">
+                  <BadgeDollarSign className="size-3.5" />
+                  {usd.format(Number(project.contractPrice))} fixed contract
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <ProjectStatusBadge status={project.status} />
@@ -69,7 +75,10 @@ export default async function MyProjectPage({
       <Card className="mb-6">
         <CardContent className="pt-6">
           <h2 className="font-heading mb-6 text-lg font-semibold">Project timeline</h2>
-          <ClientProjectTimeline milestones={milestones} />
+          <ClientProjectTimeline
+            milestones={milestones}
+            billingType={project.billingType}
+          />
         </CardContent>
       </Card>
 

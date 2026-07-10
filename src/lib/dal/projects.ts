@@ -19,7 +19,10 @@ export async function getProject(id: string) {
     where: { id },
     include: {
       client: { select: { id: true, firstName: true, lastName: true, company: true, email: true } },
-      milestones: { orderBy: { position: "asc" } },
+      milestones: {
+        orderBy: { position: "asc" },
+        include: { timeEntries: { orderBy: [{ date: "desc" }, { createdAt: "desc" }] } },
+      },
       invoices: { orderBy: { createdAt: "desc" } },
     },
   });

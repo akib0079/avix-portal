@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { JSONContent } from "@tiptap/react";
-import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
-import { createMilestone, updateMilestone } from "@/lib/actions/milestones";
-import type { MilestoneView } from "./milestone-types";
+import {
+  emailTemplateSchema,
+  type EmailTemplateInput,
+} from "@/lib/validation/marketing";
+import { createTemplate, updateTemplate } from "@/lib/actions/marketing";
+import type { TemplateView } from "./template-manager";
 import { RichTextEditor } from "@/components/editor/rich-text-editor";
-import { PricingFields } from "./pricing-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,57 +33,41 @@ import {
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
-export function MilestoneFormDialog({
-  projectId,
-  milestone,
+export function TemplateFormDialog({
+  template,
   open,
   onOpenChange,
-  billingType = "MILESTONE",
 }: {
-  projectId: string;
   /** present = edit mode */
-  milestone?: MilestoneView | null;
+  template?: TemplateView | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** CONTRACT hides per-milestone pricing (whole project has one price). */
-  billingType?: "MILESTONE" | "CONTRACT";
 }) {
   const router = useRouter();
-  const isEdit = !!milestone;
+  const isEdit = !!template;
 
-  const form = useForm<MilestoneInput>({
-    resolver: zodResolver(milestoneSchema),
-    defaultValues: {
-      title: "",
-      description: undefined,
-      pricingType: "NONE",
-      hourlyRate: null,
-      estimatedHours: null,
-      fixedPrice: null,
-    },
+  const form = useForm<EmailTemplateInput>({
+    resolver: zodResolver(emailTemplateSchema),
+    defaultValues: { name: "", subject: "", body: undefined },
   });
 
-  // Re-sync when the dialog opens for a different milestone.
   useEffect(() => {
     if (open) {
       form.reset({
-        title: milestone?.title ?? "",
-        description: milestone?.description ?? undefined,
-        pricingType: milestone?.pricingType ?? "NONE",
-        hourlyRate: milestone?.hourlyRate ?? null,
-        estimatedHours: milestone?.estimatedHours ?? null,
-        fixedPrice: milestone?.fixedPrice ?? null,
+        name: template?.name ?? "",
+        subject: template?.subject ?? "",
+        body: template?.body ?? undefined,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, milestone?.id]);
+  }, [open, template?.id]);
 
-  async function onSubmit(values: MilestoneInput) {
+  async function onSubmit(values: EmailTemplateInput) {
     const result = isEdit
-      ? await updateMilestone(milestone.id, values)
-      : await createMilestone(projectId, values);
+      ? await updateTemplate(template.id, values)
+      : await createTemplate(values);
     if (!result.ok) return void toast.error(result.error);
-    toast.success(isEdit ? "Milestone updated." : "Milestone added.");
+    toast.success(isEdit ? "Template updated." : "Template saved.");
     onOpenChange(false);
     router.refresh();
   }
@@ -91,12 +77,10 @@ export function MilestoneFormDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="font-heading">
-            {isEdit ? "Edit milestone" : "Add milestone"}
+            {isEdit ? "Edit template" : "New template"}
           </DialogTitle>
           <DialogDescription>
-            {isEdit
-              ? "Update the milestone details and pricing."
-              : "Add a step to this project's board."}
+            Reusable email content you can send as a campaign anytime.
           </DialogDescription>
         </DialogHeader>
 
@@ -104,41 +88,47 @@ export function MilestoneFormDialog({
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
             <FormField
               control={form.control}
-              name="title"
+              name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Title</FormLabel>
+                  <FormLabel>Template name</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g. Payment & Shipping Setup" {...field} />
+                    <Input placeholder="e.g. Summer maintenance offer" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
             <FormField
               control={form.control}
-              name="description"
+              name="subject"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Description</FormLabel>
+                  <FormLabel>Email subject</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g. A special offer for our clients" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="body"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email content</FormLabel>
                   <FormControl>
                     <RichTextEditor
                       value={(field.value as JSONContent) ?? null}
                       onChange={field.onChange}
-                      placeholder="What does this milestone cover?"
+                      placeholder="Write the email your clients will receive…"
                     />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-            {billingType !== "CONTRACT" && (
-              <PricingFields
-                form={form as unknown as Parameters<typeof PricingFields>[0]["form"]}
-              />
-            )}
 
             <DialogFooter>
               <Button
@@ -151,7 +141,7 @@ export function MilestoneFormDialog({
               </Button>
               <Button type="submit" disabled={form.formState.isSubmitting}>
                 {form.formState.isSubmitting && <Loader2 className="animate-spin" />}
-                {isEdit ? "Save changes" : "Add milestone"}
+                {isEdit ? "Save changes" : "Save template"}
               </Button>
             </DialogFooter>
           </form>

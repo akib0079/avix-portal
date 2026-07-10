@@ -33,6 +33,8 @@ export default async function EditProjectPage({
     source: project.source,
     priority: project.priority,
     status: project.status,
+    billingType: project.billingType,
+    contractPrice: project.contractPrice == null ? null : Number(project.contractPrice),
     description: project.description ?? undefined,
     startDate: toDateInput(project.startDate),
     dueDate: toDateInput(project.dueDate),

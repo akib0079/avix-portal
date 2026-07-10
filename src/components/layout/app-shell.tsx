@@ -22,6 +22,7 @@ import {
   MessageSquarePlus,
   Settings,
   CreditCard,
+  Megaphone,
 } from "lucide-react";
 
 type NavItem = {
@@ -38,6 +39,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
+  { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 

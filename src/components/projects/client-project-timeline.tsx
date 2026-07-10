@@ -1,9 +1,9 @@
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { MilestoneStatusBadge } from "@/components/status-badges";
-import { formatPricing } from "@/lib/format";
+import { formatPricing, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { MilestoneStatus, PricingType } from "@prisma/client";
-import { Check, CircleDashed, LoaderCircle, BadgeDollarSign } from "lucide-react";
+import type { MilestoneStatus, PricingType, ProjectBillingType } from "@prisma/client";
+import { Check, CircleDashed, LoaderCircle, BadgeDollarSign, Clock } from "lucide-react";
 
 type TimelineMilestone = {
   id: string;
@@ -14,7 +14,13 @@ type TimelineMilestone = {
   hourlyRate: number | null;
   estimatedHours: number | null;
   fixedPrice: number | null;
+  loggedHours: number;
+  timeEntries: { id: string; date: string; hours: number; note: string | null }[];
 };
+
+function fmtHours(hours: number): string {
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
+}
 
 function StatusIcon({ status }: { status: MilestoneStatus }) {
   if (status === "COMPLETED") {
@@ -40,8 +46,10 @@ function StatusIcon({ status }: { status: MilestoneStatus }) {
 
 export function ClientProjectTimeline({
   milestones,
+  billingType = "MILESTONE",
 }: {
   milestones: TimelineMilestone[];
+  billingType?: ProjectBillingType;
 }) {
   if (milestones.length === 0) {
     return (
@@ -54,7 +62,9 @@ export function ClientProjectTimeline({
   return (
     <ol className="relative space-y-0">
       {milestones.map((milestone, index) => {
-        const pricing = formatPricing(milestone);
+        // On fixed-contract projects the price lives at the project level.
+        const pricing = billingType === "CONTRACT" ? null : formatPricing(milestone);
+        const recentEntries = milestone.timeEntries.slice(0, 3);
         const isLast = index === milestones.length - 1;
         return (
           <li key={milestone.id} className="relative flex gap-4 pb-8 last:pb-0">
@@ -87,10 +97,35 @@ export function ClientProjectTimeline({
                   <BadgeDollarSign className="size-3.5" /> {pricing}
                 </p>
               )}
+              {milestone.loggedHours > 0 && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock className="size-3.5" />
+                  {fmtHours(milestone.loggedHours)} worked
+                </p>
+              )}
               {hasRichTextContent(milestone.description) && (
                 <div className="mt-2 rounded-lg bg-muted/50 px-3.5 py-2.5">
                   <RichTextViewer content={milestone.description} />
                 </div>
+              )}
+              {recentEntries.some((e) => e.note) && (
+                <ul className="mt-2 space-y-1.5">
+                  {recentEntries
+                    .filter((e) => e.note)
+                    .map((entry) => (
+                      <li
+                        key={entry.id}
+                        className="rounded-lg border border-slate-100 bg-white px-3.5 py-2 text-xs"
+                      >
+                        <span className="font-medium text-foreground">
+                          {formatDate(entry.date)} · {fmtHours(entry.hours)}
+                        </span>{" "}
+                        <span className="whitespace-pre-wrap text-muted-foreground">
+                          — {entry.note}
+                        </span>
+                      </li>
+                    ))}
+                </ul>
               )}
             </div>
           </li>

@@ -27,6 +27,8 @@ import {
 } from "@/lib/actions/milestones";
 import type { MilestoneView } from "./milestone-types";
 import { MilestoneFormDialog } from "./milestone-form-dialog";
+import { TimeLogDialog, formatHours } from "./time-log-dialog";
+import type { ProjectBillingType } from "@prisma/client";
 import { MilestoneStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { formatPricing, milestoneStatusLabels } from "@/lib/format";
@@ -56,19 +58,24 @@ import {
   ChevronDown,
   ChevronUp,
   BadgeDollarSign,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function SortableRow({
   milestone,
   index,
+  billingType,
   onEdit,
   onDelete,
+  onLogTime,
 }: {
   milestone: MilestoneView;
   index: number;
+  billingType: ProjectBillingType;
   onEdit: () => void;
   onDelete: () => void;
+  onLogTime: () => void;
 }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
@@ -76,7 +83,12 @@ function SortableRow({
     useSortable({ id: milestone.id });
 
   const hasDescription = hasRichTextContent(milestone.description);
-  const pricing = formatPricing(milestone);
+  // Per-milestone pricing is hidden (not deleted) on fixed-contract projects.
+  const pricing = billingType === "CONTRACT" ? null : formatPricing(milestone);
+  const showEstimate =
+    billingType === "MILESTONE" &&
+    milestone.pricingType === "HOURLY" &&
+    milestone.estimatedHours != null;
 
   async function changeStatus(status: MilestoneStatus) {
     const result = await setMilestoneStatus(milestone.id, status);
@@ -117,6 +129,18 @@ function SortableRow({
               <BadgeDollarSign className="size-3.5" /> {pricing}
             </p>
           )}
+          <button
+            type="button"
+            onClick={onLogTime}
+            className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Clock className="size-3.5" />
+            {milestone.loggedHours > 0
+              ? `${formatHours(milestone.loggedHours)} logged${
+                  showEstimate ? ` of ${formatHours(milestone.estimatedHours!)} est` : ""
+                }`
+              : "Log time"}
+          </button>
           {hasDescription && (
             <button
               type="button"
@@ -172,15 +196,18 @@ function SortableRow({
 export function MilestoneBoard({
   projectId,
   milestones,
+  billingType = "MILESTONE",
 }: {
   projectId: string;
   milestones: MilestoneView[];
+  billingType?: ProjectBillingType;
 }) {
   const router = useRouter();
   const [items, setItems] = useState(milestones);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<MilestoneView | null>(null);
   const [deleting, setDeleting] = useState<MilestoneView | null>(null);
+  const [loggingId, setLoggingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Keep local order in sync when the server list changes (adjust-during-render).
@@ -245,11 +272,13 @@ export function MilestoneBoard({
                   key={milestone.id}
                   milestone={milestone}
                   index={index}
+                  billingType={billingType}
                   onEdit={() => {
                     setEditing(milestone);
                     setFormOpen(true);
                   }}
                   onDelete={() => setDeleting(milestone)}
+                  onLogTime={() => setLoggingId(milestone.id)}
                 />
               ))}
             </div>
@@ -262,6 +291,13 @@ export function MilestoneBoard({
         milestone={editing}
         open={formOpen}
         onOpenChange={setFormOpen}
+        billingType={billingType}
+      />
+
+      <TimeLogDialog
+        milestone={items.find((m) => m.id === loggingId) ?? null}
+        open={!!loggingId}
+        onOpenChange={(open) => !open && setLoggingId(null)}
       />
 
       <Dialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
