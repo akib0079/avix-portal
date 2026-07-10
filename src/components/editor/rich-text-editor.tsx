@@ -1,6 +1,5 @@
 "use client";
 
-import { useRef } from "react";
 import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
@@ -19,9 +18,25 @@ import {
   Quote,
   Link2,
   ImagePlus,
-  Loader2,
 } from "lucide-react";
-import { useState } from "react";
+
+/**
+ * Turn common share links into direct image URLs so they render in an <img>.
+ * Google Drive:  drive.google.com/file/d/<id>/view → lh3.googleusercontent.com/d/<id>
+ * Dropbox:       ...dropbox.com/...?...dl=0        → raw=1
+ * Anything else passes through untouched.
+ */
+function normalizeImageUrl(raw: string): string {
+  const drive = raw.match(
+    /drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([\w-]{20,})/,
+  );
+  if (drive) return `https://lh3.googleusercontent.com/d/${drive[1]}`;
+  if (/dropbox\.com\//.test(raw)) {
+    const url = raw.replace(/([?&])dl=0/, "$1raw=1");
+    return url.includes("raw=1") ? url : url + (url.includes("?") ? "&" : "?") + "raw=1";
+  }
+  return raw;
+}
 
 function ToolbarButton({
   onClick,
@@ -53,25 +68,20 @@ function ToolbarButton({
 }
 
 function Toolbar({ editor, allowImages }: { editor: Editor; allowImages: boolean }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-
-  async function uploadImage(file: File) {
-    setUploading(true);
-    try {
-      const body = new FormData();
-      body.append("file", file);
-      const res = await fetch("/api/uploads/images", { method: "POST", body });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        toast.error(data?.error ?? "Image upload failed.");
-        return;
-      }
-      const { url } = await res.json();
-      editor.chain().focus().setImage({ src: url }).run();
-    } finally {
-      setUploading(false);
+  // File uploads are disabled — images are added by URL (e.g. a Google Drive
+  // or Dropbox share link, which we normalize to a direct-view URL).
+  function insertImageByUrl() {
+    const raw = window.prompt(
+      "Image URL (e.g. a Google Drive or Dropbox share link)",
+      "https://",
+    );
+    if (raw === null || raw.trim() === "" || raw.trim() === "https://") return;
+    const trimmed = raw.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      toast.error("Image URLs must start with http(s)://");
+      return;
     }
+    editor.chain().focus().setImage({ src: normalizeImageUrl(trimmed) }).run();
   }
 
   function setLink() {
@@ -154,30 +164,9 @@ function Toolbar({ editor, allowImages }: { editor: Editor; allowImages: boolean
         <Link2 className="size-4" />
       </ToolbarButton>
       {allowImages && (
-        <>
-          <ToolbarButton
-            label="Insert image"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-          >
-            {uploading ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <ImagePlus className="size-4" />
-            )}
-          </ToolbarButton>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) uploadImage(file);
-              e.target.value = "";
-            }}
-          />
-        </>
+        <ToolbarButton label="Insert image by URL" onClick={insertImageByUrl}>
+          <ImagePlus className="size-4" />
+        </ToolbarButton>
       )}
     </div>
   );
