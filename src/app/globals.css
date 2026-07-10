@@ -202,3 +202,16 @@
   content: attr(data-placeholder);
   @apply pointer-events-none float-left h-0 text-muted-foreground;
 }
+/* Floating animation for the Avix pixel-bot mascot. */
+@keyframes avix-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.animate-avix-float {
+  animation: avix-float 2.5s ease-in-out infinite;
+}

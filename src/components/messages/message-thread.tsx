@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
-import { Loader2, Send, MessagesSquare } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
+import { AvixBot } from "@/components/avix-bot";
 
 const fetcher = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null));
 
@@ -74,14 +75,14 @@ export function MessageThread({
       <div className="mb-4 space-y-4">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center">
-            <div className="flex size-11 items-center justify-center rounded-full bg-muted">
-              <MessagesSquare className="size-5 text-muted-foreground" />
-            </div>
-            <p className="mt-3 text-sm font-medium">No messages yet</p>
+            <AvixBot size={30} />
+            <p className="mt-4 text-sm font-medium">
+              {viewerRole === "ADMIN" ? "No messages yet" : "Hi there! 👋"}
+            </p>
             <p className="mt-1 text-sm text-muted-foreground">
               {viewerRole === "ADMIN"
                 ? "Start the conversation with your client."
-                : "Send a message to the Avix Digital team."}
+                : "You can chat with us right from here — ask us anything about your project."}
             </p>
           </div>
         ) : (

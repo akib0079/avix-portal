@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Loader2, Eye, EyeOff, Mail, Lock, AlertCircle } from "lucide-react";
+import { AvixBot } from "@/components/avix-bot";
 
 function GoogleIcon() {
   return (
@@ -81,13 +82,16 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
   return (
     <div>
-      <div className="mb-8">
-        <h2 className="font-heading text-3xl font-bold tracking-tight">
-          Welcome back
-        </h2>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          Sign in to your Avix Digital portal.
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-heading text-3xl font-bold tracking-tight">
+            Welcome back
+          </h2>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Sign in to your Avix Digital portal.
+          </p>
+        </div>
+        <AvixBot size={32} className="mt-1 shrink-0" />
       </div>
 
       {googleEnabled && (
