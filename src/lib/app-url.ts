@@ -10,6 +10,11 @@
  * domain (never localhost) even if it is missing.
  */
 export function appUrl(): string {
-  const url = process.env.BETTER_AUTH_URL || "https://admin.avixdigital.com";
+  const url = process.env.BETTER_AUTH_URL || "";
+  // Never let a localhost/dev value leak into emails or notifications —
+  // a reset link sent from a dev machine must still point at production.
+  if (!url || /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(url)) {
+    return "https://admin.avixdigital.com";
+  }
   return url.replace(/\/+$/, "");
 }

@@ -7,7 +7,7 @@ import { PaymentDetails } from "@/components/payments/payment-details";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usd, formatDate } from "@/lib/format";
-import { ArrowLeft, Download, Receipt } from "lucide-react";
+import { ArrowLeft, Download, Receipt, ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Invoice" };
 
@@ -78,8 +78,20 @@ export default async function ClientInvoiceDetailPage({
           {(invoice.pdfPath || invoice.pdfExternalUrl) && (
             <div className="mt-6">
               <Button asChild>
-                <Link href={`/api/files/invoice/${invoice.id}`} prefetch={false}>
-                  <Download /> Download PDF
+                <Link
+                  href={`/api/files/invoice/${invoice.id}`}
+                  prefetch={false}
+                  target={invoice.pdfExternalUrl ? "_blank" : undefined}
+                >
+                  {invoice.pdfExternalUrl ? (
+                    <>
+                      <ExternalLink /> View invoice
+                    </>
+                  ) : (
+                    <>
+                      <Download /> Download PDF
+                    </>
+                  )}
                 </Link>
               </Button>
             </div>

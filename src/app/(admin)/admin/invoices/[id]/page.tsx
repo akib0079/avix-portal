@@ -13,7 +13,7 @@ import { InvoiceStatusBadge } from "@/components/status-badges";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
-import { Download } from "lucide-react";
+import { Download, ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Invoice" };
 
@@ -48,7 +48,15 @@ export default async function InvoiceDetailPage({
                   prefetch={false}
                   target={invoice.pdfExternalUrl ? "_blank" : undefined}
                 >
-                  <Download /> PDF
+                  {invoice.pdfExternalUrl ? (
+                    <>
+                      <ExternalLink /> View PDF
+                    </>
+                  ) : (
+                    <>
+                      <Download /> PDF
+                    </>
+                  )}
                 </Link>
               </Button>
             )}

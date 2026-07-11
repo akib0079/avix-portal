@@ -13,7 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usd, formatDate } from "@/lib/format";
-import { Download, FileText, ChevronRight } from "lucide-react";
+import { Download, FileText, ChevronRight, ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Invoices" };
 
@@ -120,9 +120,16 @@ export default async function MyInvoicesPage() {
                             <Link
                               href={`/api/files/invoice/${invoice.id}`}
                               prefetch={false}
+                              target={invoice.pdfExternalUrl ? "_blank" : undefined}
                             >
-                              <Download className="size-4" />
-                              <span className="sr-only">Download PDF</span>
+                              {invoice.pdfExternalUrl ? (
+                                <ExternalLink className="size-4" />
+                              ) : (
+                                <Download className="size-4" />
+                              )}
+                              <span className="sr-only">
+                                {invoice.pdfExternalUrl ? "View invoice" : "Download PDF"}
+                              </span>
                             </Link>
                           </Button>
                         )}
