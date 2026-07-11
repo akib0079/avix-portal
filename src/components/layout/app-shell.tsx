@@ -108,16 +108,42 @@ function NavLinks({
   );
 }
 
+function LogoMark({ logoUrl, width, height }: { logoUrl?: string | null; width: number; height: number }) {
+  if (logoUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return (
+      <img
+        src={logoUrl}
+        alt="Logo"
+        style={{ maxWidth: width, maxHeight: height }}
+        className="h-auto w-auto object-contain"
+      />
+    );
+  }
+  return (
+    <Image
+      src="/avix-logo.png"
+      alt="Avix Digital"
+      width={width}
+      height={height}
+      priority
+      className="brightness-0 invert"
+    />
+  );
+}
+
 function SidebarInner({
   variant,
   user,
   pathname,
   onNavigate,
+  logoUrl,
 }: {
   variant: "admin" | "client";
   user: { name: string; email: string };
   pathname: string;
   onNavigate?: () => void;
+  logoUrl?: string | null;
 }) {
   const router = useRouter();
   const items = variant === "admin" ? adminNav : clientNav;
@@ -132,14 +158,7 @@ function SidebarInner({
     <div className="flex h-full flex-col bg-sidebar">
       <div className="px-5 pt-6 pb-4">
         <Link href={variant === "admin" ? "/admin" : "/portal"} onClick={onNavigate}>
-          <Image
-            src="/avix-logo.png"
-            alt="Avix Digital"
-            width={132}
-            height={33}
-            priority
-            className="brightness-0 invert"
-          />
+          <LogoMark logoUrl={logoUrl} width={132} height={33} />
         </Link>
       </div>
       <p className="px-5 pb-2 text-[11px] font-semibold tracking-[0.14em] text-slate-500 uppercase">
@@ -173,10 +192,12 @@ export function AppShell({
   variant,
   user,
   children,
+  logoUrl,
 }: {
   variant: "admin" | "client";
   user: { name: string; email: string };
   children: React.ReactNode;
+  logoUrl?: string | null;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -185,7 +206,7 @@ export function AppShell({
     <div className="flex min-h-screen w-full">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 lg:block">
-        <SidebarInner variant={variant} user={user} pathname={pathname} />
+        <SidebarInner variant={variant} user={user} pathname={pathname} logoUrl={logoUrl} />
       </aside>
 
       {/* Mobile topbar */}
@@ -208,16 +229,11 @@ export function AppShell({
               user={user}
               pathname={pathname}
               onNavigate={() => setOpen(false)}
+              logoUrl={logoUrl}
             />
           </SheetContent>
         </Sheet>
-        <Image
-          src="/avix-logo.png"
-          alt="Avix Digital"
-          width={110}
-          height={28}
-          className="brightness-0 invert"
-        />
+        <LogoMark logoUrl={logoUrl} width={110} height={28} />
         <div className="ml-auto">
           <NotificationBell tone="dark" />
         </div>
@@ -229,7 +245,7 @@ export function AppShell({
         <div className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
           <NotificationBell tone="light" />
         </div>
-        <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
+        <div className="mx-auto w-full max-w-[88rem] px-4 py-8 sm:px-6 lg:px-10">
           {children}
         </div>
       </main>

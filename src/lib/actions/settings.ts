@@ -100,3 +100,65 @@ export async function updateWhatsappSupportUrl(url: string): Promise<ActionResul
   revalidatePath("/admin/settings");
   return { ok: true };
 }
+
+// ---------- Branding ----------
+import { saveUpload, deleteUpload } from "@/lib/uploads";
+import { BRAND_KEYS, getBranding } from "@/lib/dal/settings";
+
+async function setSetting(key: string, value: string) {
+  await prisma.appSetting.upsert({
+    where: { key },
+    create: { key, value },
+    update: { value },
+  });
+}
+
+export async function updateBrandColor(color: string): Promise<ActionResult> {
+  await requireAdmin();
+  const trimmed = color.trim();
+  if (trimmed && !/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
+    return { ok: false, error: "Enter a 6-digit hex color like #F65D0B (or empty to reset)." };
+  }
+  await setSetting(BRAND_KEYS.color, trimmed);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Upload a new logo or favicon; replaces + deletes the previous file. */
+export async function uploadBrandingFile(
+  which: "logo" | "favicon",
+  formData: FormData,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Choose an image file." };
+  }
+  const saved = await saveUpload("branding", file);
+  if (!saved.ok) return { ok: false, error: saved.error };
+
+  const key = which === "logo" ? BRAND_KEYS.logo : BRAND_KEYS.favicon;
+  const current = await getBranding();
+  const old = which === "logo" ? current.logoFile : current.faviconFile;
+
+  await setSetting(key, saved.fileName);
+  if (old) await deleteUpload("branding", old);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
+export async function clearBrandingFile(
+  which: "logo" | "favicon",
+): Promise<ActionResult> {
+  await requireAdmin();
+  const key = which === "logo" ? BRAND_KEYS.logo : BRAND_KEYS.favicon;
+  const current = await getBranding();
+  const old = which === "logo" ? current.logoFile : current.faviconFile;
+  await setSetting(key, "");
+  if (old) await deleteUpload("branding", old);
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}

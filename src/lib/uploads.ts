@@ -17,11 +17,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 const UPLOAD_ROOT = path.resolve(process.env.UPLOAD_DIR ?? "./uploads");
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "uploads";
 
-export type UploadKind = "invoices" | "images";
+export type UploadKind = "invoices" | "images" | "branding";
 
 const limits: Record<UploadKind, number> = {
   invoices: 10 * 1024 * 1024, // 10 MB
   images: 5 * 1024 * 1024, // 5 MB
+  branding: 2 * 1024 * 1024, // 2 MB (logo / favicon)
 };
 
 const imageTypes: Record<string, string> = {
@@ -98,6 +99,20 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
     }
     ext = "pdf";
     mimeType = "application/pdf";
+  } else if (kind === "branding") {
+    // Logo / favicon — PNG, JPEG, WebP, or SVG. SVG isn't magic-byte checked
+    // (text format) so it's validated by a leading `<` below.
+    if (file.type === "image/svg+xml") {
+      ext = "svg";
+      mimeType = "image/svg+xml";
+    } else {
+      const mapped = imageTypes[file.type];
+      if (!mapped) {
+        return { ok: false, error: "Use a PNG, JPEG, WebP, or SVG image." };
+      }
+      ext = mapped;
+      mimeType = file.type;
+    }
   } else {
     const mapped = imageTypes[file.type];
     if (!mapped) {
@@ -108,7 +123,13 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
   }
 
   const buf = Buffer.from(await file.arrayBuffer());
-  if (!hasMagicBytes(buf, kind, mimeType)) {
+  const svg = mimeType === "image/svg+xml";
+  if (svg) {
+    const head = buf.subarray(0, 512).toString("utf8").trimStart();
+    if (!head.startsWith("<")) {
+      return { ok: false, error: "The file content doesn't match its type." };
+    }
+  } else if (!hasMagicBytes(buf, kind === "branding" ? "images" : kind, mimeType)) {
     return { ok: false, error: "The file content doesn't match its type." };
   }
 
@@ -135,7 +156,21 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
 
 function validName(fileName: string): boolean {
   // Names are always `${uuid}.${ext}` that we generated ourselves.
-  return /^[a-f0-9-]{36}\.(pdf|png|jpg|webp)$/i.test(fileName);
+  return /^[a-f0-9-]{36}\.(pdf|png|jpg|webp|svg)$/i.test(fileName);
+}
+
+const CONTENT_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  pdf: "application/pdf",
+};
+
+/** MIME type for a stored file name, for the public branding route. */
+export function contentTypeFor(fileName: string): string {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  return CONTENT_TYPES[ext] ?? "application/octet-stream";
 }
 
 /** Returns the file bytes, or null when missing/not accessible. */

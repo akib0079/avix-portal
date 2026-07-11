@@ -42,6 +42,8 @@ import {
   CheckCircle2,
   FileUp,
   GripVertical,
+  Mail,
+  Tag,
 } from "lucide-react";
 
 const STAGES: LeadStage[] = ["NEW", "CONTACTED", "PROPOSAL", "WON", "LOST"];
@@ -95,41 +97,65 @@ function LeadCard({
         </button>
         <span
           className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white",
+            "flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white",
             stageStyle[lead.stage].dot,
           )}
         >
           {initials(lead.name)}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold leading-tight">{lead.name}</p>
+          <p className="text-sm font-semibold leading-tight">{lead.name}</p>
           {lead.company && (
             <p className="truncate text-xs text-muted-foreground">{lead.company}</p>
           )}
         </div>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-          {leadSourceLabels[lead.source]}
+        <span
+          className={cn(
+            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium text-white",
+            stageStyle[lead.stage].dot,
+          )}
+        >
+          {leadStageLabels[lead.stage]}
         </span>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
-        {lead.estimatedValue != null && (
-          <span className="flex items-center gap-1 text-xs font-semibold text-primary">
-            <BadgeDollarSign className="size-3" />
-            {usd.format(lead.estimatedValue)}
-          </span>
+      <div className="mt-2.5 space-y-1 pl-6">
+        {lead.email && (
+          <a
+            href={`mailto:${lead.email}`}
+            className="flex items-center gap-1.5 truncate text-xs text-muted-foreground hover:text-primary"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Mail className="size-3 shrink-0" />
+            <span className="truncate">{lead.email}</span>
+          </a>
         )}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Tag className="size-3 shrink-0" />
+          {leadSourceLabels[lead.source]}
+        </div>
         {lead.nextFollowUp && lead.stage !== "WON" && lead.stage !== "LOST" && (
-          <span
+          <div
             className={cn(
-              "flex items-center gap-1 text-xs",
+              "flex items-center gap-1.5 text-xs",
               overdue ? "font-semibold text-red-600" : "text-muted-foreground",
             )}
           >
-            <CalendarClock className="size-3" />
+            <CalendarClock className="size-3 shrink-0" />
             {formatDate(lead.nextFollowUp)}
             {overdue && " · overdue"}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-2.5 flex items-center justify-between pl-6">
+        {lead.estimatedValue != null ? (
+          <span className="flex items-center gap-1 rounded-md bg-brand-tint px-2 py-0.5 text-xs font-semibold text-primary">
+            <BadgeDollarSign className="size-3" />
+            {usd.format(lead.estimatedValue)}
           </span>
+        ) : (
+          <span />
         )}
         {lead.convertedClientId && (
           <span className="flex items-center gap-1 text-xs font-medium text-emerald-600">
@@ -139,7 +165,9 @@ function LeadCard({
       </div>
 
       {lead.notes && (
-        <p className="mt-1.5 line-clamp-2 pl-6 text-xs text-muted-foreground">{lead.notes}</p>
+        <p className="mt-2 line-clamp-2 rounded-md bg-muted/50 px-2.5 py-1.5 pl-2.5 text-xs text-muted-foreground">
+          {lead.notes}
+        </p>
       )}
 
       {!dragging && (
@@ -188,7 +216,7 @@ function StageColumn({
   const isTarget = activeStage && activeStage !== stage;
 
   return (
-    <div className="flex min-w-0 flex-col">
+    <div className="flex w-[300px] shrink-0 flex-col">
       <div className="mb-2 rounded-lg border bg-card px-3 py-2">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1.5 text-sm font-semibold">
@@ -315,7 +343,7 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-3">
           {STAGES.map((stage) => (
             <StageColumn
               key={stage}
