@@ -80,6 +80,139 @@ export async function deleteLead(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/** Minimal RFC-4180-ish CSV parser (handles quotes, commas, newlines). */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  const s = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else field += ch;
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((c) => c.trim() !== ""));
+}
+
+const SOURCE_LOOKUP: Record<string, string> = {
+  fiverr: "FIVERR",
+  upwork: "UPWORK",
+  referral: "REFERRAL",
+  website: "WEBSITE",
+  other: "OTHER",
+};
+const STAGE_LOOKUP: Record<string, string> = {
+  new: "NEW",
+  contacted: "CONTACTED",
+  proposal: "PROPOSAL",
+  "proposal sent": "PROPOSAL",
+  won: "WON",
+  lost: "LOST",
+};
+
+/**
+ * Bulk-import leads from CSV text (Excel: Save As .csv). Expected header
+ * columns (case-insensitive, order-independent): name, email, company,
+ * source, stage, estimatedValue, notes, nextFollowUp. Only `name` required.
+ * Skips invalid rows and reports counts.
+ */
+export async function importLeads(
+  csvText: string,
+): Promise<ActionResult<{ imported: number; skipped: number; errors: string[] }>> {
+  await requireAdmin();
+  const rows = parseCsv(csvText);
+  if (rows.length < 2) {
+    return { ok: false, error: "The file has no data rows below the header." };
+  }
+
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (name: string) => header.indexOf(name.toLowerCase());
+  const idx = {
+    name: col("name"),
+    email: col("email"),
+    company: col("company"),
+    source: col("source"),
+    stage: col("stage"),
+    value: header.findIndex((h) => h === "estimatedvalue" || h === "value" || h === "est. value"),
+    notes: col("notes"),
+    followUp: header.findIndex((h) => h === "nextfollowup" || h === "follow up" || h === "followup"),
+  };
+  if (idx.name === -1) {
+    return { ok: false, error: 'CSV must have a "name" column.' };
+  }
+
+  const cell = (row: string[], i: number) => (i === -1 ? "" : (row[i] ?? "").trim());
+  const toCreate: {
+    name: string;
+    email: string | null;
+    company: string | null;
+    source: string;
+    stage: string;
+    estimatedValue: number | null;
+    notes: string | null;
+    nextFollowUp: Date | null;
+  }[] = [];
+  const errors: string[] = [];
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const name = cell(row, idx.name);
+    if (!name) {
+      errors.push(`Row ${r + 1}: missing name`);
+      continue;
+    }
+    const rawValue = cell(row, idx.value).replace(/[$,]/g, "");
+    const value = rawValue ? Number(rawValue) : null;
+    const followRaw = cell(row, idx.followUp);
+    const follow = followRaw ? new Date(followRaw) : null;
+    toCreate.push({
+      name: name.slice(0, 160),
+      email: cell(row, idx.email).toLowerCase() || null,
+      company: cell(row, idx.company) || null,
+      source: SOURCE_LOOKUP[cell(row, idx.source).toLowerCase()] ?? "OTHER",
+      stage: STAGE_LOOKUP[cell(row, idx.stage).toLowerCase()] ?? "NEW",
+      estimatedValue: value != null && !Number.isNaN(value) ? value : null,
+      notes: cell(row, idx.notes) || null,
+      nextFollowUp: follow && !Number.isNaN(follow.getTime()) ? follow : null,
+    });
+  }
+
+  if (toCreate.length === 0) {
+    return { ok: false, error: "No valid rows found. " + errors.slice(0, 3).join("; ") };
+  }
+
+  await prisma.lead.createMany({
+    data: toCreate as never,
+  });
+
+  revalidatePath("/admin/leads");
+  revalidatePath("/admin");
+  return {
+    ok: true,
+    data: { imported: toCreate.length, skipped: errors.length, errors: errors.slice(0, 5) },
+  };
+}
+
 /**
  * Won lead → client account: creates the CLIENT user (invite email so they
  * set their own password), marks the lead WON, and returns the client id so

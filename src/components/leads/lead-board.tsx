@@ -2,11 +2,23 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import type { LeadStage } from "@prisma/client";
 import type { LeadView } from "@/lib/dal/leads";
 import { leadStageLabels, leadSourceLabels } from "@/lib/validation/lead";
 import { setLeadStage, deleteLead, convertLead } from "@/lib/actions/leads";
 import { LeadFormDialog } from "./lead-form-dialog";
+import { LeadImportDialog } from "./lead-import-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,14 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { usd, formatDate } from "@/lib/format";
+import { usd, formatDate, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -35,16 +40,18 @@ import {
   UserRoundPlus,
   BadgeDollarSign,
   CheckCircle2,
+  FileUp,
+  GripVertical,
 } from "lucide-react";
 
 const STAGES: LeadStage[] = ["NEW", "CONTACTED", "PROPOSAL", "WON", "LOST"];
 
-const stageAccents: Record<LeadStage, string> = {
-  NEW: "border-t-sky-400",
-  CONTACTED: "border-t-amber-400",
-  PROPOSAL: "border-t-violet-400",
-  WON: "border-t-emerald-400",
-  LOST: "border-t-slate-300",
+const stageStyle: Record<LeadStage, { bar: string; dot: string; ring: string }> = {
+  NEW: { bar: "bg-sky-400", dot: "bg-sky-400", ring: "ring-sky-300" },
+  CONTACTED: { bar: "bg-amber-400", dot: "bg-amber-400", ring: "ring-amber-300" },
+  PROPOSAL: { bar: "bg-violet-400", dot: "bg-violet-400", ring: "ring-violet-300" },
+  WON: { bar: "bg-emerald-400", dot: "bg-emerald-400", ring: "ring-emerald-300" },
+  LOST: { bar: "bg-slate-300", dot: "bg-slate-300", ring: "ring-slate-300" },
 };
 
 function isOverdue(date: string | null): boolean {
@@ -52,27 +59,209 @@ function isOverdue(date: string | null): boolean {
   return new Date(`${date}T23:59:59`) < new Date();
 }
 
+function LeadCard({
+  lead,
+  dragging,
+  onEdit,
+  onDelete,
+  onConvert,
+}: {
+  lead: LeadView;
+  dragging?: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onConvert?: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: lead.id });
+  const overdue = isOverdue(lead.nextFollowUp) && lead.stage !== "WON" && lead.stage !== "LOST";
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "group rounded-xl border bg-card p-3 shadow-sm transition-shadow",
+        isDragging && "opacity-40",
+        dragging && "rotate-2 shadow-xl ring-2 ring-primary/40",
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <button
+          className="mt-0.5 shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+          aria-label="Drag lead"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-4" />
+        </button>
+        <span
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white",
+            stageStyle[lead.stage].dot,
+          )}
+        >
+          {initials(lead.name)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold leading-tight">{lead.name}</p>
+          {lead.company && (
+            <p className="truncate text-xs text-muted-foreground">{lead.company}</p>
+          )}
+        </div>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {leadSourceLabels[lead.source]}
+        </span>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
+        {lead.estimatedValue != null && (
+          <span className="flex items-center gap-1 text-xs font-semibold text-primary">
+            <BadgeDollarSign className="size-3" />
+            {usd.format(lead.estimatedValue)}
+          </span>
+        )}
+        {lead.nextFollowUp && lead.stage !== "WON" && lead.stage !== "LOST" && (
+          <span
+            className={cn(
+              "flex items-center gap-1 text-xs",
+              overdue ? "font-semibold text-red-600" : "text-muted-foreground",
+            )}
+          >
+            <CalendarClock className="size-3" />
+            {formatDate(lead.nextFollowUp)}
+            {overdue && " · overdue"}
+          </span>
+        )}
+        {lead.convertedClientId && (
+          <span className="flex items-center gap-1 text-xs font-medium text-emerald-600">
+            <CheckCircle2 className="size-3" /> Client
+          </span>
+        )}
+      </div>
+
+      {lead.notes && (
+        <p className="mt-1.5 line-clamp-2 pl-6 text-xs text-muted-foreground">{lead.notes}</p>
+      )}
+
+      {!dragging && (
+        <div className="mt-2.5 flex items-center justify-end gap-0.5 border-t pt-2 opacity-0 transition-opacity group-hover:opacity-100">
+          {!lead.convertedClientId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 text-emerald-600 hover:text-emerald-700"
+              title="Convert to client"
+              onClick={onConvert}
+            >
+              <UserRoundPlus className="size-3.5" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" className="size-7" onClick={onEdit}>
+            <Pencil className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-destructive hover:text-destructive"
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StageColumn({
+  stage,
+  leads,
+  activeStage,
+  children,
+}: {
+  stage: LeadStage;
+  leads: LeadView[];
+  activeStage: LeadStage | null;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: stage });
+  const total = leads.reduce((sum, l) => sum + (l.estimatedValue ?? 0), 0);
+  const isTarget = activeStage && activeStage !== stage;
+
+  return (
+    <div className="flex min-w-0 flex-col">
+      <div className="mb-2 rounded-lg border bg-card px-3 py-2">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-sm font-semibold">
+            <span className={cn("size-2 rounded-full", stageStyle[stage].dot)} />
+            {leadStageLabels[stage]}
+          </span>
+          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground">
+            {leads.length}
+          </span>
+        </div>
+        {total > 0 && (
+          <p className="mt-0.5 pl-3.5 text-xs text-muted-foreground">{usd.format(total)}</p>
+        )}
+      </div>
+      <div
+        ref={setNodeRef}
+        className={cn(
+          "min-h-24 flex-1 space-y-2.5 rounded-xl p-1.5 transition-colors",
+          isOver && "bg-primary/5 ring-2",
+          isOver && stageStyle[stage].ring,
+          isTarget && !isOver && "bg-muted/40",
+        )}
+      >
+        {leads.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+            {isTarget ? "Drop here" : "Empty"}
+          </div>
+        ) : (
+          children
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function LeadBoard({ leads }: { leads: LeadView[] }) {
   const router = useRouter();
   const [items, setItems] = useState(leads);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<LeadView | null>(null);
   const [deleting, setDeleting] = useState<LeadView | null>(null);
   const [converting, setConverting] = useState<LeadView | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Sync with server data after router.refresh (adjust-during-render).
   const [prevLeads, setPrevLeads] = useState(leads);
   if (leads !== prevLeads) {
     setPrevLeads(leads);
     setItems(leads);
   }
 
-  // Optimistic stage move with revert on failure.
-  async function moveStage(lead: LeadView, stage: LeadStage) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const activeLead = items.find((l) => l.id === activeId) ?? null;
+
+  function onDragStart(event: DragStartEvent) {
+    setActiveId(String(event.active.id));
+  }
+
+  async function onDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveId(null);
+    if (!over) return;
+    const lead = items.find((l) => l.id === active.id);
+    const target = over.id as LeadStage;
+    if (!lead || lead.stage === target || !STAGES.includes(target)) return;
+
     const previous = items;
-    setItems(items.map((l) => (l.id === lead.id ? { ...l, stage } : l)));
-    const result = await setLeadStage(lead.id, stage);
+    setItems(items.map((l) => (l.id === lead.id ? { ...l, stage: target } : l)));
+    const result = await setLeadStage(lead.id, target);
     if (!result.ok) {
       setItems(previous);
       toast.error(result.error);
@@ -87,162 +276,78 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
     setBusy(false);
     setConverting(null);
     if (!result.ok) return void toast.error(result.error);
-    toast.success("Client created — invite email sent. Set up their first project.");
+    toast.success("Client created — invite sent. Set up their first project.");
     router.push(`/admin/projects/new?clientId=${result.data!.clientId}`);
     router.refresh();
   }
 
+  const totalPipeline = items
+    .filter((l) => l.stage !== "LOST")
+    .reduce((sum, l) => sum + (l.estimatedValue ?? 0), 0);
+
   return (
     <div>
-      <div className="mb-4 flex justify-end">
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus /> Add lead
-        </Button>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Pipeline value:{" "}
+          <span className="font-semibold text-foreground">{usd.format(totalPipeline)}</span>{" "}
+          across {items.filter((l) => l.stage !== "LOST" && l.stage !== "WON").length} open
+          lead{items.filter((l) => l.stage !== "LOST" && l.stage !== "WON").length === 1 ? "" : "s"}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <FileUp /> Import
+          </Button>
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus /> Add lead
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {STAGES.map((stage) => {
-          const stageLeads = items.filter((l) => l.stage === stage);
-          const stageValue = stageLeads.reduce((sum, l) => sum + (l.estimatedValue ?? 0), 0);
-          return (
-            <div key={stage} className="min-w-0">
-              <div className="mb-2 flex items-baseline justify-between px-1">
-                <h2 className="text-sm font-semibold">
-                  {leadStageLabels[stage]}{" "}
-                  <span className="font-normal text-muted-foreground">
-                    ({stageLeads.length})
-                  </span>
-                </h2>
-                {stageValue > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {usd.format(stageValue)}
-                  </span>
-                )}
-              </div>
-              <div className="space-y-2.5">
-                {stageLeads.length === 0 ? (
-                  <div className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
-                    Empty
-                  </div>
-                ) : (
-                  stageLeads.map((lead) => (
-                    <div
-                      key={lead.id}
-                      className={cn(
-                        "rounded-xl border border-t-4 bg-card p-3.5",
-                        stageAccents[lead.stage],
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">{lead.name}</p>
-                          {lead.company && (
-                            <p className="truncate text-xs text-muted-foreground">
-                              {lead.company}
-                            </p>
-                          )}
-                        </div>
-                        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                          {leadSourceLabels[lead.source]}
-                        </span>
-                      </div>
+      <DndContext
+        id="lead-board"
+        sensors={sensors}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {STAGES.map((stage) => (
+            <StageColumn
+              key={stage}
+              stage={stage}
+              leads={items.filter((l) => l.stage === stage)}
+              activeStage={activeLead?.stage ?? null}
+            >
+              {items
+                .filter((l) => l.stage === stage)
+                .map((lead) => (
+                  <LeadCard
+                    key={lead.id}
+                    lead={lead}
+                    onEdit={() => {
+                      setEditing(lead);
+                      setFormOpen(true);
+                    }}
+                    onDelete={() => setDeleting(lead)}
+                    onConvert={() => setConverting(lead)}
+                  />
+                ))}
+            </StageColumn>
+          ))}
+        </div>
 
-                      {lead.estimatedValue != null && (
-                        <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-primary">
-                          <BadgeDollarSign className="size-3" />
-                          {usd.format(lead.estimatedValue)}
-                        </p>
-                      )}
-                      {lead.nextFollowUp && lead.stage !== "WON" && lead.stage !== "LOST" && (
-                        <p
-                          className={cn(
-                            "mt-1 flex items-center gap-1 text-xs",
-                            isOverdue(lead.nextFollowUp)
-                              ? "font-semibold text-red-600"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          <CalendarClock className="size-3" />
-                          Follow up {formatDate(lead.nextFollowUp)}
-                          {isOverdue(lead.nextFollowUp) && " — overdue"}
-                        </p>
-                      )}
-                      {lead.notes && (
-                        <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">
-                          {lead.notes}
-                        </p>
-                      )}
-                      {lead.convertedClientId && (
-                        <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-emerald-600">
-                          <CheckCircle2 className="size-3" /> Client created
-                        </p>
-                      )}
-
-                      <div className="mt-3 flex items-center gap-1 border-t pt-2.5">
-                        <Select
-                          value={lead.stage}
-                          onValueChange={(v) => moveStage(lead, v as LeadStage)}
-                        >
-                          <SelectTrigger size="sm" className="h-7 flex-1 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {STAGES.map((s) => (
-                              <SelectItem key={s} value={s}>
-                                {leadStageLabels[s]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {!lead.convertedClientId && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 text-emerald-600 hover:text-emerald-700"
-                            title="Convert to client"
-                            onClick={() => setConverting(lead)}
-                          >
-                            <UserRoundPlus className="size-3.5" />
-                            <span className="sr-only">Convert to client</span>
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-7"
-                          onClick={() => {
-                            setEditing(lead);
-                            setFormOpen(true);
-                          }}
-                        >
-                          <Pencil className="size-3.5" />
-                          <span className="sr-only">Edit</span>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-7 text-destructive hover:text-destructive"
-                          onClick={() => setDeleting(lead)}
-                        >
-                          <Trash2 className="size-3.5" />
-                          <span className="sr-only">Delete</span>
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+        <DragOverlay dropAnimation={null}>
+          {activeLead ? <LeadCard lead={activeLead} dragging /> : null}
+        </DragOverlay>
+      </DndContext>
 
       <LeadFormDialog lead={editing} open={formOpen} onOpenChange={setFormOpen} />
+      <LeadImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
       <Dialog open={!!converting} onOpenChange={(open) => !open && setConverting(null)}>
         <DialogContent>
@@ -250,15 +355,17 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
             <DialogTitle>Convert “{converting?.name}” to a client?</DialogTitle>
             <DialogDescription>
               Creates their portal account ({converting?.email ?? "no email set"}),
-              emails them an invite to set a password, and takes you to create
-              their first project.
+              emails them an invite, and takes you to create their first project.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConverting(null)} disabled={busy}>
               Cancel
             </Button>
-            <Button disabled={busy || !converting?.email} onClick={() => converting && onConvert(converting)}>
+            <Button
+              disabled={busy || !converting?.email}
+              onClick={() => converting && onConvert(converting)}
+            >
               {busy ? <Loader2 className="animate-spin" /> : <UserRoundPlus />}
               Convert to client
             </Button>

@@ -14,10 +14,24 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { usd, projectTypeLabels } from "@/lib/format";
-import { Users, FolderKanban, FileText, DollarSign } from "lucide-react";
+import { usd, projectTypeLabels, formatDate } from "@/lib/format";
+import { formatDistanceToNow } from "date-fns";
+import {
+  FolderKanban,
+  TrendingUp,
+  Receipt,
+  Inbox,
+  Clock,
+  CalendarClock,
+  Activity,
+  ArrowRight,
+} from "lucide-react";
 
 export const metadata = { title: "Dashboard" };
+
+function fmtHours(hours: number): string {
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
+}
 
 export default async function AdminDashboardPage() {
   const [data, pipeline] = await Promise.all([
@@ -27,54 +41,69 @@ export default async function AdminDashboardPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Dashboard"
-        description="Your agency overview at a glance."
-      />
+      <PageHeader title="Dashboard" description="Your agency overview at a glance." />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Total Clients"
-          value={String(data.totalClients)}
-          icon={<Users className="size-5" />}
-          iconClassName="bg-info-tint text-info"
+          label="Revenue this month"
+          value={usd.format(data.revenueThisMonth)}
+          icon={<TrendingUp className="size-5" />}
+          iconClassName="bg-success-tint text-success"
         />
         <StatCard
-          label="Total Projects"
-          value={String(data.totalProjects)}
+          label="Outstanding"
+          value={usd.format(data.outstanding)}
+          icon={<Receipt className="size-5" />}
+          iconClassName="bg-amber-50 text-amber-600"
+        />
+        <StatCard
+          label="Active projects"
+          value={String(data.activeProjects)}
           icon={<FolderKanban className="size-5" />}
           iconClassName="bg-brand-tint text-primary"
         />
         <StatCard
-          label="Total Invoices"
-          value={String(data.totalInvoices)}
-          icon={<FileText className="size-5" />}
-          iconClassName="bg-violet-50 text-violet-600"
-        />
-        <StatCard
-          label="Paid Revenue"
-          value={usd.format(data.paidRevenue)}
-          icon={<DollarSign className="size-5" />}
-          iconClassName="bg-success-tint text-success"
+          label="Hours this month"
+          value={fmtHours(data.hoursThisMonth)}
+          icon={<Clock className="size-5" />}
+          iconClassName="bg-info-tint text-info"
         />
       </div>
 
-      {pipeline.open > 0 && (
-        <Link
-          href="/admin/leads"
-          className="mt-4 flex items-center justify-between rounded-xl border bg-card px-5 py-3.5 transition-colors hover:bg-muted/50"
-        >
-          <span className="text-sm">
-            <span className="font-semibold">{pipeline.open}</span> open lead
-            {pipeline.open === 1 ? "" : "s"} in the pipeline
-            {pipeline.overdue > 0 && (
-              <span className="ml-2 font-semibold text-red-600">
-                · {pipeline.overdue} follow-up{pipeline.overdue === 1 ? "" : "s"} overdue
+      {/* Action strip: things needing attention */}
+      {(pipeline.open > 0 || data.pendingRequests > 0) && (
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {pipeline.open > 0 && (
+            <Link
+              href="/admin/leads"
+              className="flex items-center justify-between rounded-xl border bg-card px-5 py-3.5 transition-colors hover:bg-muted/50"
+            >
+              <span className="text-sm">
+                <span className="font-semibold">{pipeline.open}</span> open lead
+                {pipeline.open === 1 ? "" : "s"}
+                {pipeline.overdue > 0 && (
+                  <span className="ml-2 font-semibold text-red-600">
+                    · {pipeline.overdue} follow-up{pipeline.overdue === 1 ? "" : "s"} overdue
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-          <span className="text-sm font-medium text-primary">View pipeline →</span>
-        </Link>
+              <ArrowRight className="size-4 text-primary" />
+            </Link>
+          )}
+          {data.pendingRequests > 0 && (
+            <Link
+              href="/admin/task-requests"
+              className="flex items-center justify-between rounded-xl border bg-card px-5 py-3.5 transition-colors hover:bg-muted/50"
+            >
+              <span className="flex items-center gap-2 text-sm">
+                <Inbox className="size-4 text-primary" />
+                <span className="font-semibold">{data.pendingRequests}</span> task request
+                {data.pendingRequests === 1 ? "" : "s"} pending
+              </span>
+              <ArrowRight className="size-4 text-primary" />
+            </Link>
+          )}
+        </div>
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -132,6 +161,93 @@ export default async function AdminDashboardPage() {
           </CardHeader>
           <CardContent>
             <InvoiceStatusDonut data={data.invoicesByStatus} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-heading flex items-center gap-2 text-lg">
+              <CalendarClock className="size-4 text-primary" /> Invoices due soon
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data.upcomingInvoices.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Nothing due in the next 7 days.
+              </p>
+            ) : (
+              <ul className="divide-y">
+                {data.upcomingInvoices.map((inv) => {
+                  const overdue = new Date(inv.dueDate) < new Date();
+                  return (
+                    <li key={inv.id} className="flex items-center justify-between py-2.5">
+                      <div className="min-w-0">
+                        <Link
+                          href={`/admin/invoices/${inv.id}`}
+                          className="text-sm font-medium hover:text-primary"
+                        >
+                          {inv.invoiceNumber}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">{inv.clientName}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-medium">{usd.format(inv.amount)}</p>
+                        <p
+                          className={`text-xs ${overdue ? "font-semibold text-red-600" : "text-muted-foreground"}`}
+                        >
+                          {overdue ? "overdue · " : "due "}
+                          {formatDate(inv.dueDate)}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-heading flex items-center gap-2 text-lg">
+              <Activity className="size-4 text-primary" /> Recent activity
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data.recentActivity.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No activity yet.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {data.recentActivity.map((n) => {
+                  const body = (
+                    <>
+                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                      <div className="min-w-0">
+                        <p className="text-sm leading-snug">{n.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                        </p>
+                      </div>
+                    </>
+                  );
+                  return (
+                    <li key={n.id}>
+                      {n.link ? (
+                        <Link href={n.link} className="flex gap-2.5 hover:opacity-80">
+                          {body}
+                        </Link>
+                      ) : (
+                        <div className="flex gap-2.5">{body}</div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>
