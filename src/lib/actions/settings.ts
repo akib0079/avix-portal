@@ -85,3 +85,18 @@ export async function reorderPaymentAccounts(
   revalidatePath("/admin/settings");
   return { ok: true };
 }
+
+export async function updateWhatsappSupportUrl(url: string): Promise<ActionResult> {
+  await requireAdmin();
+  const trimmed = url.trim();
+  if (trimmed && !/^https?:\/\/\S+$/i.test(trimmed)) {
+    return { ok: false, error: "Enter a full link starting with https:// (or leave empty to hide it)." };
+  }
+  await prisma.appSetting.upsert({
+    where: { key: "whatsappSupportUrl" },
+    create: { key: "whatsappSupportUrl", value: trimmed },
+    update: { value: trimmed },
+  });
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}

@@ -287,7 +287,14 @@ export function MilestoneBoard({
           No milestones yet — add the first step of this project.
         </div>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        // Stable id keeps dnd-kit's aria ids identical between server and
+        // client render (avoids a hydration mismatch warning).
+        <DndContext
+          id={`milestones-${projectId}`}
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={onDragEnd}
+        >
           <SortableContext items={items.map((m) => m.id)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2.5">
               {items.map((milestone, index) => (

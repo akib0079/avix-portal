@@ -336,6 +336,16 @@ model Counter {
   @@map("counters")
 }
 
+/// Simple key-value store for admin-editable app settings
+/// (e.g. the WhatsApp support link shown to clients).
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
 /// Bank-transfer payment accounts shown to clients (admin-managed). The
 /// `fields` JSON is an ordered [{label, value}] list so each region can carry
 /// its own set (ACH routing/account vs IBAN/SWIFT vs IBAN/sort-code).

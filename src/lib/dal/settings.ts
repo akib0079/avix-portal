@@ -51,3 +51,13 @@ export async function listActivePaymentAccounts(): Promise<PaymentAccountView[]>
   });
   return rows.map(toView);
 }
+
+export const WHATSAPP_SETTING_KEY = "whatsappSupportUrl";
+
+/** Admin-editable WhatsApp support link, or null when not configured. */
+export async function getWhatsappSupportUrl(): Promise<string | null> {
+  const row = await prisma.appSetting.findUnique({
+    where: { key: WHATSAPP_SETTING_KEY },
+  });
+  return row?.value || null;
+}

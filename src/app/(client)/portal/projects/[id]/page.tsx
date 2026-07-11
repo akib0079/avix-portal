@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getMyProject, listMyProjectOptions } from "@/lib/dal/portal";
 import { getProjectMessages } from "@/lib/dal/messages";
+import { getWhatsappSupportUrl } from "@/lib/dal/settings";
 import { ClientProjectTimeline } from "@/components/projects/client-project-timeline";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
@@ -21,9 +22,10 @@ export default async function MyProjectPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [project, options] = await Promise.all([
+  const [project, options, whatsappUrl] = await Promise.all([
     getMyProject(id),
     listMyProjectOptions(),
+    getWhatsappSupportUrl(),
   ]);
   if (!project) notFound();
   // After ownership is confirmed above (getMyProject scopes to the session).
@@ -90,6 +92,7 @@ export default async function MyProjectPage({
         viewerRole="CLIENT"
         initialMessages={messages}
         title="Chat with Avix Digital"
+        whatsappUrl={whatsappUrl}
       />
     </div>
   );
