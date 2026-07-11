@@ -1,5 +1,6 @@
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { MilestoneStatusBadge } from "@/components/status-badges";
+import { ApproveMilestoneButton } from "@/components/portal/approve-milestone-button";
 import { formatPricing, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { MilestoneStatus, PricingType, ProjectBillingType } from "@prisma/client";
@@ -16,6 +17,7 @@ type TimelineMilestone = {
   fixedPrice: number | null;
   loggedHours: number;
   timeEntries: { id: string; date: string; hours: number; note: string | null }[];
+  clientApprovedAt: string | null;
 };
 
 function fmtHours(hours: number): string {
@@ -107,6 +109,12 @@ export function ClientProjectTimeline({
                 <div className="mt-2 rounded-lg bg-muted/50 px-3.5 py-2.5">
                   <RichTextViewer content={milestone.description} />
                 </div>
+              )}
+              {milestone.status === "COMPLETED" && (
+                <ApproveMilestoneButton
+                  milestoneId={milestone.id}
+                  approvedAt={milestone.clientApprovedAt}
+                />
               )}
               {recentEntries.some((e) => e.note) && (
                 <ul className="mt-2 space-y-1.5">

@@ -40,6 +40,11 @@ export default async function InvoiceDetailPage({
         description={`${invoice.client.firstName} ${invoice.client.lastName} · issued ${formatDate(invoice.issueDate)}${invoice.sentAt ? ` · sent ${formatDate(invoice.sentAt)}` : ""}`}
         action={
           <div className="flex items-center gap-2">
+            {invoice.paymentClaimedAt && invoice.status !== "PAID" && (
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                Client says paid · {formatDate(invoice.paymentClaimedAt)}
+              </span>
+            )}
             <InvoiceStatusBadge status={invoice.status} />
             {(invoice.pdfPath || invoice.pdfExternalUrl) && (
               <Button asChild variant="outline" size="sm">

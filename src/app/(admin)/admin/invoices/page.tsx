@@ -74,6 +74,11 @@ export default async function InvoicesPage() {
                         {(invoice.pdfPath || invoice.pdfExternalUrl) && (
                           <Paperclip className="size-3 text-muted-foreground" />
                         )}
+                        {invoice.paymentClaimedAt && invoice.status !== "PAID" && (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                            Client says paid
+                          </span>
+                        )}
                       </Link>
                     </TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground md:table-cell">

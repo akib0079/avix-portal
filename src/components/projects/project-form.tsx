@@ -43,9 +43,12 @@ export type ClientOption = {
 export function ProjectForm({
   clients,
   project,
+  defaultClientId,
 }: {
   clients: ClientOption[];
   project?: ProjectInput & { id: string };
+  /** Preselects the client on the create form (e.g. after lead conversion). */
+  defaultClientId?: string;
 }) {
   const router = useRouter();
   const isEdit = !!project;
@@ -54,7 +57,7 @@ export function ProjectForm({
     resolver: zodResolver(projectSchema),
     defaultValues: {
       projectName: project?.projectName ?? "",
-      clientId: project?.clientId ?? "none",
+      clientId: project?.clientId ?? defaultClientId ?? "none",
       type: project?.type ?? "SHOPIFY",
       source: project?.source ?? "INDEPENDENT",
       priority: project?.priority ?? "MEDIUM",

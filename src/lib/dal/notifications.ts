@@ -14,7 +14,7 @@ export async function getNotificationsForUser(userId: string) {
 }
 
 export async function notifyAllAdmins(input: {
-  type: "TASK_REQUEST_SUBMITTED";
+  type: "TASK_REQUEST_SUBMITTED" | "MILESTONE_APPROVED" | "PAYMENT_CLAIMED";
   title: string;
   body?: string;
   link?: string;

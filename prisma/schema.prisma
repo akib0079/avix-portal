@@ -83,6 +83,24 @@ enum NotificationType {
   MILESTONE_COMPLETED
   MILESTONE_UPDATED
   MESSAGE_RECEIVED
+  MILESTONE_APPROVED
+  PAYMENT_CLAIMED
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  PROPOSAL
+  WON
+  LOST
+}
+
+enum LeadSource {
+  FIVERR
+  UPWORK
+  REFERRAL
+  WEBSITE
+  OTHER
 }
 
 enum PaymentRegion {
@@ -230,6 +248,8 @@ model Milestone {
   fixedPrice          Decimal?        @db.Decimal(10, 2)
   sourceTaskRequestId String?         @unique
   sourceTaskRequest   TaskRequest?    @relation(fields: [sourceTaskRequestId], references: [id], onDelete: SetNull)
+  /// Set when the client approves this milestone after completion.
+  clientApprovedAt    DateTime?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
@@ -273,6 +293,9 @@ model Invoice {
   dueDate         DateTime?
   notes           String?
   sentAt          DateTime?
+  /// Set when the client reports having sent the payment; admin confirms
+  /// by moving the status to PAID.
+  paymentClaimedAt DateTime?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -337,6 +360,25 @@ model Counter {
   value Int    @default(0)
 
   @@map("counters")
+}
+
+/// A prospect in the sales pipeline; may be converted into a client.
+model Lead {
+  id                String     @id @default(cuid())
+  name              String
+  email             String?
+  company           String?
+  source            LeadSource @default(OTHER)
+  stage             LeadStage  @default(NEW)
+  estimatedValue    Decimal?   @db.Decimal(10, 2)
+  notes             String?
+  nextFollowUp      DateTime?
+  convertedClientId String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([stage, nextFollowUp])
+  @@map("leads")
 }
 
 /// Simple key-value store for admin-editable app settings

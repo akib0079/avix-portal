@@ -118,6 +118,11 @@ function SortableRow({
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{milestone.title}</p>
             <MilestoneStatusBadge status={milestone.status} />
+            {milestone.clientApprovedAt && (
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600">
+                Client approved
+              </span>
+            )}
           </div>
           {pricing && (
             <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-primary">

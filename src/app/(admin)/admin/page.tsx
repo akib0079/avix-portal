@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAdminDashboard } from "@/lib/dal/dashboard";
+import { getPipelineSummary } from "@/lib/dal/leads";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { InvoiceStatusDonut } from "@/components/dashboard/invoice-status-donut";
@@ -19,7 +20,10 @@ import { Users, FolderKanban, FileText, DollarSign } from "lucide-react";
 export const metadata = { title: "Dashboard" };
 
 export default async function AdminDashboardPage() {
-  const data = await getAdminDashboard();
+  const [data, pipeline] = await Promise.all([
+    getAdminDashboard(),
+    getPipelineSummary(),
+  ]);
 
   return (
     <div>
@@ -54,6 +58,24 @@ export default async function AdminDashboardPage() {
           iconClassName="bg-success-tint text-success"
         />
       </div>
+
+      {pipeline.open > 0 && (
+        <Link
+          href="/admin/leads"
+          className="mt-4 flex items-center justify-between rounded-xl border bg-card px-5 py-3.5 transition-colors hover:bg-muted/50"
+        >
+          <span className="text-sm">
+            <span className="font-semibold">{pipeline.open}</span> open lead
+            {pipeline.open === 1 ? "" : "s"} in the pipeline
+            {pipeline.overdue > 0 && (
+              <span className="ml-2 font-semibold text-red-600">
+                · {pipeline.overdue} follow-up{pipeline.overdue === 1 ? "" : "s"} overdue
+              </span>
+            )}
+          </span>
+          <span className="text-sm font-medium text-primary">View pipeline →</span>
+        </Link>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">

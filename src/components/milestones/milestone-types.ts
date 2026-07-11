@@ -22,6 +22,7 @@ export type MilestoneView = {
   fixedPrice: number | null;
   loggedHours: number;
   timeEntries: TimeEntryView[];
+  clientApprovedAt: string | null; // ISO date
 };
 
 export function toMilestoneView(m: {
@@ -34,6 +35,7 @@ export function toMilestoneView(m: {
   hourlyRate: unknown;
   estimatedHours: unknown;
   fixedPrice: unknown;
+  clientApprovedAt?: Date | null;
   timeEntries?: { id: string; date: Date; hours: unknown; note: string | null }[];
 }): MilestoneView {
   const entries = (m.timeEntries ?? []).map((e) => ({
@@ -54,5 +56,6 @@ export function toMilestoneView(m: {
     fixedPrice: m.fixedPrice == null ? null : Number(m.fixedPrice),
     loggedHours: entries.reduce((sum, e) => sum + e.hours, 0),
     timeEntries: entries,
+    clientApprovedAt: m.clientApprovedAt?.toISOString() ?? null,
   };
 }

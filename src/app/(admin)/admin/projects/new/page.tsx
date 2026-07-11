@@ -5,8 +5,16 @@ import { Card, CardContent } from "@/components/ui/card";
 
 export const metadata = { title: "New Project" };
 
-export default async function NewProjectPage() {
-  const clients = await listActiveClientOptions();
+export default async function NewProjectPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clientId?: string }>;
+}) {
+  const [{ clientId }, clients] = await Promise.all([
+    searchParams,
+    listActiveClientOptions(),
+  ]);
+  const defaultClientId = clients.some((c) => c.id === clientId) ? clientId : undefined;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -16,7 +24,7 @@ export default async function NewProjectPage() {
       />
       <Card>
         <CardContent className="pt-6">
-          <ProjectForm clients={clients} />
+          <ProjectForm clients={clients} defaultClientId={defaultClientId} />
         </CardContent>
       </Card>
     </div>

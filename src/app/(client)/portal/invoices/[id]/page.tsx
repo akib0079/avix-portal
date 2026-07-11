@@ -4,6 +4,7 @@ import { getMyInvoice } from "@/lib/dal/portal";
 import { listActivePaymentAccounts } from "@/lib/dal/settings";
 import { InvoiceStatusBadge } from "@/components/status-badges";
 import { PaymentDetails } from "@/components/payments/payment-details";
+import { ClaimPaymentButton } from "@/components/portal/claim-payment-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usd, formatDate } from "@/lib/format";
@@ -74,6 +75,15 @@ export default async function ClientInvoiceDetailPage({
               </div>
             </div>
           </div>
+
+          {invoice.status !== "PAID" && (
+            <div className="mt-6">
+              <ClaimPaymentButton
+                invoiceId={invoice.id}
+                claimed={!!invoice.paymentClaimedAt}
+              />
+            </div>
+          )}
 
           {(invoice.pdfPath || invoice.pdfExternalUrl) && (
             <div className="mt-6">

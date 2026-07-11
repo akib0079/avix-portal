@@ -23,6 +23,8 @@ import {
   Settings,
   CreditCard,
   Megaphone,
+  ChartNoAxesCombined,
+  Target,
 } from "lucide-react";
 
 type NavItem = {
@@ -35,6 +37,8 @@ type NavItem = {
 
 const adminNav: NavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutGrid },
+  { href: "/admin/reports", label: "Reports", icon: ChartNoAxesCombined },
+  { href: "/admin/leads", label: "Leads", icon: Target },
   { href: "/admin/clients", label: "Clients", icon: Users },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
