@@ -31,6 +31,7 @@ function extractFields(formData: FormData) {
     issueDate: String(formData.get("issueDate") ?? ""),
     dueDate: String(formData.get("dueDate") ?? ""),
     notes: String(formData.get("notes") ?? ""),
+    pdfExternalUrl: String(formData.get("pdfExternalUrl") ?? ""),
   };
   return invoiceSchema.safeParse(raw);
 }
@@ -96,6 +97,7 @@ export async function createInvoice(
         notes: data.notes || null,
         pdfPath: pdf.fileName,
         pdfOriginalName: pdf.originalName,
+        pdfExternalUrl: data.pdfExternalUrl || null,
       },
     });
   });
@@ -140,6 +142,7 @@ export async function updateInvoice(
       issueDate: parseDate(data.issueDate)!,
       dueDate: parseDate(data.dueDate),
       notes: data.notes || null,
+      pdfExternalUrl: data.pdfExternalUrl || null,
       ...(pdf.fileName
         ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
         : {}),

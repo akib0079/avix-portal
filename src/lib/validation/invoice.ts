@@ -14,6 +14,16 @@ export const invoiceSchema = z.object({
   issueDate: z.string().min(1, "Issue date is required"),
   dueDate: z.string().optional().or(z.literal("")),
   notes: z.string().trim().max(2000).optional().or(z.literal("")),
+  // External file link (Drive/Dropbox); empty string = none
+  pdfExternalUrl: z
+    .string()
+    .trim()
+    .max(1000)
+    .refine((v) => v === "" || /^https?:\/\/\S+$/i.test(v), {
+      message: "Link must start with http(s)://",
+    })
+    .optional()
+    .or(z.literal("")),
 });
 
 export type InvoiceInput = z.infer<typeof invoiceSchema>;

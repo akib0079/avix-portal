@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Loader2, FileText, Upload } from "lucide-react";
+import { Loader2, FileText, Upload, Link2 } from "lucide-react";
 
 export type InvoiceClientOption = {
   id: string;
@@ -65,6 +65,7 @@ export function InvoiceForm({
       issueDate: invoice?.issueDate ?? new Date().toISOString().slice(0, 10),
       dueDate: invoice?.dueDate ?? "",
       notes: invoice?.notes ?? "",
+      pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
     },
   });
 
@@ -258,6 +259,30 @@ export function InvoiceForm({
             accept="application/pdf"
             className="hidden"
             onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+          />
+          <FormField
+            control={form.control}
+            name="pdfExternalUrl"
+            render={({ field }) => (
+              <FormItem className="mt-3">
+                <FormLabel className="flex items-center gap-1.5 font-normal text-muted-foreground">
+                  <Link2 className="size-3.5" />
+                  …or link an external file (Google Drive / Dropbox)
+                </FormLabel>
+                <FormControl>
+                  <Input
+                    type="url"
+                    placeholder="https://drive.google.com/…"
+                    {...field}
+                  />
+                </FormControl>
+                <p className="text-xs text-muted-foreground">
+                  When a link is set, the invoice&apos;s download button opens it
+                  directly (takes priority over an uploaded PDF).
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
           />
         </div>
 

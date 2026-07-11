@@ -19,9 +19,20 @@ export async function GET(
   // avoids revealing whether an invoice id exists.
   const invoice = await prisma.invoice.findFirst({
     where: viewer.role === "ADMIN" ? { id } : { id, clientId: viewer.id },
-    select: { pdfPath: true, pdfOriginalName: true, invoiceNumber: true },
+    select: {
+      pdfPath: true,
+      pdfOriginalName: true,
+      pdfExternalUrl: true,
+      invoiceNumber: true,
+    },
   });
-  if (!invoice?.pdfPath) return new NextResponse(null, { status: 404 });
+  if (!invoice) return new NextResponse(null, { status: 404 });
+
+  // An external file link (Drive/Dropbox) takes precedence over an upload.
+  if (invoice.pdfExternalUrl) {
+    return NextResponse.redirect(invoice.pdfExternalUrl, 302);
+  }
+  if (!invoice.pdfPath) return new NextResponse(null, { status: 404 });
 
   const data = await openUpload("invoices", invoice.pdfPath);
   if (!data) return new NextResponse(null, { status: 404 });

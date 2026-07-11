@@ -110,7 +110,7 @@ export default async function MyInvoicesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="relative z-10 flex items-center justify-end gap-1">
-                        {invoice.pdfPath && (
+                        {(invoice.pdfPath || invoice.pdfExternalUrl) && (
                           <Button
                             asChild
                             variant="ghost"

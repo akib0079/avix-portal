@@ -75,7 +75,7 @@ export default async function ClientInvoiceDetailPage({
             </div>
           </div>
 
-          {invoice.pdfPath && (
+          {(invoice.pdfPath || invoice.pdfExternalUrl) && (
             <div className="mt-6">
               <Button asChild>
                 <Link href={`/api/files/invoice/${invoice.id}`} prefetch={false}>

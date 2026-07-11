@@ -41,9 +41,13 @@ export default async function InvoiceDetailPage({
         action={
           <div className="flex items-center gap-2">
             <InvoiceStatusBadge status={invoice.status} />
-            {invoice.pdfPath && (
+            {(invoice.pdfPath || invoice.pdfExternalUrl) && (
               <Button asChild variant="outline" size="sm">
-                <Link href={`/api/files/invoice/${invoice.id}`} prefetch={false}>
+                <Link
+                  href={`/api/files/invoice/${invoice.id}`}
+                  prefetch={false}
+                  target={invoice.pdfExternalUrl ? "_blank" : undefined}
+                >
                   <Download /> PDF
                 </Link>
               </Button>
@@ -78,6 +82,7 @@ export default async function InvoiceDetailPage({
               issueDate: invoice.issueDate.toISOString().slice(0, 10),
               dueDate: invoice.dueDate?.toISOString().slice(0, 10) ?? "",
               notes: invoice.notes ?? "",
+              pdfExternalUrl: invoice.pdfExternalUrl ?? "",
               pdfOriginalName: invoice.pdfOriginalName,
             }}
           />

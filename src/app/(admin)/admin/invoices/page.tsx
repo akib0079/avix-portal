@@ -71,7 +71,7 @@ export default async function InvoicesPage() {
                         className="flex items-center gap-1.5 font-medium hover:text-primary"
                       >
                         {invoice.invoiceNumber}
-                        {invoice.pdfPath && (
+                        {(invoice.pdfPath || invoice.pdfExternalUrl) && (
                           <Paperclip className="size-3 text-muted-foreground" />
                         )}
                       </Link>

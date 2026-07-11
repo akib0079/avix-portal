@@ -266,6 +266,9 @@ model Invoice {
   status          InvoiceStatus @default(ASSIGNED)
   pdfPath         String?
   pdfOriginalName String?
+  /// External file link (e.g. Google Drive/Dropbox). When set, invoice
+  /// downloads redirect here instead of serving an uploaded PDF.
+  pdfExternalUrl  String?
   issueDate       DateTime
   dueDate         DateTime?
   notes           String?
