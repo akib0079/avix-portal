@@ -31,6 +31,11 @@ async function branding(): Promise<Branding> {
 
 export async function generateMetadata(): Promise<Metadata> {
   const b = await branding();
+  // Single source of truth for the favicon. There is deliberately NO
+  // app/favicon.ico or app/icon file convention — those would auto-inject a
+  // /favicon.ico that browsers prefer over this, so an uploaded favicon could
+  // never win. All rels point at the uploaded file, or the default /icon.png.
+  const iconHref = b.faviconFile ? `/api/branding/${b.faviconFile}` : "/icon.png";
   return {
     title: {
       default: "Avix Digital Portal",
@@ -38,9 +43,10 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description:
       "Client portal for Avix Digital — projects, milestones, and invoices in one place.",
-    // A stable icon declaration stops the default Next.js favicon flicker.
     icons: {
-      icon: b.faviconFile ? `/api/branding/${b.faviconFile}` : "/icon.png",
+      icon: iconHref,
+      shortcut: iconHref,
+      apple: iconHref,
     },
   };
 }
