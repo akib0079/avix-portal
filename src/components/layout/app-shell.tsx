@@ -11,6 +11,7 @@ import { initials } from "@/lib/format";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/layout/notification-bell";
+import { ActivityProvider } from "@/components/layout/activity-indicator";
 import {
   LayoutGrid,
   Users,
@@ -203,6 +204,7 @@ export function AppShell({
   const [open, setOpen] = useState(false);
 
   return (
+    <ActivityProvider>
     <div className="flex min-h-screen w-full">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 lg:block">
@@ -250,5 +252,6 @@ export function AppShell({
         </div>
       </main>
     </div>
+    </ActivityProvider>
   );
 }

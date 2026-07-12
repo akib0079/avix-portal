@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { useActivity } from "@/components/layout/activity-indicator";
 import { Download, FileUp, Loader2, Upload } from "lucide-react";
 
 const TEMPLATE_HEADER =
@@ -28,6 +29,7 @@ export function LeadImportDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const { track } = useActivity();
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [csvText, setCsvText] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function LeadImportDialog({
   async function onImport() {
     if (!csvText) return;
     setBusy(true);
-    const result = await importLeads(csvText);
+    const result = await track(importLeads(csvText), "Importing leads…");
     setBusy(false);
     if (!result.ok) return void toast.error(result.error);
     const { imported, skipped } = result.data!;

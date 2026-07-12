@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useActivity } from "@/components/layout/activity-indicator";
 import { Loader2, FileText, Upload, Link2 } from "lucide-react";
 
 export type InvoiceClientOption = {
@@ -51,6 +52,7 @@ export function InvoiceForm({
   invoice?: InvoiceInput & { id: string; pdfOriginalName: string | null };
 }) {
   const router = useRouter();
+  const { track } = useActivity();
   const isEdit = !!invoice;
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -82,14 +84,15 @@ export function InvoiceForm({
     const file = fileRef.current?.files?.[0];
     if (file) formData.append("pdf", file);
 
+    const label = file ? "Uploading invoice…" : "Saving…";
     if (isEdit) {
-      const result = await updateInvoice(invoice.id, formData);
+      const result = await track(updateInvoice(invoice.id, formData), label);
       if (!result.ok) return void toast.error(result.error);
       toast.success("Invoice updated.");
       router.push(`/admin/invoices/${invoice.id}`);
       router.refresh();
     } else {
-      const result = await createInvoice(formData);
+      const result = await track(createInvoice(formData), label);
       if (!result.ok) return void toast.error(result.error);
       toast.success("Invoice created.");
       router.push(result.data ? `/admin/invoices/${result.data.id}` : "/admin/invoices");

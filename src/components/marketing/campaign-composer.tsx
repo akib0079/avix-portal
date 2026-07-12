@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useActivity } from "@/components/layout/activity-indicator";
 import { cn } from "@/lib/utils";
 import { Loader2, Send, Eye, EyeOff, TriangleAlert, Check } from "lucide-react";
 
@@ -60,6 +61,7 @@ export function CampaignComposer({
   initialTemplateId?: string;
 }) {
   const router = useRouter();
+  const { track } = useActivity();
   const initialTemplate = templates.find((t) => t.id === initialTemplateId);
   const [showPreview, setShowPreview] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -103,7 +105,7 @@ export function CampaignComposer({
 
   async function doSend() {
     setSending(true);
-    const result = await sendCampaign(form.getValues());
+    const result = await track(sendCampaign(form.getValues()), "Sending campaign…");
     setSending(false);
     setConfirming(false);
     if (!result.ok) return void toast.error(result.error);

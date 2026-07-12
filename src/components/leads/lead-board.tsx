@@ -31,6 +31,7 @@ import {
 import { usd, formatDate, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useActivity } from "@/components/layout/activity-indicator";
 import {
   Plus,
   Pencil,
@@ -254,6 +255,7 @@ function StageColumn({
 
 export function LeadBoard({ leads }: { leads: LeadView[] }) {
   const router = useRouter();
+  const { track } = useActivity();
   const [items, setItems] = useState(leads);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -300,7 +302,7 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
 
   async function onConvert(lead: LeadView) {
     setBusy(true);
-    const result = await convertLead(lead.id);
+    const result = await track(convertLead(lead.id), "Creating client…");
     setBusy(false);
     setConverting(null);
     if (!result.ok) return void toast.error(result.error);
