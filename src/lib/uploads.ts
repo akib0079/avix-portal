@@ -1,4 +1,5 @@
 import "server-only";
+import "@/lib/load-persistent-env"; // apply durable env (UPLOAD_DIR, …) first
 import { mkdir, writeFile, unlink, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
@@ -14,13 +15,19 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * auth-checked /api/files/* routes.
  */
 
-const UPLOAD_ROOT = path.resolve(process.env.UPLOAD_DIR ?? "./uploads");
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "uploads";
+
+// Read lazily so the durable-env loader's UPLOAD_DIR is picked up regardless
+// of module import order. Defaults to a home-dir folder that survives Hostinger
+// redeploys (the app dir is rebuilt on every deploy — never store there).
+function uploadRoot(): string {
+  return path.resolve(process.env.UPLOAD_DIR ?? "./uploads");
+}
 
 export type UploadKind = "invoices" | "images" | "branding";
 
 const limits: Record<UploadKind, number> = {
-  invoices: 10 * 1024 * 1024, // 10 MB
+  invoices: 25 * 1024 * 1024, // 25 MB
   images: 5 * 1024 * 1024, // 5 MB
   branding: 2 * 1024 * 1024, // 2 MB (logo / favicon)
 };
@@ -37,6 +44,9 @@ let supabase: SupabaseClient | null = null;
 let bucketReady = false;
 
 function getSupabase(): SupabaseClient | null {
+  // Explicit backend override — STORAGE_BACKEND=disk forces local/home-dir
+  // disk even if Supabase keys are present in the environment.
+  if ((process.env.STORAGE_BACKEND ?? "").toLowerCase() === "disk") return null;
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
@@ -146,9 +156,19 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
       return { ok: false, error: "Upload failed — try again." };
     }
   } else {
-    const dir = path.join(UPLOAD_ROOT, kind);
-    await mkdir(dir, { recursive: true });
-    await writeFile(path.join(dir, fileName), buf);
+    // Local/home-dir disk. Surface a clean error instead of a 500 if the
+    // directory isn't writable (wrong UPLOAD_DIR / permissions on the host).
+    try {
+      const dir = path.join(uploadRoot(), kind);
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, fileName), buf);
+    } catch (err) {
+      console.error("[uploads] disk write failed:", (err as Error).message);
+      return {
+        ok: false,
+        error: "Couldn't save the file on the server — check storage settings.",
+      };
+    }
   }
 
   return { ok: true, fileName, size: buf.length, mimeType };
@@ -190,8 +210,9 @@ export async function openUpload(
     return Buffer.from(await data.arrayBuffer());
   }
 
-  const filePath = path.join(UPLOAD_ROOT, kind, fileName);
-  if (!filePath.startsWith(UPLOAD_ROOT) || !existsSync(filePath)) return null;
+  const root = uploadRoot();
+  const filePath = path.join(root, kind, fileName);
+  if (!filePath.startsWith(root) || !existsSync(filePath)) return null;
   return readFile(filePath).catch(() => null);
 }
 
@@ -205,7 +226,8 @@ export async function deleteUpload(kind: UploadKind, fileName: string) {
     return;
   }
 
-  const filePath = path.join(UPLOAD_ROOT, kind, fileName);
-  if (!filePath.startsWith(UPLOAD_ROOT)) return;
+  const root = uploadRoot();
+  const filePath = path.join(root, kind, fileName);
+  if (!filePath.startsWith(root)) return;
   await unlink(filePath).catch(() => {});
 }

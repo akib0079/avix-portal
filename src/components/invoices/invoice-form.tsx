@@ -249,7 +249,7 @@ export function InvoiceForm({
             ) : (
               <>
                 <Upload className="size-4 shrink-0" />
-                Upload a PDF (max 10 MB)
+                Upload a PDF (max 25 MB)
               </>
             )}
           </button>
