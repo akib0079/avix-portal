@@ -19,11 +19,15 @@ import { AvixBot } from "@/components/avix-bot";
 const fetcher = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null));
 
 export function MessageThread({
-  projectId,
+  projectId = null,
+  clientId,
   viewerRole,
   initialMessages,
 }: {
-  projectId: string;
+  /** null = the client's general thread (no project) */
+  projectId?: string | null;
+  /** Required for ADMIN viewers — which client's thread this is. */
+  clientId?: string;
   viewerRole: "ADMIN" | "CLIENT";
   initialMessages: MessageView[];
 }) {
@@ -32,8 +36,12 @@ export function MessageThread({
   const [resetKey, setResetKey] = useState(0);
   const [sending, setSending] = useState(false);
 
+  const query = new URLSearchParams();
+  if (projectId) query.set("projectId", projectId);
+  if (clientId) query.set("clientId", clientId);
+
   const { data, mutate } = useSWR<{ messages: MessageView[] } | null>(
-    `/api/messages?projectId=${projectId}`,
+    `/api/messages?${query.toString()}`,
     fetcher,
     { refreshInterval: 20_000, fallbackData: { messages: initialMessages } },
   );
@@ -59,7 +67,7 @@ export function MessageThread({
       (current) => ({ messages: [...(current?.messages ?? messages), optimistic] }),
       { revalidate: false },
     );
-    const result = await sendMessage({ projectId, body });
+    const result = await sendMessage({ projectId, clientId, body });
     setSending(false);
     if (!result.ok) {
       toast.error(result.error);

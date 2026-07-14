@@ -1,34 +1,43 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
-import { getProjectMessages } from "@/lib/dal/messages";
+import { getThreadMessages } from "@/lib/dal/messages";
 
+/**
+ * Polls one thread. A thread is (clientId, projectId); no projectId means the
+ * client's general thread. Clients may only ever read their own threads —
+ * their clientId comes from the session, never the query string.
+ */
 export async function GET(request: Request) {
   const session = await getSession();
   if (!session || session.user.status === "INACTIVE") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const user = session.user;
+  const params = new URL(request.url).searchParams;
+  const projectId = params.get("projectId");
 
-  const projectId = new URL(request.url).searchParams.get("projectId");
-  if (!projectId) {
-    return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
+  const clientId = user.role === "ADMIN" ? params.get("clientId") : user.id;
+  if (!clientId) {
+    return NextResponse.json({ error: "Missing clientId" }, { status: 400 });
   }
 
-  const user = session.user;
-  // Authorize: admins see any project; clients only their own.
-  const project = await prisma.project.findFirst({
-    where:
-      user.role === "ADMIN" ? { id: projectId } : { id: projectId, clientId: user.id },
-    select: { id: true },
-  });
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // A project thread must belong to that client (blocks cross-client reads).
+  if (projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, clientId },
+      select: { id: true },
+    });
+    if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
-  const messages = await getProjectMessages(projectId);
+  const key = { clientId, projectId: projectId ?? null };
+  const messages = await getThreadMessages(key);
 
-  // Mark the incoming side as read for this viewer.
+  // Mark the other side's messages as read for this viewer.
   const field = user.role === "ADMIN" ? "readByAdminAt" : "readByClientAt";
   await prisma.message.updateMany({
-    where: { projectId, [field]: null },
+    where: { ...key, [field]: null },
     data: { [field]: new Date() },
   });
 

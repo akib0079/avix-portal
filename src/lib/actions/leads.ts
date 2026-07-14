@@ -27,6 +27,8 @@ function normalize(data: LeadInput) {
     stage: data.stage,
     estimatedValue: data.estimatedValue ?? null,
     notes: data.notes || null,
+    brandInfo: data.brandInfo || null,
+    responseMessage: data.responseMessage || null,
     nextFollowUp: parseDate(data.nextFollowUp),
   };
 }
@@ -155,6 +157,10 @@ export async function importLeads(
     stage: col("stage"),
     value: header.findIndex((h) => h === "estimatedvalue" || h === "value" || h === "est. value"),
     notes: col("notes"),
+    brandInfo: header.findIndex((h) => h === "brandinfo" || h === "brand info"),
+    responseMessage: header.findIndex(
+      (h) => h === "responsemessage" || h === "response message" || h === "response",
+    ),
     followUp: header.findIndex((h) => h === "nextfollowup" || h === "follow up" || h === "followup"),
   };
   if (idx.name === -1) {
@@ -170,6 +176,8 @@ export async function importLeads(
     stage: string;
     estimatedValue: number | null;
     notes: string | null;
+    brandInfo: string | null;
+    responseMessage: string | null;
     nextFollowUp: Date | null;
   }[] = [];
   const errors: string[] = [];
@@ -193,6 +201,8 @@ export async function importLeads(
       stage: STAGE_LOOKUP[cell(row, idx.stage).toLowerCase()] ?? "NEW",
       estimatedValue: value != null && !Number.isNaN(value) ? value : null,
       notes: cell(row, idx.notes) || null,
+      brandInfo: cell(row, idx.brandInfo) || null,
+      responseMessage: cell(row, idx.responseMessage) || null,
       nextFollowUp: follow && !Number.isNaN(follow.getTime()) ? follow : null,
     });
   }

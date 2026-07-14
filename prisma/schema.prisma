@@ -143,6 +143,8 @@ model User {
 
   /// Opted out of marketing campaign emails (transactional emails unaffected).
   marketingOptOut Boolean @default(false)
+  /// Set when the client has seen the first-login welcome guide.
+  onboardedAt     DateTime?
 
   sessions           Session[]
   accounts           Account[]
@@ -152,6 +154,7 @@ model User {
   notifications      Notification[]
   imageUploads       ImageUpload[]
   messages           Message[]
+  clientMessages     Message[]           @relation("ClientMessages")
   campaignRecipients CampaignRecipient[]
 
   @@index([role, status])
@@ -372,6 +375,10 @@ model Lead {
   stage             LeadStage  @default(NEW)
   estimatedValue    Decimal?   @db.Decimal(10, 2)
   notes             String?
+  /// What we know about their brand/business (context for the pitch).
+  brandInfo         String?
+  /// The reply we sent (or plan to send) — copyable for Fiverr/Upwork/email.
+  responseMessage   String?
   nextFollowUp      DateTime?
   convertedClientId String?
   createdAt         DateTime   @default(now())
@@ -413,10 +420,15 @@ model PaymentAccount {
 }
 
 /// A message in a per-project thread between the agency (admin) and the client.
+/// A message between the agency (admin) and a client. A thread is identified
+/// by (clientId, projectId): projectId = null is the client's GENERAL thread,
+/// i.e. chatting with us without picking a project.
 model Message {
   id             String            @id @default(cuid())
-  projectId      String
-  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  clientId       String
+  client         User              @relation("ClientMessages", fields: [clientId], references: [id], onDelete: Cascade)
+  projectId      String?
+  project        Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   senderId       String
   sender         User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
   senderRole     MessageSenderRole
@@ -425,6 +437,7 @@ model Message {
   readByClientAt DateTime?
   createdAt      DateTime          @default(now())
 
+  @@index([clientId, projectId, createdAt])
   @@index([projectId, createdAt])
   @@map("messages")
 }

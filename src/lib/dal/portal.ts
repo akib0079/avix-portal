@@ -10,25 +10,59 @@ import { requireClient } from "@/lib/dal/session";
 
 export async function getPortalOverview() {
   const user = await requireClient();
-  const [projects, openInvoices, notifications] = await Promise.all([
-    prisma.project.findMany({
-      where: { clientId: user.id },
-      orderBy: { updatedAt: "desc" },
-      include: {
-        milestones: { select: { status: true } },
+  const [projects, openInvoices, notifications, sentMessages, requests] =
+    await Promise.all([
+      prisma.project.findMany({
+        where: { clientId: user.id },
+        orderBy: { updatedAt: "desc" },
+        include: {
+          milestones: { select: { status: true } },
+        },
+      }),
+      prisma.invoice.findMany({
+        where: { clientId: user.id, status: { not: "PAID" } },
+        orderBy: { issueDate: "desc" },
+      }),
+      prisma.notification.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        take: 6,
+      }),
+      // Onboarding checklist signals
+      prisma.message.count({ where: { clientId: user.id, senderRole: "CLIENT" } }),
+      prisma.taskRequest.count({ where: { clientId: user.id } }),
+    ]);
+
+  const [settledInvoices, record] = await Promise.all([
+    // Ticked once they've actually paid (or told us they have).
+    prisma.invoice.count({
+      where: {
+        clientId: user.id,
+        OR: [{ status: "PAID" }, { paymentClaimedAt: { not: null } }],
       },
     }),
-    prisma.invoice.findMany({
-      where: { clientId: user.id, status: { not: "PAID" } },
-      orderBy: { issueDate: "desc" },
-    }),
-    prisma.notification.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: 6,
+    // The session user doesn't carry onboardedAt — read it from the DB.
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: { onboardedAt: true },
     }),
   ]);
-  return { user, projects, openInvoices, notifications };
+
+  const checklist = {
+    viewedProject: projects.length > 0,
+    sentMessage: sentMessages > 0,
+    seenPayment: settledInvoices > 0,
+    submittedRequest: requests > 0,
+  };
+
+  return {
+    user,
+    onboardedAt: record?.onboardedAt ?? null,
+    projects,
+    openInvoices,
+    notifications,
+    checklist,
+  };
 }
 
 export async function listMyProjects() {

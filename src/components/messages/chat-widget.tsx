@@ -27,12 +27,15 @@ function WhatsappIcon({ className }: { className?: string }) {
 
 export function ChatWidget({
   projectId,
+  clientId,
   viewerRole,
   initialMessages,
   title,
   whatsappUrl,
 }: {
   projectId: string;
+  /** Required for ADMIN viewers — whose thread this is. */
+  clientId?: string;
   viewerRole: "ADMIN" | "CLIENT";
   initialMessages: MessageView[];
   title: string;
@@ -53,8 +56,17 @@ export function ChatWidget({
           ) : (
             <AvixBot size={22} />
           )}
-          <span className="text-sm font-semibold text-white">
-            {open ? "Close" : "Chat with us"}
+          <span className="text-left leading-tight">
+            <span className="block text-sm font-semibold text-white">
+              {open ? "Close" : "Chat with us"}
+            </span>
+            {!open && (
+              <span className="block text-[11px] text-slate-400">
+                {viewerRole === "CLIENT"
+                  ? "Message the team about this project"
+                  : "Message this client"}
+              </span>
+            )}
           </span>
         </button>
       </SheetTrigger>
@@ -92,6 +104,7 @@ export function ChatWidget({
         <div className="flex-1 overflow-y-auto px-4 py-4">
           <MessageThread
             projectId={projectId}
+            clientId={clientId}
             viewerRole={viewerRole}
             initialMessages={initialMessages}
           />

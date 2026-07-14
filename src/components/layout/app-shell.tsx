@@ -26,6 +26,7 @@ import {
   Megaphone,
   ChartNoAxesCombined,
   Target,
+  MessagesSquare,
 } from "lucide-react";
 
 type NavItem = {
@@ -43,6 +44,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/clients", label: "Clients", icon: Users },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
+  { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
   { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
   { href: "/admin/settings", label: "Settings", icon: Settings },
@@ -50,6 +52,7 @@ const adminNav: NavItem[] = [
 
 const clientNav: NavItem[] = [
   { href: "/portal", label: "Overview", icon: LayoutGrid },
+  { href: "/portal/messages", label: "Chat with us", icon: MessagesSquare },
   { href: "/portal/projects", label: "My Projects", icon: FolderKanban },
   { href: "/portal/invoices", label: "Invoices", icon: FileText },
   { href: "/portal/payment", label: "How to Pay", icon: CreditCard },

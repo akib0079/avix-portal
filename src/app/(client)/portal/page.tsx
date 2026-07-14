@@ -4,21 +4,29 @@ import { PageHeader } from "@/components/page-header";
 import { ProjectStatusBadge } from "@/components/status-badges";
 import { ProjectProgress } from "@/components/projects/project-progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { WelcomeModal } from "@/components/onboarding/welcome-modal";
+import { GettingStarted } from "@/components/onboarding/getting-started";
 import { usd, formatDate, projectTypeLabels } from "@/lib/format";
 import { ArrowRight, Bell, FileText } from "lucide-react";
 
 export const metadata = { title: "Overview" };
 
 export default async function PortalOverviewPage() {
-  const { user, projects, openInvoices, notifications } = await getPortalOverview();
+  const { user, onboardedAt, projects, openInvoices, notifications, checklist } =
+    await getPortalOverview();
   const openTotal = openInvoices.reduce((sum, inv) => sum + Number(inv.amount), 0);
 
   return (
     <div>
+      {/* First login only — a 3-step tour of the portal. */}
+      {!onboardedAt && <WelcomeModal firstName={user.firstName} />}
+
       <PageHeader
         title={`Hi ${user.firstName || user.name}`}
         description="Here's where your projects stand."
       />
+
+      <GettingStarted state={checklist} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">

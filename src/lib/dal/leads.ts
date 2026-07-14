@@ -13,6 +13,8 @@ export type LeadView = {
   stage: LeadStage;
   estimatedValue: number | null;
   notes: string | null;
+  brandInfo: string | null;
+  responseMessage: string | null;
   nextFollowUp: string | null; // "YYYY-MM-DD"
   convertedClientId: string | null;
 };
@@ -27,6 +29,8 @@ export function toLeadView(lead: Lead): LeadView {
     stage: lead.stage,
     estimatedValue: lead.estimatedValue == null ? null : Number(lead.estimatedValue),
     notes: lead.notes,
+    brandInfo: lead.brandInfo,
+    responseMessage: lead.responseMessage,
     nextFollowUp: lead.nextFollowUp?.toISOString().slice(0, 10) ?? null,
     convertedClientId: lead.convertedClientId,
   };

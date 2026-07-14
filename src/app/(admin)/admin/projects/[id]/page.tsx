@@ -174,6 +174,7 @@ export default async function ProjectDetailPage({
       {project.client && (
         <ChatWidget
           projectId={project.id}
+          clientId={project.client.id}
           viewerRole="ADMIN"
           initialMessages={messages}
           title={`Chat with ${project.client.firstName} ${project.client.lastName}`}

@@ -28,6 +28,8 @@ export const leadSchema = z.object({
   stage: z.enum(leadStageValues),
   estimatedValue: z.number().min(0).max(9999999).nullable().optional(),
   notes: z.string().trim().max(4000).optional().or(z.literal("")),
+  brandInfo: z.string().trim().max(4000).optional().or(z.literal("")),
+  responseMessage: z.string().trim().max(8000).optional().or(z.literal("")),
   nextFollowUp: z.string().optional().or(z.literal("")),
 });
 

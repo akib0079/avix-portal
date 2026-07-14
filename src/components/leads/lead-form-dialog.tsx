@@ -64,6 +64,8 @@ export function LeadFormDialog({
       stage: "NEW",
       estimatedValue: null,
       notes: "",
+      brandInfo: "",
+      responseMessage: "",
       nextFollowUp: "",
     },
   });
@@ -78,6 +80,8 @@ export function LeadFormDialog({
         stage: lead?.stage ?? "NEW",
         estimatedValue: lead?.estimatedValue ?? null,
         notes: lead?.notes ?? "",
+        brandInfo: lead?.brandInfo ?? "",
+        responseMessage: lead?.responseMessage ?? "",
         nextFollowUp: lead?.nextFollowUp ?? "",
       });
     }
@@ -244,6 +248,42 @@ export function LeadFormDialog({
                     <Textarea
                       rows={3}
                       placeholder="What do they need? Budget, timeline, context…"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="brandInfo"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Brand info (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={3}
+                      placeholder="Their business, industry, website, audience, current stack…"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="responseMessage"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Response message (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={4}
+                      placeholder="The reply you sent (or plan to send) — copy it straight into Fiverr, Upwork, or email."
                       {...field}
                     />
                   </FormControl>

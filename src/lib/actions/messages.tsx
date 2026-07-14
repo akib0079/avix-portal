@@ -25,37 +25,50 @@ function toPreview(doc: unknown, max = 140): string {
   return text.length > max ? `${text.slice(0, max)}…` : text || "(no text)";
 }
 
+/**
+ * Posts into a thread. A thread is (clientId, projectId); projectId null is the
+ * client's general thread. Clients may only post to their own threads; admins
+ * must name the client (and, for a project thread, a project that client owns).
+ */
 export async function sendMessage(input: MessageInput): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = messageSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: "Invalid message." };
-  }
+  if (!parsed.success) return { ok: false, error: "Invalid message." };
   if (!hasRichTextContent(parsed.data.body)) {
     return { ok: false, error: "Write a message first." };
   }
 
-  // Authorize project access by role.
-  const project = await prisma.project.findFirst({
-    where:
-      user.role === "ADMIN"
-        ? { id: parsed.data.projectId }
-        : { id: parsed.data.projectId, clientId: user.id },
-    select: {
-      id: true,
-      projectName: true,
-      clientId: true,
-      client: { select: { id: true, firstName: true, email: true, status: true } },
-    },
-  });
-  if (!project) return { ok: false, error: "Project not found." };
+  const isAdmin = user.role === "ADMIN";
+  const projectId = parsed.data.projectId ?? null;
 
-  const senderRole = user.role === "ADMIN" ? "ADMIN" : "CLIENT";
+  // Resolve + authorize the thread owner (the client).
+  const clientId = isAdmin ? parsed.data.clientId : user.id;
+  if (!clientId) return { ok: false, error: "Pick a client to message." };
+
+  const client = await prisma.user.findFirst({
+    where: { id: clientId, role: "CLIENT" },
+    select: { id: true, firstName: true, email: true, status: true, name: true },
+  });
+  if (!client) return { ok: false, error: "Client not found." };
+
+  // A project thread must belong to that client (also blocks cross-client access).
+  let projectName: string | null = null;
+  if (projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, clientId: client.id },
+      select: { id: true, projectName: true },
+    });
+    if (!project) return { ok: false, error: "Project not found." };
+    projectName = project.projectName;
+  }
+
+  const senderRole = isAdmin ? "ADMIN" : "CLIENT";
   const now = new Date();
 
   await prisma.message.create({
     data: {
-      projectId: project.id,
+      clientId: client.id,
+      projectId,
       senderId: user.id,
       senderRole,
       body: parsed.data.body as Prisma.InputJsonValue,
@@ -66,12 +79,16 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
   });
 
   const preview = toPreview(parsed.data.body);
+  const where = projectName ?? "General chat";
+  const adminLink = projectId
+    ? `/admin/projects/${projectId}`
+    : `/admin/messages?client=${client.id}`;
+  const clientLink = projectId ? `/portal/projects/${projectId}` : `/portal/messages`;
 
   if (senderRole === "CLIENT") {
-    // Notify every admin.
     const admins = await prisma.user.findMany({
       where: { role: "ADMIN", status: "ACTIVE" },
-      select: { id: true, email: true, firstName: true },
+      select: { id: true },
     });
     if (admins.length > 0) {
       await prisma.notification.createMany({
@@ -79,8 +96,8 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
           userId: a.id,
           type: "MESSAGE_RECEIVED" as const,
           title: `New message from ${user.name}`,
-          body: `${project.projectName}: ${preview}`,
-          link: `/admin/projects/${project.id}`,
+          body: `${where}: ${preview}`,
+          link: adminLink,
         })),
       });
     }
@@ -88,47 +105,51 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
     if (adminEmail) {
       await sendEmail({
         to: adminEmail,
-        subject: `New message on ${project.projectName}`,
+        subject: `New message — ${where}`,
         react: (
           <MessageReceivedEmail
             recipientFirstName="there"
             senderName={user.name}
-            projectName={project.projectName}
+            projectName={where}
             preview={preview}
-            url={`${appUrl()}/admin/projects/${project.id}`}
+            url={`${appUrl()}${adminLink}`}
           />
         ),
         devHint: `message → ${adminEmail}`,
       });
     }
-  } else if (project.client && project.client.status === "ACTIVE") {
+  } else if (client.status === "ACTIVE") {
     // Admin → notify the client.
     await prisma.notification.create({
       data: {
-        userId: project.client.id,
+        userId: client.id,
         type: "MESSAGE_RECEIVED",
-        title: `New message from Avix Digital`,
-        body: `${project.projectName}: ${preview}`,
-        link: `/portal/projects/${project.id}`,
+        title: "New message from Avix Digital",
+        body: `${where}: ${preview}`,
+        link: clientLink,
       },
     });
     await sendEmail({
-      to: project.client.email,
-      subject: `New message on ${project.projectName}`,
+      to: client.email,
+      subject: `New message — ${where}`,
       react: (
         <MessageReceivedEmail
-          recipientFirstName={project.client.firstName || "there"}
+          recipientFirstName={client.firstName || "there"}
           senderName="Avix Digital"
-          projectName={project.projectName}
+          projectName={where}
           preview={preview}
-          url={`${appUrl()}/portal/projects/${project.id}`}
+          url={`${appUrl()}${clientLink}`}
         />
       ),
-      devHint: `message → ${project.client.email}`,
+      devHint: `message → ${client.email}`,
     });
   }
 
-  revalidatePath(`/admin/projects/${project.id}`);
-  revalidatePath(`/portal/projects/${project.id}`);
+  if (projectId) {
+    revalidatePath(`/admin/projects/${projectId}`);
+    revalidatePath(`/portal/projects/${projectId}`);
+  }
+  revalidatePath("/admin/messages");
+  revalidatePath("/portal/messages");
   return { ok: true };
 }

@@ -17,9 +17,9 @@ import { useActivity } from "@/components/layout/activity-indicator";
 import { Download, FileUp, Loader2, Upload } from "lucide-react";
 
 const TEMPLATE_HEADER =
-  "name,email,company,source,stage,estimatedValue,notes,nextFollowUp";
+  "name,email,company,source,stage,estimatedValue,notes,brandInfo,responseMessage,nextFollowUp";
 const TEMPLATE_SAMPLE =
-  'Sarah Miller,sarah@acme.com,Acme Co,Referral,Proposal,2500,Wants a Shopify store,2026-08-01\nJohn Doe,john@example.com,,Website,New,1200,Landing page rebuild,';
+  'Sarah Miller,sarah@acme.com,Acme Co,Referral,Proposal,2500,Wants a Shopify store,"DTC skincare brand, 5k orders/mo, on Wix","Hi Sarah — happy to help with the Shopify build. Here is what I would suggest…",2026-08-01\nJohn Doe,john@example.com,,Website,New,1200,Landing page rebuild,,,';
 
 export function LeadImportDialog({
   open,
@@ -90,8 +90,8 @@ export function LeadImportDialog({
           <p className="font-medium">Columns</p>
           <p className="mt-1 text-xs text-muted-foreground">
             name (required), email, company, source, stage, estimatedValue,
-            notes, nextFollowUp (YYYY-MM-DD). Unknown source/stage default to
-            Other / New.
+            notes, brandInfo, responseMessage, nextFollowUp (YYYY-MM-DD).
+            Unknown source/stage default to Other / New.
           </p>
           <Button
             type="button"

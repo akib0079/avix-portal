@@ -43,6 +43,9 @@ import {
   CheckCircle2,
   FileUp,
   GripVertical,
+  Building2,
+  Reply,
+  Copy,
   Mail,
   Tag,
 } from "lucide-react";
@@ -169,6 +172,44 @@ function LeadCard({
         <p className="mt-2 line-clamp-2 rounded-md bg-muted/50 px-2.5 py-1.5 pl-2.5 text-xs text-muted-foreground">
           {lead.notes}
         </p>
+      )}
+
+      {/* Brand info & response message */}
+      {(lead.brandInfo || lead.responseMessage) && !dragging && (
+        <div className="mt-2 space-y-2 rounded-md border bg-card px-2.5 py-2">
+          {lead.brandInfo && (
+            <div>
+              <p className="flex items-center gap-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                <Building2 className="size-3" /> Brand info
+              </p>
+              <p className="mt-0.5 line-clamp-3 text-xs whitespace-pre-wrap">
+                {lead.brandInfo}
+              </p>
+            </div>
+          )}
+          {lead.responseMessage && (
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  <Reply className="size-3" /> Response
+                </p>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-primary hover:bg-brand-tint"
+                  onClick={() => {
+                    navigator.clipboard.writeText(lead.responseMessage ?? "");
+                    toast.success("Response copied.");
+                  }}
+                >
+                  <Copy className="size-3" /> Copy
+                </button>
+              </div>
+              <p className="mt-0.5 line-clamp-3 text-xs whitespace-pre-wrap text-muted-foreground">
+                {lead.responseMessage}
+              </p>
+            </div>
+          )}
+        </div>
       )}
 
       {!dragging && (
