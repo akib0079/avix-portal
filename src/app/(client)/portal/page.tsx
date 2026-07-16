@@ -6,14 +6,16 @@ import { ProjectProgress } from "@/components/projects/project-progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WelcomeModal } from "@/components/onboarding/welcome-modal";
 import { GettingStarted } from "@/components/onboarding/getting-started";
+import { UpcomingMeetings } from "@/components/portal/upcoming-meetings";
+import { listMyUpcomingMeetings } from "@/lib/dal/meetings";
 import { usd, formatDate, projectTypeLabels } from "@/lib/format";
 import { ArrowRight, Bell, FileText } from "lucide-react";
 
 export const metadata = { title: "Overview" };
 
 export default async function PortalOverviewPage() {
-  const { user, onboardedAt, projects, openInvoices, notifications, checklist } =
-    await getPortalOverview();
+  const [{ user, onboardedAt, projects, openInvoices, notifications, checklist }, meetings] =
+    await Promise.all([getPortalOverview(), listMyUpcomingMeetings()]);
   const openTotal = openInvoices.reduce((sum, inv) => sum + Number(inv.amount), 0);
 
   return (
@@ -27,6 +29,8 @@ export default async function PortalOverviewPage() {
       />
 
       <GettingStarted state={checklist} />
+
+      <UpcomingMeetings meetings={meetings} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">

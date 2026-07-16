@@ -85,6 +85,13 @@ enum NotificationType {
   MESSAGE_RECEIVED
   MILESTONE_APPROVED
   PAYMENT_CLAIMED
+  MEETING_SCHEDULED
+  MEETING_CANCELLED
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  CANCELLED
 }
 
 enum LeadStage {
@@ -145,6 +152,9 @@ model User {
   marketingOptOut Boolean @default(false)
   /// Set when the client has seen the first-login welcome guide.
   onboardedAt     DateTime?
+  /// IANA timezone (e.g. "America/New_York"): auto-captured from the client's
+  /// browser on portal load, editable by the admin.
+  timezone        String?
 
   sessions           Session[]
   accounts           Account[]
@@ -156,6 +166,7 @@ model User {
   messages           Message[]
   clientMessages     Message[]           @relation("ClientMessages")
   campaignRecipients CampaignRecipient[]
+  meetings           Meeting[]           @relation("ClientMeetings")
 
   @@index([role, status])
   @@map("users")
@@ -231,6 +242,7 @@ model Project {
   invoices     Invoice[]
   taskRequests TaskRequest[]
   messages     Message[]
+  meetings     Meeting[]
 
   @@index([clientId])
   @@index([status])
@@ -386,6 +398,28 @@ model Lead {
 
   @@index([stage, nextFollowUp])
   @@map("leads")
+}
+
+/// A meeting the admin booked with a client. startsAt is a UTC instant;
+/// each side sees it rendered in their own timezone.
+model Meeting {
+  id           String        @id @default(cuid())
+  clientId     String
+  client       User          @relation("ClientMeetings", fields: [clientId], references: [id], onDelete: Cascade)
+  projectId    String?
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title        String
+  notes        String?
+  startsAt     DateTime
+  durationMins Int           @default(30)
+  meetingUrl   String?
+  status       MeetingStatus @default(SCHEDULED)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([startsAt])
+  @@index([clientId, startsAt])
+  @@map("meetings")
 }
 
 /// Simple key-value store for admin-editable app settings

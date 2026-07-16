@@ -15,8 +15,20 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+
+const TIMEZONES: string[] =
+  typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : [];
 
 export function ClientForm({
   client,
@@ -32,6 +44,7 @@ export function ClientForm({
       email: client?.email ?? "",
       company: client?.company ?? "",
       phone: client?.phone ?? "",
+      timezone: client?.timezone ?? "",
     },
   });
 
@@ -124,6 +137,41 @@ export function ClientForm({
             )}
           />
         </div>
+
+        <FormField
+          control={form.control}
+          name="timezone"
+          render={({ field }) => (
+            <FormItem className="sm:max-w-sm">
+              <FormLabel>Timezone (optional)</FormLabel>
+              <Select
+                value={field.value || "auto"}
+                onValueChange={(v) => field.onChange(v === "auto" ? "" : v)}
+              >
+                <FormControl>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Auto-detect" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="auto">
+                    Auto-detect from their browser
+                  </SelectItem>
+                  {TIMEZONES.map((tz) => (
+                    <SelectItem key={tz} value={tz}>
+                      {tz.replaceAll("_", " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Used to show you their local time in chats and when booking
+                meetings. Fills itself the first time they log in.
+              </p>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         <div className="flex items-center gap-3 pt-2">
           <Button type="submit" disabled={form.formState.isSubmitting}>

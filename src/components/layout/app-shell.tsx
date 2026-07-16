@@ -27,6 +27,8 @@ import {
   ChartNoAxesCombined,
   Target,
   MessagesSquare,
+  Loader2,
+  CalendarDays,
 } from "lucide-react";
 
 type NavItem = {
@@ -45,6 +47,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
+  { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
   { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
   { href: "/admin/settings", label: "Settings", icon: Settings },
@@ -151,11 +154,19 @@ function SidebarInner({
 }) {
   const router = useRouter();
   const items = variant === "admin" ? adminNav : clientNav;
+  const [signingOut, setSigningOut] = useState(false);
 
   async function signOut() {
-    await authClient.signOut();
-    router.push("/login");
-    router.refresh();
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await authClient.signOut();
+      router.push("/login");
+      router.refresh();
+    } catch {
+      // Network hiccup — let them try again instead of a stuck spinner.
+      setSigningOut(false);
+    }
   }
 
   return (
@@ -183,9 +194,20 @@ function SidebarInner({
         </div>
         <button
           onClick={signOut}
-          className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-400 transition-colors hover:bg-sidebar-accent hover:text-white"
+          disabled={signingOut}
+          aria-busy={signingOut}
+          className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-400 transition-colors hover:bg-sidebar-accent hover:text-white disabled:pointer-events-none disabled:opacity-80"
         >
-          <LogOut className="size-4" /> Sign out
+          {signingOut ? (
+            <>
+              <Loader2 className="size-4 animate-spin text-primary" />
+              <span className="text-white">Signing out…</span>
+            </>
+          ) : (
+            <>
+              <LogOut className="size-4" /> Sign out
+            </>
+          )}
         </button>
       </div>
     </div>

@@ -67,6 +67,7 @@ export type ConversationSummary = {
   clientId: string;
   clientName: string;
   company: string | null;
+  timezone: string | null;
   projectId: string | null;
   projectName: string | null;
   lastMessageAt: string;
@@ -95,7 +96,9 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   const rows = await prisma.message.findMany({
     orderBy: { createdAt: "desc" },
     include: {
-      client: { select: { id: true, firstName: true, lastName: true, company: true } },
+      client: {
+        select: { id: true, firstName: true, lastName: true, company: true, timezone: true },
+      },
       project: { select: { id: true, projectName: true } },
     },
   });
@@ -112,6 +115,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
         clientId: m.clientId,
         clientName: `${m.client.firstName} ${m.client.lastName}`.trim() || "Client",
         company: m.client.company,
+        timezone: m.client.timezone,
         projectId: m.projectId,
         projectName: m.project?.projectName ?? null,
         lastMessageAt: m.createdAt.toISOString(),

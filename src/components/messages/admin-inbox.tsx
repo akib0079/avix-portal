@@ -6,6 +6,7 @@ import type { ConversationSummary, MessageView } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
 import { cn, } from "@/lib/utils";
 import { initials } from "@/lib/format";
+import { LocalTime } from "@/components/local-time";
 import { formatDistanceToNow } from "date-fns";
 import { MessagesSquare, FolderKanban, Inbox } from "lucide-react";
 
@@ -119,6 +120,7 @@ export function AdminInbox({
               <p className="text-sm text-muted-foreground">
                 {active.projectId ? active.projectName : "General chat (no project)"}
               </p>
+              <LocalTime timezone={active.timezone} className="mt-1" />
             </div>
             <MessageThread
               key={selectedKey ?? ""}

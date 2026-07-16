@@ -67,6 +67,7 @@ export default async function ClientDetailPage({
                 email: client.email,
                 company: client.company ?? "",
                 phone: client.phone ?? "",
+                timezone: client.timezone ?? "",
               }}
             />
           </CardContent>

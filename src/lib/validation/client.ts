@@ -6,6 +6,8 @@ export const clientSchema = z.object({
   email: z.string().trim().email("Enter a valid email").max(200),
   company: z.string().trim().max(120).optional().or(z.literal("")),
   phone: z.string().trim().max(40).optional().or(z.literal("")),
+  // IANA name; "" = not set. Validated against Intl server-side.
+  timezone: z.string().trim().max(64).optional().or(z.literal("")),
 });
 
 export type ClientInput = z.infer<typeof clientSchema>;

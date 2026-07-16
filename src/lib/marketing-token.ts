@@ -21,6 +21,22 @@ export function createUnsubscribeToken(userId: string): string {
   return `${userId}.${sign(userId)}`;
 }
 
+function signMeeting(meetingId: string): string {
+  return createHmac("sha256", secret()).update(`meeting-ics:${meetingId}`).digest("base64url");
+}
+
+/** Token that lets an email recipient download a meeting's .ics without logging in. */
+export function createMeetingIcsToken(meetingId: string): string {
+  return signMeeting(meetingId);
+}
+
+export function verifyMeetingIcsToken(meetingId: string, token: string): boolean {
+  const expected = signMeeting(meetingId);
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /** Returns the userId when the signature checks out, else null. */
 export function verifyUnsubscribeToken(token: string): string | null {
   const dot = token.lastIndexOf(".");

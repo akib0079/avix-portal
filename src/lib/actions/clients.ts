@@ -60,6 +60,16 @@ export async function updateClient(
   });
   if (emailTaken) return { ok: false, error: "That email is already in use." };
 
+  // Validate the timezone against the runtime's IANA database.
+  let timezone: string | null = data.timezone?.trim() || null;
+  if (timezone) {
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    } catch {
+      timezone = null;
+    }
+  }
+
   await prisma.user.update({
     where: { id },
     data: {
@@ -69,6 +79,7 @@ export async function updateClient(
       email: data.email.toLowerCase(),
       company: data.company || null,
       phone: data.phone || null,
+      timezone,
     },
   });
 

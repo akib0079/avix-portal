@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sheet";
 import { X } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
+import { LocalTime } from "@/components/local-time";
 
 /**
  * Floating support-style chat: a fixed launcher bubble (bottom-right) that
@@ -28,6 +29,7 @@ function WhatsappIcon({ className }: { className?: string }) {
 export function ChatWidget({
   projectId,
   clientId,
+  clientTimezone,
   viewerRole,
   initialMessages,
   title,
@@ -36,6 +38,8 @@ export function ChatWidget({
   projectId: string;
   /** Required for ADMIN viewers — whose thread this is. */
   clientId?: string;
+  /** Shows the client's live local time in the header (admin view). */
+  clientTimezone?: string | null;
   viewerRole: "ADMIN" | "CLIENT";
   initialMessages: MessageView[];
   title: string;
@@ -86,6 +90,9 @@ export function ChatWidget({
                 ? "We usually reply within one business day."
                 : "Messages are visible to the client."}
             </p>
+            {viewerRole === "ADMIN" && (
+              <LocalTime timezone={clientTimezone ?? null} className="mt-0.5" />
+            )}
           </div>
         </div>
         {viewerRole === "CLIENT" && whatsappUrl && (

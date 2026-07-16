@@ -18,7 +18,16 @@ export async function getProject(id: string) {
   return prisma.project.findUnique({
     where: { id },
     include: {
-      client: { select: { id: true, firstName: true, lastName: true, company: true, email: true } },
+      client: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          company: true,
+          email: true,
+          timezone: true,
+        },
+      },
       milestones: {
         orderBy: { position: "asc" },
         include: { timeEntries: { orderBy: [{ date: "desc" }, { createdAt: "desc" }] } },
