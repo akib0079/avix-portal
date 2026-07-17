@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { ActivityProvider } from "@/components/layout/activity-indicator";
-import { GlobalSearch } from "@/components/layout/global-search";
+import { GlobalSearchProvider, SearchTrigger } from "@/components/layout/global-search";
 import {
   LayoutGrid,
   Users,
@@ -182,6 +182,11 @@ function SidebarInner({
       <p className="px-5 pb-2 text-[11px] font-semibold tracking-[0.14em] text-slate-500 uppercase">
         {variant === "admin" ? "Admin Panel" : "Client Portal"}
       </p>
+      {variant === "admin" && (
+        <div className="px-3 pb-3">
+          <SearchTrigger tone="dark" />
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto px-3">
         <NavLinks items={items} pathname={pathname} onNavigate={onNavigate} />
       </div>
@@ -231,8 +236,7 @@ export function AppShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  return (
-    <ActivityProvider>
+  const shell = (
     <div className="flex min-h-screen w-full">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 lg:block">
@@ -272,8 +276,7 @@ export function AppShell({
       {/* Main content */}
       <main className="min-w-0 flex-1 pt-14 lg:pt-0 lg:pl-60">
         {/* Desktop topbar */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center justify-between border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
-          {variant === "admin" ? <GlobalSearch /> : <span />}
+        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
           <NotificationBell tone="light" />
         </div>
         <div className="mx-auto w-full max-w-[88rem] px-4 py-8 sm:px-6 lg:px-10">
@@ -281,6 +284,15 @@ export function AppShell({
         </div>
       </main>
     </div>
+  );
+
+  return (
+    <ActivityProvider>
+      {variant === "admin" ? (
+        <GlobalSearchProvider>{shell}</GlobalSearchProvider>
+      ) : (
+        shell
+      )}
     </ActivityProvider>
   );
 }

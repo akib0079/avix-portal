@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -28,8 +35,42 @@ const groupIcon = {
   Leads: Target,
 } as const;
 
-/** ⌘K / Ctrl-K global search over clients, projects, invoices, leads. */
-export function GlobalSearch() {
+const SearchContext = createContext<{ open: () => void } | null>(null);
+
+/** Button that opens the search dialog. Render it anywhere (sidebar, topbar). */
+export function SearchTrigger({ tone = "light" }: { tone?: "light" | "dark" }) {
+  const ctx = useContext(SearchContext);
+  if (!ctx) return null;
+  return (
+    <button
+      type="button"
+      onClick={ctx.open}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors",
+        tone === "dark"
+          ? "border-sidebar-border bg-sidebar-accent/40 text-slate-400 hover:bg-sidebar-accent hover:text-white"
+          : "bg-background text-muted-foreground hover:bg-muted/50",
+      )}
+    >
+      <Search className="size-3.5 shrink-0" />
+      <span className="flex-1 text-left">Search…</span>
+      <kbd
+        className={cn(
+          "rounded border px-1.5 text-[10px] font-medium",
+          tone === "dark" ? "border-sidebar-border bg-sidebar/60" : "bg-muted",
+        )}
+      >
+        ⌘K
+      </kbd>
+    </button>
+  );
+}
+
+/**
+ * Owns the ⌘K search dialog once. Any number of <SearchTrigger /> buttons
+ * (sidebar desktop + mobile sheet) open the same dialog.
+ */
+export function GlobalSearchProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -38,7 +79,6 @@ export function GlobalSearch() {
   const [loading, setLoading] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // ⌘K / Ctrl-K opens; also "/" when not typing in a field.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -91,19 +131,8 @@ export function GlobalSearch() {
   }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="hidden items-center gap-2 rounded-lg border bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 lg:flex"
-      >
-        <Search className="size-3.5" />
-        Search…
-        <kbd className="ml-4 rounded border bg-muted px-1.5 text-[10px] font-medium">
-          ⌘K
-        </kbd>
-      </button>
-
+    <SearchContext.Provider value={{ open: () => setOpen(true) }}>
+      {children}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="top-[20%] translate-y-0 gap-0 p-0 sm:max-w-lg">
           <DialogTitle className="sr-only">Search</DialogTitle>
@@ -166,6 +195,6 @@ export function GlobalSearch() {
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </SearchContext.Provider>
   );
 }
