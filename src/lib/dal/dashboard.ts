@@ -92,3 +92,82 @@ export async function getAdminDashboard() {
     })),
   };
 }
+
+export type TodayItem = {
+  kind: "invoice" | "lead" | "meeting" | "retainer";
+  label: string;
+  detail: string;
+  link: string;
+};
+
+/** "What needs you today" — overdue money, overdue follow-ups, today's meetings, drafts to send. */
+export async function getTodayItems(): Promise<TodayItem[]> {
+  await requireAdmin();
+  const now = new Date();
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+
+  const [overdueInvoices, overdueLeads, todaysMeetings, retainerDrafts] =
+    await Promise.all([
+      prisma.invoice.findMany({
+        where: { status: { not: "PAID" }, dueDate: { not: null, lt: now } },
+        orderBy: { dueDate: "asc" },
+        take: 5,
+        include: { client: { select: { firstName: true, lastName: true } } },
+      }),
+      prisma.lead.findMany({
+        where: {
+          stage: { in: ["NEW", "CONTACTED", "PROPOSAL"] },
+          nextFollowUp: { not: null, lt: now },
+        },
+        orderBy: { nextFollowUp: "asc" },
+        take: 5,
+      }),
+      prisma.meeting.findMany({
+        where: { status: "SCHEDULED", startsAt: { gte: now, lt: endOfDay } },
+        orderBy: { startsAt: "asc" },
+        include: { client: { select: { firstName: true, lastName: true } } },
+      }),
+      prisma.invoice.findMany({
+        where: { status: "ASSIGNED", notes: { contains: "—" } },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { client: { select: { firstName: true, lastName: true } } },
+      }),
+    ]);
+
+  const items: TodayItem[] = [];
+  for (const inv of overdueInvoices) {
+    const days = Math.floor((now.getTime() - inv.dueDate!.getTime()) / 86_400_000);
+    items.push({
+      kind: "invoice",
+      label: `Chase ${inv.invoiceNumber} — ${inv.client.firstName} ${inv.client.lastName}`,
+      detail: `$${Number(inv.amount).toFixed(2)} · ${days} day${days === 1 ? "" : "s"} overdue`,
+      link: `/admin/invoices/${inv.id}`,
+    });
+  }
+  for (const lead of overdueLeads) {
+    items.push({
+      kind: "lead",
+      label: `Follow up ${lead.name}`,
+      detail: lead.company ?? "Lead follow-up due",
+      link: "/admin/leads",
+    });
+  }
+  for (const m of todaysMeetings) {
+    items.push({
+      kind: "meeting",
+      label: `${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(m.startsAt)} — ${m.title}`,
+      detail: `with ${m.client.firstName} ${m.client.lastName}`,
+      link: "/admin/calendar",
+    });
+  }
+  for (const inv of retainerDrafts) {
+    items.push({
+      kind: "retainer",
+      label: `Send draft ${inv.invoiceNumber} — ${inv.client.firstName} ${inv.client.lastName}`,
+      detail: "Retainer invoice drafted, awaiting review",
+      link: `/admin/invoices/${inv.id}`,
+    });
+  }
+  return items;
+}

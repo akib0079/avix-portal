@@ -64,11 +64,27 @@ export default async function ClientsPage() {
                     <TableCell>
                       <Link
                         href={`/admin/clients/${client.id}`}
-                        className="font-medium hover:text-primary"
+                        className="flex items-center gap-2 font-medium hover:text-primary"
                       >
+                        <span
+                          className={`size-2 shrink-0 rounded-full ${
+                            client.health === "red"
+                              ? "bg-red-500"
+                              : client.health === "amber"
+                                ? "bg-amber-400"
+                                : "bg-emerald-500"
+                          }`}
+                          title={
+                            client.health === "red"
+                              ? "Invoice 7+ days overdue"
+                              : client.health === "amber"
+                                ? "Overdue invoice or gone quiet"
+                                : "All good"
+                          }
+                        />
                         {client.firstName} {client.lastName}
                       </Link>
-                      <p className="text-xs text-muted-foreground">{client.email}</p>
+                      <p className="pl-4 text-xs text-muted-foreground">{client.email}</p>
                     </TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
                       {client.company ?? "—"}

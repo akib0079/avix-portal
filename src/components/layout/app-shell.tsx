@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { ActivityProvider } from "@/components/layout/activity-indicator";
+import { GlobalSearch } from "@/components/layout/global-search";
 import {
   LayoutGrid,
   Users,
@@ -29,6 +30,7 @@ import {
   MessagesSquare,
   Loader2,
   CalendarDays,
+  Repeat,
 } from "lucide-react";
 
 type NavItem = {
@@ -46,6 +48,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/clients", label: "Clients", icon: Users },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
+  { href: "/admin/retainers", label: "Retainers", icon: Repeat },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
   { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
@@ -269,7 +272,8 @@ export function AppShell({
       {/* Main content */}
       <main className="min-w-0 flex-1 pt-14 lg:pt-0 lg:pl-60">
         {/* Desktop topbar */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
+        <div className="sticky top-0 z-20 hidden h-14 items-center justify-between border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
+          {variant === "admin" ? <GlobalSearch /> : <span />}
           <NotificationBell tone="light" />
         </div>
         <div className="mx-auto w-full max-w-[88rem] px-4 py-8 sm:px-6 lg:px-10">

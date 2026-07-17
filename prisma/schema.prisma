@@ -87,6 +87,7 @@ enum NotificationType {
   PAYMENT_CLAIMED
   MEETING_SCHEDULED
   MEETING_CANCELLED
+  RETAINER_GENERATED
 }
 
 enum MeetingStatus {
@@ -167,6 +168,7 @@ model User {
   clientMessages     Message[]           @relation("ClientMessages")
   campaignRecipients CampaignRecipient[]
   meetings           Meeting[]           @relation("ClientMeetings")
+  retainers          Retainer[]          @relation("ClientRetainers")
 
   @@index([role, status])
   @@map("users")
@@ -243,6 +245,7 @@ model Project {
   taskRequests TaskRequest[]
   messages     Message[]
   meetings     Meeting[]
+  retainers    Retainer[]
 
   @@index([clientId])
   @@index([status])
@@ -400,6 +403,28 @@ model Lead {
   @@map("leads")
 }
 
+/// A monthly maintenance/retainer plan. The duties engine drafts one invoice
+/// per period (lastGeneratedPeriod = "YYYY-MM") on/after dayOfMonth; the
+/// admin reviews and sends it with the normal invoice flow.
+model Retainer {
+  id                  String   @id @default(cuid())
+  clientId            String
+  client              User     @relation("ClientRetainers", fields: [clientId], references: [id], onDelete: Cascade)
+  projectId           String?
+  project             Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title               String
+  amount              Decimal  @db.Decimal(10, 2)
+  dayOfMonth          Int      @default(1)
+  active              Boolean  @default(true)
+  lastGeneratedPeriod String?
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([active, dayOfMonth])
+  @@map("retainers")
+}
+
 /// A meeting the admin booked with a client. startsAt is a UTC instant;
 /// each side sees it rendered in their own timezone.
 model Meeting {
@@ -414,6 +439,8 @@ model Meeting {
   durationMins Int           @default(30)
   meetingUrl   String?
   status       MeetingStatus @default(SCHEDULED)
+  /// Set once the 24h-before reminder email went out (duties engine).
+  reminderSentAt DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 

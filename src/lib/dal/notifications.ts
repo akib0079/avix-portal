@@ -14,7 +14,11 @@ export async function getNotificationsForUser(userId: string) {
 }
 
 export async function notifyAllAdmins(input: {
-  type: "TASK_REQUEST_SUBMITTED" | "MILESTONE_APPROVED" | "PAYMENT_CLAIMED";
+  type:
+    | "TASK_REQUEST_SUBMITTED"
+    | "MILESTONE_APPROVED"
+    | "PAYMENT_CLAIMED"
+    | "RETAINER_GENERATED";
   title: string;
   body?: string;
   link?: string;

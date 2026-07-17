@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getAdminDashboard } from "@/lib/dal/dashboard";
+import { getAdminDashboard, getTodayItems } from "@/lib/dal/dashboard";
 import { getPipelineSummary } from "@/lib/dal/leads";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -34,14 +34,55 @@ function fmtHours(hours: number): string {
 }
 
 export default async function AdminDashboardPage() {
-  const [data, pipeline] = await Promise.all([
+  const [data, pipeline, today] = await Promise.all([
     getAdminDashboard(),
     getPipelineSummary(),
+    getTodayItems(),
   ]);
 
   return (
     <div>
       <PageHeader title="Dashboard" description="Your agency overview at a glance." />
+
+      {/* Today: the things that actually need you */}
+      {today.length > 0 && (
+        <div className="mb-6 rounded-xl border border-primary/25 bg-brand-tint/40 p-5">
+          <h2 className="font-heading text-base font-semibold">
+            {today.length} thing{today.length === 1 ? "" : "s"} need
+            {today.length === 1 ? "s" : ""} you today
+          </h2>
+          <ul className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {today.map((item, i) => (
+              <li key={i}>
+                <Link
+                  href={item.link}
+                  className="flex items-start gap-2.5 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50"
+                >
+                  <span
+                    className={`mt-1.5 size-2 shrink-0 rounded-full ${
+                      item.kind === "invoice"
+                        ? "bg-red-500"
+                        : item.kind === "lead"
+                          ? "bg-amber-500"
+                          : item.kind === "meeting"
+                            ? "bg-sky-500"
+                            : "bg-emerald-500"
+                    }`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {item.label}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {item.detail}
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
