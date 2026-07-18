@@ -413,15 +413,24 @@ model Lead {
   @@map("leads")
 }
 
-/// A branded proposal built from a lead: intro + line-item scope + total +
-/// timeline + deposit %. Sent as a signed, expiring public link; the prospect
-/// accepts by typing their name (acceptedName). On accept, the app creates the
-/// client account + a CONTRACT project + a draft deposit invoice and marks the
-/// lead WON. Total is always derived from items (never trust a client value).
+/// A branded proposal: intro + line-item scope + total + timeline + deposit %.
+/// Sent as a signed, expiring public link; the prospect accepts by typing their
+/// name (acceptedName), or the admin closes it on their behalf (acceptedByAdmin
+/// — e.g. they said yes on a call). Either way the app creates the client
+/// account + a CONTRACT project + a draft deposit invoice.
+///
+/// The recipient comes from EITHER a pipeline lead (leadId) OR the manually
+/// entered recipient* fields — exactly one is set. Accepting a lead-backed
+/// proposal also marks that lead WON.
+/// Total is always derived from items (never trust a client-supplied value).
 model Proposal {
   id                 String         @id @default(cuid())
-  leadId             String
-  lead               Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId             String?
+  lead               Lead?          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// Set only for manually-created proposals (no lead behind them).
+  recipientName      String?
+  recipientEmail     String?
+  recipientCompany   String?
   title              String
   intro              String?
   projectType        ProjectType
@@ -434,6 +443,9 @@ model Proposal {
   sentAt             DateTime?
   acceptedAt         DateTime?
   acceptedName       String?
+  /// True when the admin marked it accepted rather than the client signing.
+  acceptedByAdmin    Boolean        @default(false)
+  convertedClientId  String?
   convertedProjectId String?
   convertedInvoiceId String?
   createdAt          DateTime       @default(now())

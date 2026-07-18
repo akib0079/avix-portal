@@ -75,7 +75,7 @@ export default async function PublicProposalPage({
           {proposal.title}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Prepared for {proposal.leadCompany ?? proposal.leadName}
+          Prepared for {proposal.contactCompany ?? proposal.contactName}
           {proposal.expiresAt && isOpen
             ? ` · valid until ${formatDate(proposal.expiresAt)}`
             : ""}

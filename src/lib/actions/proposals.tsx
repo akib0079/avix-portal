@@ -9,6 +9,7 @@ import { sendPasswordLink } from "@/lib/auth-utils";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
+import { proposalContact } from "@/lib/dal/proposals";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
 import { usd } from "@/lib/format";
@@ -26,7 +27,7 @@ export type ActionResult<T = undefined> =
   | { ok: false; error: string };
 
 /** Lead source → the project's source enum (only Fiverr/Upwork map 1:1). */
-function mapSource(source: LeadSource): ProjectSource {
+function mapSource(source: LeadSource | null): ProjectSource {
   if (source === "FIVERR") return "FIVERR";
   if (source === "UPWORK") return "UPWORK";
   return "INDEPENDENT";
@@ -40,6 +41,27 @@ function itemsFromInput(items: ProposalInput["items"]) {
   }));
 }
 
+/**
+ * Recipient columns for a create/update. Exactly one side is populated so the
+ * effective contact is unambiguous: a lead, or the manual fields.
+ */
+function recipientFields(data: ProposalInput) {
+  if (data.source === "lead") {
+    return {
+      leadId: data.leadId as string,
+      recipientName: null,
+      recipientEmail: null,
+      recipientCompany: null,
+    };
+  }
+  return {
+    leadId: null,
+    recipientName: data.recipientName || null,
+    recipientEmail: data.recipientEmail?.toLowerCase() || null,
+    recipientCompany: data.recipientCompany || null,
+  };
+}
+
 export async function createProposal(
   input: ProposalInput,
 ): Promise<ActionResult<{ id: string }>> {
@@ -50,12 +72,17 @@ export async function createProposal(
   }
   const data = parsed.data;
 
-  const lead = await prisma.lead.findUnique({ where: { id: data.leadId }, select: { id: true } });
-  if (!lead) return { ok: false, error: "Lead not found." };
+  if (data.source === "lead") {
+    const lead = await prisma.lead.findUnique({
+      where: { id: data.leadId as string },
+      select: { id: true },
+    });
+    if (!lead) return { ok: false, error: "Lead not found." };
+  }
 
   const proposal = await prisma.proposal.create({
     data: {
-      leadId: data.leadId,
+      ...recipientFields(data),
       title: data.title,
       intro: data.intro || null,
       projectType: data.projectType,
@@ -86,12 +113,20 @@ export async function updateProposal(
   if (existing.status !== "DRAFT") {
     return { ok: false, error: "Only draft proposals can be edited." };
   }
+  if (data.source === "lead") {
+    const lead = await prisma.lead.findUnique({
+      where: { id: data.leadId as string },
+      select: { id: true },
+    });
+    if (!lead) return { ok: false, error: "Lead not found." };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.proposalItem.deleteMany({ where: { proposalId: id } });
     await tx.proposal.update({
       where: { id },
       data: {
+        ...recipientFields(data),
         title: data.title,
         intro: data.intro || null,
         projectType: data.projectType,
@@ -116,22 +151,29 @@ export async function deleteProposal(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-/** Marks a proposal SENT, stamps the expiry window, and emails the prospect. */
+/** Marks a proposal SENT, stamps the expiry window, and emails the recipient. */
 export async function sendProposal(id: string): Promise<ActionResult> {
   await requireAdmin();
   const proposal = await prisma.proposal.findUnique({
     where: { id },
     include: {
       items: { orderBy: { sortOrder: "asc" } },
-      lead: { select: { name: true, email: true, stage: true } },
+      lead: { select: { name: true, email: true, company: true, stage: true } },
     },
   });
   if (!proposal) return { ok: false, error: "Proposal not found." };
   if (proposal.status === "ACCEPTED") {
     return { ok: false, error: "This proposal was already accepted." };
   }
-  if (!proposal.lead.email) {
-    return { ok: false, error: "Add an email to this lead first — the proposal is sent to it." };
+
+  const contact = proposalContact(proposal);
+  if (!contact.email) {
+    return {
+      ok: false,
+      error: proposal.leadId
+        ? "Add an email to this lead first — the proposal is sent to it."
+        : "Add a recipient email first — the proposal is sent to it.",
+    };
   }
 
   const expiresAt = new Date(Date.now() + proposal.expiresInDays * 24 * 60 * 60 * 1000);
@@ -145,21 +187,22 @@ export async function sendProposal(id: string): Promise<ActionResult> {
       status: "SENT",
       sentAt: new Date(),
       expiresAt,
-      // Nudge the lead into the Proposal-sent column (never downgrade Won/Lost).
+      // Nudge a pipeline lead into the Proposal-sent column (never downgrade Won/Lost).
       lead:
-        proposal.lead.stage === "NEW" || proposal.lead.stage === "CONTACTED"
+        proposal.lead &&
+        (proposal.lead.stage === "NEW" || proposal.lead.stage === "CONTACTED")
           ? { update: { stage: "PROPOSAL" } }
           : undefined,
     },
   });
 
-  const [firstName] = proposal.lead.name.trim().split(/\s+/);
+  const [firstName] = contact.name.trim().split(/\s+/);
   await sendEmail({
-    to: proposal.lead.email,
+    to: contact.email,
     subject: `Your proposal from Avix Digital: ${proposal.title}`,
     react: (
       <ProposalSentEmail
-        recipientName={firstName || proposal.lead.name}
+        recipientName={firstName || contact.name}
         title={proposal.title}
         intro={proposal.intro}
         totalText={usd.format(total)}
@@ -176,7 +219,7 @@ export async function sendProposal(id: string): Promise<ActionResult> {
         acceptUrl={acceptUrl}
       />
     ),
-    devHint: `proposal ${proposal.title} → ${proposal.lead.email}`,
+    devHint: `proposal ${proposal.title} → ${contact.email}`,
   });
 
   revalidatePath("/admin/proposals");
@@ -200,25 +243,18 @@ export async function getProposalLink(id: string): Promise<ActionResult<{ url: s
 }
 
 /**
- * PUBLIC action (no session). A prospect accepts a proposal by typing their
- * name. Re-verifies the signed token + expiry server-side, then atomically:
- * creates the CLIENT account, a CONTRACT project priced at the proposal total,
- * a draft deposit invoice, marks the lead WON, and stamps the signature.
- * Idempotent on an already-accepted proposal.
+ * The shared hand-off, used by BOTH the public accept and the admin's
+ * "mark accepted". Atomically creates the CLIENT account, a CONTRACT project
+ * priced at the proposal total, and a draft deposit invoice; marks a backing
+ * lead WON and stamps the signature on the proposal.
+ *
+ * Callers must have already authorised the action (token or admin session).
  */
-export async function acceptProposal(
+async function runHandoff(
   id: string,
-  token: string,
   signedName: string,
+  byAdmin: boolean,
 ): Promise<ActionResult<{ accepted: true }>> {
-  const parsed = acceptProposalSchema.safeParse({ signedName });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Type your full name" };
-  }
-  if (!verifyProposalToken(id, token)) {
-    return { ok: false, error: "This proposal link is invalid or has expired." };
-  }
-
   const proposal = await prisma.proposal.findUnique({
     where: { id },
     include: {
@@ -228,22 +264,30 @@ export async function acceptProposal(
   });
   if (!proposal) return { ok: false, error: "Proposal not found." };
   if (proposal.status === "ACCEPTED") return { ok: true, data: { accepted: true } };
-  if (proposal.status !== "SENT") {
+  // The admin may close a proposal that was never sent; the client cannot.
+  if (byAdmin ? proposal.status === "DECLINED" : proposal.status !== "SENT") {
     return { ok: false, error: "This proposal is no longer available." };
   }
-  if (!proposal.lead.email) {
-    return { ok: false, error: "This proposal can't be accepted — no contact email on file." };
+
+  const contact = proposalContact(proposal);
+  if (!contact.email) {
+    return { ok: false, error: "No contact email on file for this proposal." };
   }
 
-  const email = proposal.lead.email.toLowerCase();
+  const email = contact.email.toLowerCase();
   const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (existing) {
-    return { ok: false, error: "An account already exists for this email — please sign in instead." };
+    return {
+      ok: false,
+      error: byAdmin
+        ? "A client account already exists for this email."
+        : "An account already exists for this email — please sign in instead.",
+    };
   }
 
   const total = proposal.items.reduce((acc, i) => acc + Number(i.amount), 0);
   const depositAmount = Math.round(total * proposal.depositPercent) / 100;
-  const [firstName, ...rest] = proposal.lead.name.trim().split(/\s+/);
+  const [firstName, ...rest] = contact.name.trim().split(/\s+/);
   const lastName = rest.join(" ");
 
   // Hash outside the transaction (better-auth context is independent of the tx).
@@ -255,11 +299,11 @@ export async function acceptProposal(
     const user = await tx.user.create({
       data: {
         email,
-        name: proposal.lead.name.trim(),
-        firstName: firstName ?? proposal.lead.name,
+        name: contact.name.trim(),
+        firstName: firstName ?? contact.name,
         lastName,
         role: "CLIENT",
-        company: proposal.lead.company,
+        company: contact.company,
         emailVerified: false,
       },
     });
@@ -272,7 +316,7 @@ export async function acceptProposal(
         projectName: proposal.title,
         clientId: user.id,
         type: proposal.projectType,
-        source: mapSource(proposal.lead.source),
+        source: mapSource(proposal.lead?.source ?? null),
         priority: "MEDIUM",
         status: "PLANNING",
         billingType: "CONTRACT",
@@ -300,17 +344,21 @@ export async function acceptProposal(
       },
     });
 
-    await tx.lead.update({
-      where: { id: proposal.lead.id },
-      data: { stage: "WON", convertedClientId: user.id },
-    });
+    if (proposal.lead) {
+      await tx.lead.update({
+        where: { id: proposal.lead.id },
+        data: { stage: "WON", convertedClientId: user.id },
+      });
+    }
 
     await tx.proposal.update({
       where: { id },
       data: {
         status: "ACCEPTED",
         acceptedAt: new Date(),
-        acceptedName: parsed.data.signedName,
+        acceptedName: signedName,
+        acceptedByAdmin: byAdmin,
+        convertedClientId: user.id,
         convertedProjectId: project.id,
         convertedInvoiceId: invoice.id,
       },
@@ -322,18 +370,58 @@ export async function acceptProposal(
   // Send the set-your-password invite (outside the tx; safe to be non-atomic).
   await sendPasswordLink(email);
 
-  await notifyAllAdmins({
-    type: "PROPOSAL_ACCEPTED",
-    title: `${proposal.lead.name} accepted "${proposal.title}"`,
-    body: `${usd.format(total)} · deposit invoice ${result.invoice.invoiceNumber} drafted (${usd.format(depositAmount)})`,
-    link: "/admin/proposals",
-  });
+  // Only notify for a client-driven accept — the admin already knows about theirs.
+  if (!byAdmin) {
+    await notifyAllAdmins({
+      type: "PROPOSAL_ACCEPTED",
+      title: `${contact.name} accepted "${proposal.title}"`,
+      body: `${usd.format(total)} · deposit invoice ${result.invoice.invoiceNumber} drafted (${usd.format(depositAmount)})`,
+      link: "/admin/proposals",
+    });
+  }
 
   revalidatePath("/admin/proposals");
   revalidatePath("/admin/leads");
   revalidatePath("/admin/clients");
   revalidatePath("/admin");
   return { ok: true, data: { accepted: true } };
+}
+
+/**
+ * PUBLIC action (no session). A prospect accepts by typing their name.
+ * Re-verifies the signed token + expiry server-side before doing anything.
+ * Idempotent on an already-accepted proposal.
+ */
+export async function acceptProposal(
+  id: string,
+  token: string,
+  signedName: string,
+): Promise<ActionResult<{ accepted: true }>> {
+  const parsed = acceptProposalSchema.safeParse({ signedName });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Type your full name" };
+  }
+  if (!verifyProposalToken(id, token)) {
+    return { ok: false, error: "This proposal link is invalid or has expired." };
+  }
+  return runHandoff(id, parsed.data.signedName, false);
+}
+
+/**
+ * Admin closes the proposal on the client's behalf (they agreed by call/chat).
+ * Runs the same hand-off; the signature records who agreed, flagged as
+ * admin-recorded so the audit trail stays honest.
+ */
+export async function markProposalAccepted(
+  id: string,
+  signedName: string,
+): Promise<ActionResult<{ accepted: true }>> {
+  await requireAdmin();
+  const parsed = acceptProposalSchema.safeParse({ signedName });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Enter who agreed" };
+  }
+  return runHandoff(id, parsed.data.signedName, true);
 }
 
 /** Optional: a prospect declines the proposal. */

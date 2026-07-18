@@ -9,6 +9,7 @@ import { createProposal, updateProposal } from "@/lib/actions/proposals";
 import type { ProposalView } from "@/lib/dal/proposals";
 import { projectTypeValues } from "@/lib/validation/project";
 import { projectTypeLabels, usd } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,7 +67,11 @@ export function ProposalFormDialog({
   const form = useForm<ProposalInput>({
     resolver: zodResolver(proposalSchema),
     defaultValues: {
+      source: "lead",
       leadId: "",
+      recipientName: "",
+      recipientEmail: "",
+      recipientCompany: "",
       title: "",
       intro: "",
       projectType: "CUSTOM_WEB_DEV",
@@ -86,7 +91,11 @@ export function ProposalFormDialog({
     if (!open) return;
     if (proposal) {
       form.reset({
-        leadId: proposal.leadId,
+        source: proposal.leadId ? "lead" : "manual",
+        leadId: proposal.leadId ?? "",
+        recipientName: proposal.recipientName ?? "",
+        recipientEmail: proposal.recipientEmail ?? "",
+        recipientCompany: proposal.recipientCompany ?? "",
         title: proposal.title,
         intro: proposal.intro ?? "",
         projectType: proposal.projectType,
@@ -100,7 +109,13 @@ export function ProposalFormDialog({
     // New proposal — seed from the lead so there's less typing.
     const lead = leads.find((l) => l.id === presetLeadId);
     form.reset({
+      // Opened from a lead card → lead mode; opened cold with no leads to pick
+      // from → go straight to manual so the form is never a dead end.
+      source: presetLeadId || leads.length > 0 ? "lead" : "manual",
       leadId: presetLeadId ?? "",
+      recipientName: "",
+      recipientEmail: "",
+      recipientCompany: "",
       title: lead?.company ? `${lead.company} — project` : "",
       intro: lead?.brandInfo ?? "",
       projectType: "CUSTOM_WEB_DEV",
@@ -117,6 +132,7 @@ export function ProposalFormDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, proposal?.id, presetLeadId]);
 
+  const source = form.watch("source");
   const items = form.watch("items");
   const depositPercent = form.watch("depositPercent");
   const total = (items ?? []).reduce(
@@ -151,36 +167,117 @@ export function ProposalFormDialog({
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FormField
-                control={form.control}
-                name="leadId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Lead</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      disabled={isEdit}
-                    >
+            {/* Where the recipient comes from */}
+            <FormField
+              control={form.control}
+              name="source"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Proposal for</FormLabel>
+                  <div className="flex gap-2">
+                    {(
+                      [
+                        { value: "lead", label: "A lead in my pipeline" },
+                        { value: "manual", label: "Someone else (enter manually)" },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        disabled={opt.value === "lead" && leads.length === 0}
+                        onClick={() => field.onChange(opt.value)}
+                        className={cn(
+                          "flex-1 rounded-lg border px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                          field.value === opt.value
+                            ? "border-primary bg-brand-tint font-medium text-foreground"
+                            : "text-muted-foreground hover:bg-muted/50",
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {source === "manual" && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <FormField
+                  control={form.control}
+                  name="recipientName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Their name</FormLabel>
                       <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select lead" />
-                        </SelectTrigger>
+                        <Input placeholder="e.g. Nadia Rahman" {...field} />
                       </FormControl>
-                      <SelectContent>
-                        {leads.map((l) => (
-                          <SelectItem key={l.id} value={l.id}>
-                            {l.name}
-                            {l.company ? ` — ${l.company}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="recipientEmail"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Their email</FormLabel>
+                      <FormControl>
+                        <Input type="email" placeholder="nadia@verdant.co" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="recipientCompany"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company (optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Verdant Skincare" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {source === "lead" && (
+                <FormField
+                  control={form.control}
+                  name="leadId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Lead</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        disabled={isEdit}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select lead" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {leads.map((l) => (
+                            <SelectItem key={l.id} value={l.id}>
+                              {l.name}
+                              {l.company ? ` — ${l.company}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={form.control}
                 name="projectType"

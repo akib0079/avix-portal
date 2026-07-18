@@ -8,7 +8,10 @@ import {
   deleteProposal,
   sendProposal,
   getProposalLink,
+  markProposalAccepted,
 } from "@/lib/actions/proposals";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   ProposalFormDialog,
   type ProposalLeadOption,
@@ -65,6 +68,8 @@ export function ProposalManager({
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProposalView | null>(null);
   const [deleting, setDeleting] = useState<ProposalView | null>(null);
+  const [accepting, setAccepting] = useState<ProposalView | null>(null);
+  const [acceptName, setAcceptName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +81,7 @@ export function ProposalManager({
     const result = await sendProposal(proposal.id);
     setBusyId(null);
     if (!result.ok) return void toast.error(result.error);
-    toast.success(`Proposal sent to ${proposal.leadEmail}.`);
+    toast.success(`Proposal sent to ${proposal.contactEmail}.`);
     router.refresh();
   }
 
@@ -104,7 +109,6 @@ export function ProposalManager({
             setEditing(null);
             setFormOpen(true);
           }}
-          disabled={leads.length === 0}
         >
           <Plus /> New proposal
         </Button>
@@ -117,9 +121,9 @@ export function ProposalManager({
           </div>
           <p className="mt-4 font-medium">No proposals yet</p>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            {leads.length === 0
-              ? "Add a lead first — proposals are built from your pipeline."
-              : "Build one from a lead. When they accept online, their account, project and deposit invoice are created for you."}
+            Build one from a lead, or enter the recipient manually. When they
+            accept online — or you mark it accepted — their account, project and
+            deposit invoice are created for you.
           </p>
         </div>
       ) : (
@@ -145,8 +149,9 @@ export function ProposalManager({
                     </span>
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {p.leadName}
-                    {p.leadCompany ? ` · ${p.leadCompany}` : ""}
+                    {p.contactName}
+                    {p.contactCompany ? ` · ${p.contactCompany}` : ""}
+                    {!p.leadId ? " · manual" : ""}
                     {p.status === "SENT" && p.expiresAt
                       ? ` · valid until ${formatDate(p.expiresAt)}`
                       : ""}
@@ -155,8 +160,9 @@ export function ProposalManager({
 
                   {p.status === "ACCEPTED" && (
                     <p className="mt-1.5 text-sm text-emerald-700">
-                      Signed by <strong>{p.acceptedName}</strong> on{" "}
-                      {formatDate(p.acceptedAt)}
+                      {p.acceptedByAdmin ? "Recorded as agreed by " : "Signed by "}
+                      <strong>{p.acceptedName}</strong> on {formatDate(p.acceptedAt)}
+                      {p.acceptedByAdmin ? " (marked by you)" : ""}
                       {p.convertedProjectId && (
                         <>
                           {" · "}
@@ -244,6 +250,21 @@ export function ProposalManager({
                     </>
                   )}
 
+                  {p.status !== "ACCEPTED" && p.status !== "DECLINED" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-emerald-600 hover:text-emerald-700"
+                      title="They agreed by call or chat — close it yourself"
+                      onClick={() => {
+                        setAcceptName(p.contactName);
+                        setAccepting(p);
+                      }}
+                    >
+                      <CheckCircle2 className="size-4" /> Mark accepted
+                    </Button>
+                  )}
+
                   {p.status !== "ACCEPTED" && (
                     <Button
                       variant="ghost"
@@ -268,6 +289,56 @@ export function ProposalManager({
         open={formOpen}
         onOpenChange={setFormOpen}
       />
+
+      <Dialog open={!!accepting} onOpenChange={(open) => !open && setAccepting(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark “{accepting?.title}” as accepted?</DialogTitle>
+            <DialogDescription>
+              Use this when they agreed by call, chat or email. This creates their
+              client account (with an invite email), the project, and a draft{" "}
+              {accepting?.depositPercent}% deposit invoice — same as if they
+              accepted online.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="accept-name">Who agreed?</Label>
+            <Input
+              id="accept-name"
+              value={acceptName}
+              onChange={(e) => setAcceptName(e.target.value)}
+              placeholder="e.g. Nadia Rahman"
+            />
+            <p className="text-xs text-muted-foreground">
+              Recorded on the proposal, flagged as marked by you rather than signed
+              online.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAccepting(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy || acceptName.trim().length < 2}
+              onClick={async () => {
+                if (!accepting) return;
+                setBusy(true);
+                const result = await markProposalAccepted(accepting.id, acceptName);
+                setBusy(false);
+                if (!result.ok) return void toast.error(result.error);
+                toast.success("Marked accepted — account, project and deposit invoice created.");
+                setAccepting(null);
+                router.refresh();
+              }}
+            >
+              {busy && <Loader2 className="animate-spin" />}
+              Mark accepted
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <DialogContent>
