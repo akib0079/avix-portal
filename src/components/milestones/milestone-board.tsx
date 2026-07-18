@@ -211,10 +211,13 @@ export function MilestoneBoard({
   projectId,
   milestones,
   billingType = "MILESTONE",
+  canEditPricing = true,
 }: {
   projectId: string;
   milestones: MilestoneView[];
   billingType?: ProjectBillingType;
+  /** false for STAFF — hides the pricing inputs in the milestone dialog. */
+  canEditPricing?: boolean;
 }) {
   const router = useRouter();
   const [items, setItems] = useState(milestones);
@@ -328,6 +331,7 @@ export function MilestoneBoard({
         open={formOpen}
         onOpenChange={setFormOpen}
         billingType={billingType}
+        canEditPricing={canEditPricing}
       />
 
       <TimeLogDialog

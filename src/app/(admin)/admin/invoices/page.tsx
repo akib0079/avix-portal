@@ -17,10 +17,12 @@ import {
 } from "@/components/ui/table";
 import { usd, formatDate } from "@/lib/format";
 import { Plus, FileText, Paperclip } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Invoices" };
 
 export default async function InvoicesPage() {
+  await requireAdmin();
   const invoices = await listInvoices();
 
   return (

@@ -20,6 +20,17 @@ export async function requireAdmin(): Promise<SessionUser> {
   return user;
 }
 
+/**
+ * ADMIN or STAFF. Use ONLY on the staff-safe surface (projects, messages,
+ * milestones sans pricing, time entries). Money-bearing DAL/actions must keep
+ * requireAdmin — an unmigrated call site fails closed (404 for staff).
+ */
+export async function requireTeam(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (user.role !== "ADMIN" && user.role !== "STAFF") notFound();
+  return user;
+}
+
 export async function requireClient(): Promise<SessionUser> {
   const user = await requireUser();
   if (user.role !== "CLIENT") notFound();

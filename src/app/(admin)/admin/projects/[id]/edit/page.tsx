@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { ProjectForm } from "@/components/projects/project-form";
 import { Card, CardContent } from "@/components/ui/card";
 import type { ProjectInput } from "@/lib/validation/project";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Edit Project" };
 
@@ -18,6 +19,7 @@ export default async function EditProjectPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAdmin();
   const { id } = await params;
   const [project, clients] = await Promise.all([
     getProject(id),

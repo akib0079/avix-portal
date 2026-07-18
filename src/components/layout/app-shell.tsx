@@ -34,6 +34,9 @@ import {
   FileSignature,
 } from "lucide-react";
 
+/** Only the admin shell varies by role; the portal is always CLIENT. */
+type ShellRole = "ADMIN" | "STAFF" | "CLIENT";
+
 type NavItem = {
   href: string;
   label: string;
@@ -56,6 +59,15 @@ const adminNav: NavItem[] = [
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
   { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
   { href: "/admin/settings", label: "Settings", icon: Settings },
+];
+
+/**
+ * Staff see only the delivery surface. This is cosmetic — the real gate is
+ * requireAdmin in each page/DAL, which 404s staff on everything else.
+ */
+const staffNav: NavItem[] = [
+  { href: "/admin/projects", label: "Projects", icon: FolderKanban },
+  { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
 ];
 
 const clientNav: NavItem[] = [
@@ -146,19 +158,23 @@ function LogoMark({ logoUrl, width, height }: { logoUrl?: string | null; width: 
 
 function SidebarInner({
   variant,
+  role,
   user,
   pathname,
   onNavigate,
   logoUrl,
 }: {
   variant: "admin" | "client";
+  role?: ShellRole;
   user: { name: string; email: string };
   pathname: string;
   onNavigate?: () => void;
   logoUrl?: string | null;
 }) {
   const router = useRouter();
-  const items = variant === "admin" ? adminNav : clientNav;
+  const isStaff = role === "STAFF";
+  const items =
+    variant === "admin" ? (isStaff ? staffNav : adminNav) : clientNav;
   const [signingOut, setSigningOut] = useState(false);
 
   async function signOut() {
@@ -177,14 +193,18 @@ function SidebarInner({
   return (
     <div className="flex h-full flex-col bg-sidebar">
       <div className="px-5 pt-6 pb-4">
-        <Link href={variant === "admin" ? "/admin" : "/portal"} onClick={onNavigate}>
+        <Link
+          href={variant === "admin" ? (isStaff ? "/admin/projects" : "/admin") : "/portal"}
+          onClick={onNavigate}
+        >
           <LogoMark logoUrl={logoUrl} width={132} height={33} />
         </Link>
       </div>
       <p className="px-5 pb-2 text-[11px] font-semibold tracking-[0.14em] text-slate-500 uppercase">
-        {variant === "admin" ? "Admin Panel" : "Client Portal"}
+        {variant === "admin" ? (isStaff ? "Staff Panel" : "Admin Panel") : "Client Portal"}
       </p>
-      {variant === "admin" && (
+      {/* Search is admin-only — /api/search returns invoice amounts. */}
+      {variant === "admin" && !isStaff && (
         <div className="px-3 pb-3">
           <SearchTrigger tone="dark" />
         </div>
@@ -226,23 +246,32 @@ function SidebarInner({
 
 export function AppShell({
   variant,
+  role,
   user,
   children,
   logoUrl,
 }: {
   variant: "admin" | "client";
+  role?: ShellRole;
   user: { name: string; email: string };
   children: React.ReactNode;
   logoUrl?: string | null;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const isStaff = role === "STAFF";
 
   const shell = (
     <div className="flex min-h-screen w-full">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 lg:block">
-        <SidebarInner variant={variant} user={user} pathname={pathname} logoUrl={logoUrl} />
+        <SidebarInner
+          variant={variant}
+          role={role}
+          user={user}
+          pathname={pathname}
+          logoUrl={logoUrl}
+        />
       </aside>
 
       {/* Mobile topbar */}
@@ -262,6 +291,7 @@ export function AppShell({
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <SidebarInner
               variant={variant}
+              role={role}
               user={user}
               pathname={pathname}
               onNavigate={() => setOpen(false)}
@@ -290,7 +320,7 @@ export function AppShell({
 
   return (
     <ActivityProvider>
-      {variant === "admin" ? (
+      {variant === "admin" && !isStaff ? (
         <GlobalSearchProvider>{shell}</GlobalSearchProvider>
       ) : (
         shell

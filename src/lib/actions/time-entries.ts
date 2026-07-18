@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/dal/session";
+import { requireTeam } from "@/lib/dal/session";
 import { timeEntrySchema, type TimeEntryInput } from "@/lib/validation/time-entry";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -23,7 +23,7 @@ export async function createTimeEntry(
   milestoneId: string,
   input: TimeEntryInput,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  await requireTeam();
   const parsed = timeEntrySchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -53,7 +53,7 @@ export async function updateTimeEntry(
   id: string,
   input: TimeEntryInput,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  await requireTeam();
   const parsed = timeEntrySchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -80,7 +80,7 @@ export async function updateTimeEntry(
 }
 
 export async function deleteTimeEntry(id: string): Promise<ActionResult> {
-  await requireAdmin();
+  await requireTeam();
   const entry = await prisma.timeEntry.findUnique({
     where: { id },
     select: { milestone: { select: { projectId: true } } },

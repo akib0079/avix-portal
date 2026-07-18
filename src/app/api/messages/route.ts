@@ -17,7 +17,8 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const projectId = params.get("projectId");
 
-  const clientId = user.role === "ADMIN" ? params.get("clientId") : user.id;
+  const isTeam = user.role === "ADMIN" || user.role === "STAFF";
+  const clientId = isTeam ? params.get("clientId") : user.id;
   if (!clientId) {
     return NextResponse.json({ error: "Missing clientId" }, { status: 400 });
   }
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
   const messages = await getThreadMessages(key);
 
   // Mark the other side's messages as read for this viewer.
-  const field = user.role === "ADMIN" ? "readByAdminAt" : "readByClientAt";
+  const field = isTeam ? "readByAdminAt" : "readByClientAt";
   await prisma.message.updateMany({
     where: { ...key, [field]: null },
     data: { [field]: new Date() },

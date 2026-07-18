@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/dal/session";
+import { requireAdmin, requireTeam } from "@/lib/dal/session";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
 import type { Prisma, MilestoneStatus } from "@prisma/client";
 
@@ -60,7 +60,7 @@ export async function createMilestone(
   projectId: string,
   input: MilestoneInput,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const viewer = await requireTeam();
   const parsed = milestoneSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -81,7 +81,10 @@ export async function createMilestone(
       title: data.title,
       description: (data.description as Prisma.InputJsonValue) ?? undefined,
       position: (last._max.position ?? -1) + 1,
-      ...pricingData(data),
+      // Staff are money-blind: any pricing they submit is discarded.
+      ...(viewer.role === "ADMIN"
+        ? pricingData(data)
+        : { pricingType: "NONE" as const, hourlyRate: null, estimatedHours: null, fixedPrice: null }),
     },
   });
 
@@ -93,7 +96,7 @@ export async function updateMilestone(
   id: string,
   input: MilestoneInput,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const viewer = await requireTeam();
   const parsed = milestoneSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -106,7 +109,16 @@ export async function updateMilestone(
   });
   if (!milestone) return { ok: false, error: "Milestone not found." };
 
-  const pricing = pricingData(data);
+  // Staff edits keep the stored pricing untouched (they never see it anyway).
+  const pricing =
+    viewer.role === "ADMIN"
+      ? pricingData(data)
+      : {
+          pricingType: milestone.pricingType,
+          hourlyRate: milestone.hourlyRate,
+          estimatedHours: milestone.estimatedHours,
+          fixedPrice: milestone.fixedPrice,
+        };
   await prisma.milestone.update({
     where: { id },
     data: {
@@ -155,7 +167,7 @@ export async function setMilestoneStatus(
   id: string,
   status: MilestoneStatus,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  await requireTeam();
   const milestone = await prisma.milestone.findUnique({
     where: { id },
     include: clientInclude,
@@ -204,7 +216,7 @@ export async function reorderMilestones(
   projectId: string,
   orderedIds: string[],
 ): Promise<ActionResult> {
-  await requireAdmin();
+  await requireTeam();
 
   const milestones = await prisma.milestone.findMany({
     where: { projectId },

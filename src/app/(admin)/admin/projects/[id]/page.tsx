@@ -25,6 +25,7 @@ import {
   projectSourceLabels,
 } from "@/lib/format";
 import { ArrowLeft, Pencil, CalendarDays } from "lucide-react";
+import { requireTeam } from "@/lib/dal/session";
 
 export const metadata = { title: "Project" };
 
@@ -34,11 +35,15 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [project, messages] = await Promise.all([
+  const [viewer, project, messages] = await Promise.all([
+    requireTeam(),
     getProject(id),
     getProjectMessages(id),
   ]);
   if (!project) notFound();
+  // Staff are money-blind. getProject already strips prices server-side; this
+  // just avoids rendering empty money shells and the billing editor for them.
+  const isAdmin = viewer.role === "ADMIN";
 
   const milestones = project.milestones.map(toMilestoneView);
   const showDates = project.startDate || project.dueDate;
@@ -78,7 +83,7 @@ export default async function ProjectDetailPage({
                   {formatDate(project.startDate)} → {formatDate(project.dueDate)}
                 </p>
               )}
-              {project.billingType === "CONTRACT" && (
+              {isAdmin && project.billingType === "CONTRACT" && (
                 <p className="mt-1 text-sm font-medium text-primary">
                   {project.contractPrice != null
                     ? `${usd.format(Number(project.contractPrice))} fixed contract`
@@ -89,11 +94,13 @@ export default async function ProjectDetailPage({
             <div className="flex items-center gap-2">
               <PriorityBadge priority={project.priority} />
               <ProjectStatusBadge status={project.status} />
-              <Button asChild variant="outline" size="sm">
-                <Link href={`/admin/projects/${project.id}/edit`}>
-                  <Pencil /> Edit Project
-                </Link>
-              </Button>
+              {isAdmin && (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/admin/projects/${project.id}/edit`}>
+                    <Pencil /> Edit Project
+                  </Link>
+                </Button>
+              )}
             </div>
           </div>
           {hasRichTextContent(project.description) && (
@@ -104,13 +111,15 @@ export default async function ProjectDetailPage({
         </CardContent>
       </Card>
 
-      <ProjectTimeSummary
-        milestones={milestones}
-        billingType={project.billingType}
-        contractPrice={
-          project.contractPrice == null ? null : Number(project.contractPrice)
-        }
-      />
+      {isAdmin && (
+        <ProjectTimeSummary
+          milestones={milestones}
+          billingType={project.billingType}
+          contractPrice={
+            project.contractPrice == null ? null : Number(project.contractPrice)
+          }
+        />
+      )}
 
       <Card className="mb-6">
         <CardContent className="pt-6">
@@ -118,10 +127,12 @@ export default async function ProjectDetailPage({
             projectId={project.id}
             milestones={milestones}
             billingType={project.billingType}
+            canEditPricing={isAdmin}
           />
         </CardContent>
       </Card>
 
+      {isAdmin && (
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-lg">
@@ -170,6 +181,7 @@ export default async function ProjectDetailPage({
           )}
         </CardContent>
       </Card>
+      )}
 
       {project.client && (
         <ChatWidget

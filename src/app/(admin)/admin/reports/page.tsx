@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { usd } from "@/lib/format";
 import { BadgeDollarSign, Clock, Receipt, TrendingUp } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Reports" };
 
@@ -22,6 +23,7 @@ function fmtHours(hours: number): string {
 }
 
 export default async function ReportsPage() {
+  await requireAdmin();
   const data = await getReportsData();
   const { kpis, timeEarnings } = data;
 

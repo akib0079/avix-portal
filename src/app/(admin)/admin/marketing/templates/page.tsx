@@ -4,10 +4,12 @@ import { PageHeader } from "@/components/page-header";
 import { TemplateManager } from "@/components/marketing/template-manager";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Email Templates" };
 
 export default async function TemplatesPage() {
+  await requireAdmin();
   const templates = await listTemplates();
 
   return (

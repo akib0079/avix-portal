@@ -37,6 +37,7 @@ export function MilestoneFormDialog({
   open,
   onOpenChange,
   billingType = "MILESTONE",
+  canEditPricing = true,
 }: {
   projectId: string;
   /** present = edit mode */
@@ -45,6 +46,8 @@ export function MilestoneFormDialog({
   onOpenChange: (open: boolean) => void;
   /** CONTRACT hides per-milestone pricing (whole project has one price). */
   billingType?: "MILESTONE" | "CONTRACT";
+  /** false for STAFF — money-blind; the server discards any pricing they send. */
+  canEditPricing?: boolean;
 }) {
   const router = useRouter();
   const isEdit = !!milestone;
@@ -134,7 +137,7 @@ export function MilestoneFormDialog({
               )}
             />
 
-            {billingType !== "CONTRACT" && (
+            {billingType !== "CONTRACT" && canEditPricing && (
               <PricingFields
                 form={form as unknown as Parameters<typeof PricingFields>[0]["form"]}
               />

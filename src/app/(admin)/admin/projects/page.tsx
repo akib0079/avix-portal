@@ -14,24 +14,34 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { projectTypeLabels, projectSourceLabels } from "@/lib/format";
+import { requireTeam } from "@/lib/dal/session";
 import { Plus, FolderKanban } from "lucide-react";
 
 export const metadata = { title: "Projects" };
 
 export default async function ProjectsPage() {
-  const projects = await listProjects();
+  const [viewer, projects] = await Promise.all([requireTeam(), listProjects()]);
+  // Creating/deleting projects sets billing, so it stays admin-only — don't
+  // offer staff controls that the server would reject anyway.
+  const isAdmin = viewer.role === "ADMIN";
 
   return (
     <div>
       <PageHeader
         title="Projects"
-        description="Manage all client projects and milestones."
+        description={
+          isAdmin
+            ? "Manage all client projects and milestones."
+            : "Client projects and milestones."
+        }
         action={
-          <Button asChild>
-            <Link href="/admin/projects/new">
-              <Plus /> New Project
-            </Link>
-          </Button>
+          isAdmin ? (
+            <Button asChild>
+              <Link href="/admin/projects/new">
+                <Plus /> New Project
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -91,6 +101,7 @@ export default async function ProjectsPage() {
                     <TableCell>
                       <ProjectRowActions
                         project={{ id: project.id, projectName: project.projectName }}
+                        canDelete={isAdmin}
                       />
                     </TableCell>
                   </TableRow>

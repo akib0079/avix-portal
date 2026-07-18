@@ -15,6 +15,7 @@ import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Megaphone, Plus, Mail, ChevronRight } from "lucide-react";
 import type { CampaignStatus } from "@prisma/client";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Marketing" };
 
@@ -33,6 +34,7 @@ const statusLabels: Record<CampaignStatus, string> = {
 };
 
 export default async function MarketingPage() {
+  await requireAdmin();
   const campaigns = await listCampaigns();
 
   return (

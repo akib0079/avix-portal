@@ -57,6 +57,8 @@ export function MessageThread({
       senderId: "me",
       senderRole: viewerRole,
       senderName: "You",
+      // Own optimistic echo — never tagged as a teammate's message.
+      senderIsStaff: false,
       body,
       createdAt: new Date().toISOString(),
     };
@@ -123,7 +125,9 @@ export function MessageThread({
                     <RichTextViewer content={m.body} />
                   </div>
                   <p className="mt-1 px-1 text-[11px] text-muted-foreground">
-                    {m.senderName} ·{" "}
+                    {m.senderName}
+                    {/* Clients see who they spoke to, and that they're on our team. */}
+                    {m.senderIsStaff && !mine ? " · Avix Digital team" : ""} ·{" "}
                     {formatDistanceToNow(new Date(m.createdAt), { addSuffix: true })}
                   </p>
                 </div>

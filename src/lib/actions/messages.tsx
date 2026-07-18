@@ -38,11 +38,12 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
     return { ok: false, error: "Write a message first." };
   }
 
-  const isAdmin = user.role === "ADMIN";
+  // STAFF posts on the team side, with their real identity (senderId).
+  const isTeam = user.role === "ADMIN" || user.role === "STAFF";
   const projectId = parsed.data.projectId ?? null;
 
   // Resolve + authorize the thread owner (the client).
-  const clientId = isAdmin ? parsed.data.clientId : user.id;
+  const clientId = isTeam ? parsed.data.clientId : user.id;
   if (!clientId) return { ok: false, error: "Pick a client to message." };
 
   const client = await prisma.user.findFirst({
@@ -62,7 +63,7 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
     projectName = project.projectName;
   }
 
-  const senderRole = isAdmin ? "ADMIN" : "CLIENT";
+  const senderRole = isTeam ? "ADMIN" : "CLIENT";
   const now = new Date();
 
   await prisma.message.create({
@@ -86,8 +87,9 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
   const clientLink = projectId ? `/portal/projects/${projectId}` : `/portal/messages`;
 
   if (senderRole === "CLIENT") {
+    // Client replies ping the whole team (admins + staff).
     const admins = await prisma.user.findMany({
-      where: { role: "ADMIN", status: "ACTIVE" },
+      where: { role: { in: ["ADMIN", "STAFF"] }, status: "ACTIVE" },
       select: { id: true },
     });
     if (admins.length > 0) {

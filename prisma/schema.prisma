@@ -14,6 +14,8 @@ datasource db {
 enum Role {
   ADMIN
   CLIENT
+  /// Limited team member: projects + client messages only, all money hidden.
+  STAFF
 }
 
 enum UserStatus {

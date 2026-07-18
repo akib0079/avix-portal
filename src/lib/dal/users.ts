@@ -77,3 +77,30 @@ export async function listActiveClientOptions() {
     select: { id: true, firstName: true, lastName: true, company: true },
   });
 }
+
+/** Team members (STAFF). Admin-only — used by Settings → Team. */
+export async function listStaff() {
+  await requireAdmin();
+  const rows = await prisma.user.findMany({
+    where: { role: "STAFF" },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      status: true,
+      emailVerified: true,
+      createdAt: true,
+      _count: { select: { messages: true } },
+    },
+  });
+  return rows.map((u) => ({
+    id: u.id,
+    name: `${u.firstName} ${u.lastName}`.trim(),
+    email: u.email,
+    status: u.status,
+    emailVerified: u.emailVerified,
+    messageCount: u._count.messages,
+  }));
+}

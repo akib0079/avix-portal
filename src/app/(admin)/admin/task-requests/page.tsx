@@ -5,6 +5,7 @@ import { RequestCard } from "@/components/task-requests/request-card";
 import { cn } from "@/lib/utils";
 import type { TaskRequestStatus } from "@prisma/client";
 import { Inbox } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Task Requests" };
 
@@ -20,6 +21,7 @@ export default async function TaskRequestsPage({
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
+  await requireAdmin();
   const { status } = await searchParams;
   const active = filters.find((f) => f.value === status)?.value;
   const requests = await listTaskRequests(active);

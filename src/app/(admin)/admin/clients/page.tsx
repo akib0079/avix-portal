@@ -14,10 +14,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Plus, Building2 } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Clients" };
 
 export default async function ClientsPage() {
+  await requireAdmin();
   const clients = await listClients();
 
   return (

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { usd, projectTypeLabels, formatDate } from "@/lib/format";
 import { formatDistanceToNow } from "date-fns";
+import { requireAdmin } from "@/lib/dal/session";
 import {
   FolderKanban,
   TrendingUp,
@@ -34,6 +35,7 @@ function fmtHours(hours: number): string {
 }
 
 export default async function AdminDashboardPage() {
+  await requireAdmin();
   const [data, pipeline, today] = await Promise.all([
     getAdminDashboard(),
     getPipelineSummary(),

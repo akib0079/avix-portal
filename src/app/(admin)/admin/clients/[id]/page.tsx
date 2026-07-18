@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usd, formatDate, projectTypeLabels } from "@/lib/format";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Client" };
 
@@ -28,6 +29,7 @@ export default async function ClientDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAdmin();
   const { id } = await params;
   const client = await getClient(id);
   if (!client) notFound();

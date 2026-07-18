@@ -3,6 +3,7 @@ import { listTemplates, listMarketingRecipients } from "@/lib/dal/marketing";
 import { PageHeader } from "@/components/page-header";
 import { CampaignComposer } from "@/components/marketing/campaign-composer";
 import { ArrowLeft } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "New Campaign" };
 
@@ -11,6 +12,7 @@ export default async function NewCampaignPage({
 }: {
   searchParams: Promise<{ template?: string }>;
 }) {
+  await requireAdmin();
   const { template } = await searchParams;
   const [templates, recipients] = await Promise.all([
     listTemplates(),

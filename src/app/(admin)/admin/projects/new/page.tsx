@@ -2,6 +2,7 @@ import { listActiveClientOptions } from "@/lib/dal/users";
 import { PageHeader } from "@/components/page-header";
 import { ProjectForm } from "@/components/projects/project-form";
 import { Card, CardContent } from "@/components/ui/card";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "New Project" };
 
@@ -10,6 +11,7 @@ export default async function NewProjectPage({
 }: {
   searchParams: Promise<{ clientId?: string }>;
 }) {
+  await requireAdmin();
   const [{ clientId }, clients] = await Promise.all([
     searchParams,
     listActiveClientOptions(),

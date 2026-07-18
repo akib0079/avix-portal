@@ -19,13 +19,14 @@ export async function GET(
   });
   if (!record) return new NextResponse(null, { status: 404 });
 
-  // Admins see everything; users see their own uploads; everyone signed in
-  // can view admin-authored images (milestone/project content).
+  // Team (admin/staff) sees everything; users see their own uploads; everyone
+  // signed in can view team-authored images (milestone/project/chat content).
   const viewer = session.user;
+  const isTeamRole = (role: string) => role === "ADMIN" || role === "STAFF";
   const allowed =
-    viewer.role === "ADMIN" ||
+    isTeamRole(viewer.role) ||
     record.uploader.id === viewer.id ||
-    record.uploader.role === "ADMIN";
+    isTeamRole(record.uploader.role);
   if (!allowed) return new NextResponse(null, { status: 404 });
 
   const data = await openUpload("images", fileName);

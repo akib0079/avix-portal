@@ -1,13 +1,15 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { JSONContent } from "@tiptap/react";
-import type { MessageSenderRole } from "@prisma/client";
+import type { MessageSenderRole, Role } from "@prisma/client";
 
 export type MessageView = {
   id: string;
   senderId: string;
   senderRole: MessageSenderRole;
   senderName: string;
+  /** True when the sender is a STAFF user — portal shows a "team" tag. */
+  senderIsStaff: boolean;
   body: JSONContent | null;
   createdAt: string;
 };
@@ -24,20 +26,21 @@ function toView(m: {
   senderRole: MessageSenderRole;
   body: unknown;
   createdAt: Date;
-  sender: { firstName: string; lastName: string; name: string };
+  sender: { firstName: string; lastName: string; name: string; role: Role };
 }): MessageView {
   return {
     id: m.id,
     senderId: m.senderId,
     senderRole: m.senderRole,
     senderName: `${m.sender.firstName} ${m.sender.lastName}`.trim() || m.sender.name,
+    senderIsStaff: m.sender.role === "STAFF",
     body: (m.body as JSONContent) ?? null,
     createdAt: m.createdAt.toISOString(),
   };
 }
 
 const senderSelect = {
-  sender: { select: { firstName: true, lastName: true, name: true } },
+  sender: { select: { firstName: true, lastName: true, name: true, role: true } },
 } as const;
 
 /**

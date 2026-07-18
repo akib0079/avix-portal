@@ -19,9 +19,12 @@ import { Eye, Trash2, Loader2 } from "lucide-react";
 export function ProjectRowActions({
   project,
   redirectAfterDelete,
+  canDelete = true,
 }: {
   project: { id: string; projectName: string };
   redirectAfterDelete?: string;
+  /** false for STAFF — deleteProject is admin-only on the server. */
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -35,15 +38,17 @@ export function ProjectRowActions({
           <span className="sr-only">View project</span>
         </Link>
       </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-8 text-destructive hover:text-destructive"
-        onClick={() => setConfirmOpen(true)}
-      >
-        <Trash2 className="size-4" />
-        <span className="sr-only">Delete project</span>
-      </Button>
+      {canDelete && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-destructive hover:text-destructive"
+          onClick={() => setConfirmOpen(true)}
+        >
+          <Trash2 className="size-4" />
+          <span className="sr-only">Delete project</span>
+        </Button>
+      )}
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>

@@ -16,6 +16,7 @@ import {
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, CheckCircle2, XCircle, Clock3 } from "lucide-react";
+import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Campaign" };
 
@@ -24,6 +25,7 @@ export default async function CampaignDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAdmin();
   const { id } = await params;
   const campaign = await getCampaign(id);
   if (!campaign) notFound();
