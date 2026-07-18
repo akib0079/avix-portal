@@ -5,10 +5,50 @@
 //     Next.js server loads the correct DB URL at runtime — this is the ONLY
 //     mechanism that reliably overrides Hostinger's (corrupted) panel env,
 //     which LiteSpeed injects and which no server-side patch could beat.
-import { readFileSync, writeFileSync, existsSync } from "fs";
+//  3. Restores the executable bit on Prisma's native engine binaries, which
+//     this host unpacks without it (EACCES on `prisma migrate deploy`).
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, chmodSync } from "fs";
 import os from "os";
 import path from "path";
 import { execSync } from "child_process";
+
+/**
+ * Hostinger unpacks node_modules without the executable bit on Prisma's
+ * native binaries, so `prisma migrate deploy` dies with EACCES on the schema
+ * engine. Restore it before migrating. Idempotent and safe to run every build.
+ */
+function ensureEnginesExecutable() {
+  const roots = [
+    path.join(process.cwd(), "node_modules", "@prisma", "engines"),
+    path.join(process.cwd(), "node_modules", "prisma"),
+    path.join(process.cwd(), "node_modules", ".prisma", "client"),
+  ];
+  let fixed = 0;
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    let entries;
+    try {
+      entries = readdirSync(root);
+    } catch (err) {
+      console.warn(`[migrate] could not read ${root}: ${err.message}`);
+      continue;
+    }
+    for (const name of entries) {
+      // schema-engine-*, query-engine-*, migration-engine-*, libquery_engine-*
+      if (!/^(schema|query|migration)-engine|^libquery_engine/.test(name)) continue;
+      const file = path.join(root, name);
+      try {
+        if (!statSync(file).isFile()) continue;
+        chmodSync(file, 0o755);
+        fixed++;
+        console.log(`[migrate] chmod +x ${file}`);
+      } catch (err) {
+        console.warn(`[migrate] could not chmod ${file}: ${err.message}`);
+      }
+    }
+  }
+  console.log(`[migrate] engine binaries made executable: ${fixed}`);
+}
 
 const candidates = [
   process.env.PERSISTENT_ENV_FILE,
@@ -76,5 +116,7 @@ if (secretsFileContents) {
     console.warn(`[migrate] could not write runtime env files: ${err.message}`);
   }
 }
+
+ensureEnginesExecutable();
 
 execSync("prisma migrate deploy", { stdio: "inherit", env: process.env });
