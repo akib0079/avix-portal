@@ -19,6 +19,7 @@ import { leadStageLabels, leadSourceLabels } from "@/lib/validation/lead";
 import { setLeadStage, deleteLead, convertLead } from "@/lib/actions/leads";
 import { LeadFormDialog } from "./lead-form-dialog";
 import { LeadImportDialog } from "./lead-import-dialog";
+import { ProposalFormDialog } from "@/components/proposals/proposal-form-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,6 +40,7 @@ import {
   Loader2,
   CalendarClock,
   UserRoundPlus,
+  FileSignature,
   BadgeDollarSign,
   CheckCircle2,
   FileUp,
@@ -71,12 +73,14 @@ function LeadCard({
   onEdit,
   onDelete,
   onConvert,
+  onProposal,
 }: {
   lead: LeadView;
   dragging?: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
   onConvert?: () => void;
+  onProposal?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: lead.id });
   const overdue = isOverdue(lead.nextFollowUp) && lead.stage !== "WON" && lead.stage !== "LOST";
@@ -218,6 +222,17 @@ function LeadCard({
             <Button
               variant="ghost"
               size="icon"
+              className="size-7 text-primary hover:text-primary"
+              title="Create proposal"
+              onClick={onProposal}
+            >
+              <FileSignature className="size-3.5" />
+            </Button>
+          )}
+          {!lead.convertedClientId && (
+            <Button
+              variant="ghost"
+              size="icon"
               className="size-7 text-emerald-600 hover:text-emerald-700"
               title="Convert to client"
               onClick={onConvert}
@@ -304,6 +319,7 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
   const [editing, setEditing] = useState<LeadView | null>(null);
   const [deleting, setDeleting] = useState<LeadView | null>(null);
   const [converting, setConverting] = useState<LeadView | null>(null);
+  const [proposingLeadId, setProposingLeadId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [prevLeads, setPrevLeads] = useState(leads);
@@ -406,6 +422,7 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
                     }}
                     onDelete={() => setDeleting(lead)}
                     onConvert={() => setConverting(lead)}
+                    onProposal={() => setProposingLeadId(lead.id)}
                   />
                 ))}
             </StageColumn>
@@ -419,6 +436,19 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
 
       <LeadFormDialog lead={editing} open={formOpen} onOpenChange={setFormOpen} />
       <LeadImportDialog open={importOpen} onOpenChange={setImportOpen} />
+
+      <ProposalFormDialog
+        leads={items.map((l) => ({
+          id: l.id,
+          name: l.name,
+          company: l.company,
+          estimatedValue: l.estimatedValue,
+          brandInfo: l.brandInfo,
+        }))}
+        presetLeadId={proposingLeadId}
+        open={!!proposingLeadId}
+        onOpenChange={(open) => !open && setProposingLeadId(null)}
+      />
 
       <Dialog open={!!converting} onOpenChange={(open) => !open && setConverting(null)}>
         <DialogContent>

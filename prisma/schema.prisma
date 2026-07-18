@@ -88,6 +88,7 @@ enum NotificationType {
   MEETING_SCHEDULED
   MEETING_CANCELLED
   RETAINER_GENERATED
+  PROPOSAL_ACCEPTED
 }
 
 enum MeetingStatus {
@@ -101,6 +102,14 @@ enum LeadStage {
   PROPOSAL
   WON
   LOST
+}
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
 }
 
 enum LeadSource {
@@ -398,9 +407,54 @@ model Lead {
   convertedClientId String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
+  proposals         Proposal[]
 
   @@index([stage, nextFollowUp])
   @@map("leads")
+}
+
+/// A branded proposal built from a lead: intro + line-item scope + total +
+/// timeline + deposit %. Sent as a signed, expiring public link; the prospect
+/// accepts by typing their name (acceptedName). On accept, the app creates the
+/// client account + a CONTRACT project + a draft deposit invoice and marks the
+/// lead WON. Total is always derived from items (never trust a client value).
+model Proposal {
+  id                 String         @id @default(cuid())
+  leadId             String
+  lead               Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  title              String
+  intro              String?
+  projectType        ProjectType
+  timelineWeeks      Int?
+  depositPercent     Int            @default(50)
+  /// Validity window chosen in the builder; applied when the proposal is sent.
+  expiresInDays      Int            @default(30)
+  status             ProposalStatus @default(DRAFT)
+  expiresAt          DateTime?
+  sentAt             DateTime?
+  acceptedAt         DateTime?
+  acceptedName       String?
+  convertedProjectId String?
+  convertedInvoiceId String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  items              ProposalItem[]
+
+  @@index([leadId])
+  @@index([status])
+  @@map("proposals")
+}
+
+model ProposalItem {
+  id          String   @id @default(cuid())
+  proposalId  String
+  proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  description String
+  amount      Decimal  @db.Decimal(10, 2)
+  sortOrder   Int      @default(0)
+
+  @@index([proposalId])
+  @@map("proposal_items")
 }
 
 /// A monthly maintenance/retainer plan. The duties engine drafts one invoice

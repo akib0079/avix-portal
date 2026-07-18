@@ -37,6 +37,34 @@ export function verifyMeetingIcsToken(meetingId: string, token: string): boolean
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function signProposal(proposalId: string, expiresAtMs: number): string {
+  return createHmac("sha256", secret())
+    .update(`proposal:${proposalId}:${expiresAtMs}`)
+    .digest("base64url");
+}
+
+/**
+ * Signed, expiring token for a proposal's public accept link:
+ * `<expiresAtMs>.<base64url HMAC>`. Lets a prospect view + accept without an
+ * account. The expiry is bound into the signature so it can't be tampered with.
+ */
+export function createProposalToken(proposalId: string, expiresAtMs: number): string {
+  return `${expiresAtMs}.${signProposal(proposalId, expiresAtMs)}`;
+}
+
+export function verifyProposalToken(proposalId: string, token: string): boolean {
+  const dot = token.indexOf(".");
+  if (dot <= 0) return false;
+  const expiresAtMs = Number(token.slice(0, dot));
+  if (!Number.isFinite(expiresAtMs)) return false;
+  const provided = token.slice(dot + 1);
+  const expected = signProposal(proposalId, expiresAtMs);
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+  return Date.now() < expiresAtMs;
+}
+
 /** Returns the userId when the signature checks out, else null. */
 export function verifyUnsubscribeToken(token: string): string | null {
   const dot = token.lastIndexOf(".");
