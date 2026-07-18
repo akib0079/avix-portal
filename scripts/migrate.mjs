@@ -50,6 +50,18 @@ for (const file of candidates) {
   }
 }
 
+// The secrets file is the ONLY trustworthy source of the DB URL here —
+// Hostinger's panel injects a corrupted env. If we could not read it, abort
+// rather than risk running migrations against the wrong (or no) database.
+if (!secretsFileContents) {
+  console.error(
+    "[migrate] FATAL: no secrets file found. Looked in:\n" +
+      candidates.map((c) => `  - ${c}`).join("\n") +
+      "\nRefusing to migrate with the panel-injected env.",
+  );
+  process.exit(1);
+}
+
 // Persist the DB env for the runtime server (survives this deploy; regenerated
 // on every deploy so it never goes stale).
 if (secretsFileContents) {
