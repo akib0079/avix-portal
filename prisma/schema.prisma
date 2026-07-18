@@ -440,6 +440,12 @@ model Proposal {
   depositPercent     Int            @default(50)
   /// Validity window chosen in the builder; applied when the proposal is sent.
   expiresInDays      Int            @default(30)
+  /// Optional invoice document attached in the builder — either an uploaded
+  /// PDF or an external link (Drive/Dropbox). Copied onto the deposit invoice
+  /// that acceptance creates, so the client gets the paperwork immediately.
+  invoicePdfPath         String?
+  invoicePdfOriginalName String?
+  invoicePdfExternalUrl  String?
   status             ProposalStatus @default(DRAFT)
   expiresAt          DateTime?
   sentAt             DateTime?

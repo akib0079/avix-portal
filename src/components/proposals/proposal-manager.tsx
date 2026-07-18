@@ -38,6 +38,7 @@ import {
   Link2,
   FileSignature,
   CheckCircle2,
+  Paperclip,
 } from "lucide-react";
 
 const statusStyles: Record<string, string> = {
@@ -152,6 +153,20 @@ export function ProposalManager({
                     {p.contactName}
                     {p.contactCompany ? ` · ${p.contactCompany}` : ""}
                     {!p.leadId ? " · manual" : ""}
+                    {(p.invoicePdfPath || p.invoicePdfExternalUrl) && (
+                      <>
+                        {" · "}
+                        <a
+                          href={`/api/files/proposal-invoice/${p.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          <Paperclip className="size-3" />
+                          {p.invoicePdfExternalUrl ? "invoice link" : "invoice PDF"}
+                        </a>
+                      </>
+                    )}
                     {p.status === "SENT" && p.expiresAt
                       ? ` · valid until ${formatDate(p.expiresAt)}`
                       : ""}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -78,9 +78,16 @@ export function ProposalFormDialog({
       timelineWeeks: null,
       depositPercent: 50,
       expiresInDays: 30,
+      invoicePdfExternalUrl: "",
+      removeInvoicePdf: false,
       items: [{ description: "", amount: "" as unknown as number }],
     },
   });
+
+  // Invoice attachment: either a link or an uploaded PDF (never both at once).
+  const [attachMode, setAttachMode] = useState<"none" | "link" | "upload">("none");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { fields, append, remove } = useFieldArray({
     control: form.control,
@@ -89,7 +96,12 @@ export function ProposalFormDialog({
 
   useEffect(() => {
     if (!open) return;
+    setPdfFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     if (proposal) {
+      setAttachMode(
+        proposal.invoicePdfPath ? "upload" : proposal.invoicePdfExternalUrl ? "link" : "none",
+      );
       form.reset({
         source: proposal.leadId ? "lead" : "manual",
         leadId: proposal.leadId ?? "",
@@ -102,10 +114,13 @@ export function ProposalFormDialog({
         timelineWeeks: proposal.timelineWeeks,
         depositPercent: proposal.depositPercent,
         expiresInDays: proposal.expiresInDays,
+        invoicePdfExternalUrl: proposal.invoicePdfExternalUrl ?? "",
+        removeInvoicePdf: false,
         items: proposal.items.map((i) => ({ description: i.description, amount: i.amount })),
       });
       return;
     }
+    setAttachMode("none");
     // New proposal — seed from the lead so there's less typing.
     const lead = leads.find((l) => l.id === presetLeadId);
     form.reset({
@@ -122,6 +137,8 @@ export function ProposalFormDialog({
       timelineWeeks: null,
       depositPercent: 50,
       expiresInDays: 30,
+      invoicePdfExternalUrl: "",
+      removeInvoicePdf: false,
       items: [
         {
           description: "Project scope",
@@ -142,9 +159,20 @@ export function ProposalFormDialog({
   const deposit = Math.round(total * (depositPercent || 0)) / 100;
 
   async function onSubmit(values: ProposalInput) {
+    // Only one attachment kind survives, so switching modes clears the other.
+    const payload: ProposalInput = {
+      ...values,
+      invoicePdfExternalUrl: attachMode === "link" ? values.invoicePdfExternalUrl : "",
+      removeInvoicePdf: attachMode !== "upload",
+    };
+
+    const fd = new FormData();
+    fd.set("payload", JSON.stringify(payload));
+    if (attachMode === "upload" && pdfFile) fd.set("pdf", pdfFile);
+
     const result = isEdit
-      ? await updateProposal(proposal.id, values)
-      : await createProposal(values);
+      ? await updateProposal(proposal.id, fd)
+      : await createProposal(fd);
     if (!result.ok) return void toast.error(result.error);
     toast.success(isEdit ? "Proposal updated." : "Proposal created.");
     onOpenChange(false);
@@ -487,6 +515,76 @@ export function ProposalFormDialog({
                   </FormItem>
                 )}
               />
+            </div>
+
+            {/* Invoice document — carried onto the deposit invoice on acceptance */}
+            <div className="rounded-xl border p-3">
+              <p className="text-sm font-medium">Invoice document (optional)</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Attach the invoice now and it&apos;s added to the deposit invoice
+                created when they accept.
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(
+                  [
+                    { value: "none", label: "None" },
+                    { value: "link", label: "Paste a link" },
+                    { value: "upload", label: "Upload PDF" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setAttachMode(opt.value)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-sm transition-colors",
+                      attachMode === opt.value
+                        ? "border-primary bg-brand-tint font-medium text-foreground"
+                        : "text-muted-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {attachMode === "link" && (
+                <FormField
+                  control={form.control}
+                  name="invoicePdfExternalUrl"
+                  render={({ field }) => (
+                    <FormItem className="mt-3">
+                      <FormLabel>Invoice link</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="https://drive.google.com/… or Dropbox link"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {attachMode === "upload" && (
+                <div className="mt-3">
+                  <Input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}
+                  />
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {pdfFile
+                      ? `Selected: ${pdfFile.name}`
+                      : proposal?.invoicePdfOriginalName
+                        ? `Currently attached: ${proposal.invoicePdfOriginalName} — choose a file to replace it.`
+                        : "PDF only, up to 25 MB."}
+                  </p>
+                </div>
+              )}
             </div>
 
             <DialogFooter>

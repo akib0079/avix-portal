@@ -20,6 +20,10 @@ export type ProposalView = {
   depositPercent: number;
   expiresInDays: number;
   status: ProposalStatus;
+  /** Attached invoice document — an uploaded PDF and/or an external link. */
+  invoicePdfPath: string | null;
+  invoicePdfOriginalName: string | null;
+  invoicePdfExternalUrl: string | null;
   total: number;
   /** null for manually-created proposals (no lead behind them). */
   leadId: string | null;
@@ -110,6 +114,9 @@ export async function listProposals(): Promise<ProposalView[]> {
       depositPercent: p.depositPercent,
       expiresInDays: p.expiresInDays,
       status: p.status,
+      invoicePdfPath: p.invoicePdfPath,
+      invoicePdfOriginalName: p.invoicePdfOriginalName,
+      invoicePdfExternalUrl: p.invoicePdfExternalUrl,
       total: sumItems(p.items),
       leadId: p.leadId,
       recipientName: p.recipientName,

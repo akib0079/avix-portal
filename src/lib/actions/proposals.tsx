@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { requireAdmin } from "@/lib/dal/session";
 import { sendPasswordLink } from "@/lib/auth-utils";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { proposalContact } from "@/lib/dal/proposals";
@@ -31,6 +32,35 @@ function mapSource(source: LeadSource | null): ProjectSource {
   if (source === "FIVERR") return "FIVERR";
   if (source === "UPWORK") return "UPWORK";
   return "INDEPENDENT";
+}
+
+/**
+ * The builder posts FormData: `payload` is the JSON-encoded ProposalInput and
+ * `pdf` is an optional invoice file. FormData is required because a server
+ * action can't receive a File inside a plain object.
+ */
+function parsePayload(formData: FormData) {
+  try {
+    return proposalSchema.safeParse(JSON.parse(String(formData.get("payload") ?? "{}")));
+  } catch {
+    return { success: false, error: { issues: [{ message: "Invalid form data" }] } } as const;
+  }
+}
+
+/** Saves an uploaded invoice PDF, if one was attached. */
+async function handleInvoicePdf(
+  formData: FormData,
+): Promise<
+  | { ok: true; fileName: string | null; originalName: string | null }
+  | { ok: false; error: string }
+> {
+  const file = formData.get("pdf");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: true, fileName: null, originalName: null };
+  }
+  const saved = await saveUpload("invoices", file);
+  if (!saved.ok) return { ok: false, error: saved.error };
+  return { ok: true, fileName: saved.fileName, originalName: file.name.slice(0, 255) };
 }
 
 function itemsFromInput(items: ProposalInput["items"]) {
@@ -63,10 +93,10 @@ function recipientFields(data: ProposalInput) {
 }
 
 export async function createProposal(
-  input: ProposalInput,
+  formData: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   await requireAdmin();
-  const parsed = proposalSchema.safeParse(input);
+  const parsed = parsePayload(formData);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
@@ -80,6 +110,9 @@ export async function createProposal(
     if (!lead) return { ok: false, error: "Lead not found." };
   }
 
+  const pdf = await handleInvoicePdf(formData);
+  if (!pdf.ok) return { ok: false, error: pdf.error };
+
   const proposal = await prisma.proposal.create({
     data: {
       ...recipientFields(data),
@@ -89,6 +122,9 @@ export async function createProposal(
       timelineWeeks: data.timelineWeeks ?? null,
       depositPercent: data.depositPercent,
       expiresInDays: data.expiresInDays,
+      invoicePdfPath: pdf.fileName,
+      invoicePdfOriginalName: pdf.originalName,
+      invoicePdfExternalUrl: data.invoicePdfExternalUrl || null,
       items: { create: itemsFromInput(data.items) },
     },
   });
@@ -99,16 +135,19 @@ export async function createProposal(
 
 export async function updateProposal(
   id: string,
-  input: ProposalInput,
+  formData: FormData,
 ): Promise<ActionResult> {
   await requireAdmin();
-  const parsed = proposalSchema.safeParse(input);
+  const parsed = parsePayload(formData);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
 
-  const existing = await prisma.proposal.findUnique({ where: { id }, select: { status: true } });
+  const existing = await prisma.proposal.findUnique({
+    where: { id },
+    select: { status: true, invoicePdfPath: true, invoicePdfOriginalName: true },
+  });
   if (!existing) return { ok: false, error: "Proposal not found." };
   if (existing.status !== "DRAFT") {
     return { ok: false, error: "Only draft proposals can be edited." };
@@ -120,6 +159,20 @@ export async function updateProposal(
     });
     if (!lead) return { ok: false, error: "Lead not found." };
   }
+
+  const pdf = await handleInvoicePdf(formData);
+  if (!pdf.ok) return { ok: false, error: pdf.error };
+
+  // A new upload replaces the old one; an explicit clear drops it. Otherwise
+  // the existing attachment is left alone.
+  const replacing = pdf.fileName !== null;
+  const clearing = data.removeInvoicePdf === true;
+  const nextPdfPath = replacing ? pdf.fileName : clearing ? null : existing.invoicePdfPath;
+  const nextPdfName = replacing
+    ? pdf.originalName
+    : clearing
+      ? null
+      : existing.invoicePdfOriginalName;
 
   await prisma.$transaction(async (tx) => {
     await tx.proposalItem.deleteMany({ where: { proposalId: id } });
@@ -133,10 +186,18 @@ export async function updateProposal(
         timelineWeeks: data.timelineWeeks ?? null,
         depositPercent: data.depositPercent,
         expiresInDays: data.expiresInDays,
+        invoicePdfPath: nextPdfPath,
+        invoicePdfOriginalName: nextPdfName,
+        invoicePdfExternalUrl: data.invoicePdfExternalUrl || null,
         items: { create: itemsFromInput(data.items) },
       },
     });
   });
+
+  // Drop the superseded file only after the row is safely updated.
+  if ((replacing || clearing) && existing.invoicePdfPath) {
+    await deleteUpload("invoices", existing.invoicePdfPath);
+  }
 
   revalidatePath("/admin/proposals");
   return { ok: true };
@@ -144,9 +205,20 @@ export async function updateProposal(
 
 export async function deleteProposal(id: string): Promise<ActionResult> {
   await requireAdmin();
-  const existing = await prisma.proposal.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.proposal.findUnique({
+    where: { id },
+    select: { id: true, invoicePdfPath: true, convertedInvoiceId: true },
+  });
   if (!existing) return { ok: false, error: "Proposal not found." };
+
   await prisma.proposal.delete({ where: { id } });
+
+  // Accepted proposals hand the same file to their deposit invoice — deleting
+  // it here would break that invoice's download.
+  if (existing.invoicePdfPath && !existing.convertedInvoiceId) {
+    await deleteUpload("invoices", existing.invoicePdfPath);
+  }
+
   revalidatePath("/admin/proposals");
   return { ok: true };
 }
@@ -341,6 +413,11 @@ async function runHandoff(
         status: "ASSIGNED",
         issueDate: new Date(),
         notes: `${proposal.depositPercent}% deposit for "${proposal.title}"`,
+        // Carry the invoice document attached in the builder, so the client
+        // gets the paperwork with the deposit invoice.
+        pdfPath: proposal.invoicePdfPath,
+        pdfOriginalName: proposal.invoicePdfOriginalName,
+        pdfExternalUrl: proposal.invoicePdfExternalUrl,
       },
     });
 

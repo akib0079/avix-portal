@@ -47,6 +47,18 @@ export const proposalSchema = z
     timelineWeeks: z.number().int().min(1).max(104).nullable().optional(),
     depositPercent: z.number().int().min(0).max(100),
     expiresInDays: z.number().int().min(1).max(120),
+    /** Optional invoice document link (Drive/Dropbox). Upload is a separate file field. */
+    invoicePdfExternalUrl: z
+      .string()
+      .trim()
+      .max(1000)
+      .refine((v) => v === "" || /^https?:\/\/\S+$/i.test(v), {
+        message: "Enter a full link starting with http:// or https://",
+      })
+      .optional()
+      .or(z.literal("")),
+    /** Set by the builder when the user clears an existing attachment. */
+    removeInvoicePdf: z.boolean().optional(),
     items: z.array(proposalItemSchema).min(1, "Add at least one line item"),
   })
   .superRefine((val, ctx) => {
