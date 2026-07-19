@@ -3,7 +3,7 @@ import { getAdminDashboard, getTodayItems } from "@/lib/dal/dashboard";
 import { getPipelineSummary } from "@/lib/dal/leads";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
-import { InvoiceStatusDonut } from "@/components/dashboard/invoice-status-donut";
+import { InvoiceStatusDonut } from "@/components/charts-lazy";
 import { ProjectStatusBadge } from "@/components/status-badges";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {

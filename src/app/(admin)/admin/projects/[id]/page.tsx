@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProject } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
-import { MilestoneBoard } from "@/components/milestones/milestone-board";
+import { MilestoneBoard } from "@/components/boards-lazy";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
 import { ProjectTimeSummary } from "@/components/projects/project-time-summary";

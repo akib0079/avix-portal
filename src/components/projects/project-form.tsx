@@ -12,7 +12,7 @@ import {
   priorityLabels,
   projectStatusLabels,
 } from "@/lib/format";
-import { RichTextEditor } from "@/components/editor/rich-text-editor";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

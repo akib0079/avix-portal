@@ -7,7 +7,7 @@ import { formatDistanceToNow } from "date-fns";
 import type { JSONContent } from "@tiptap/react";
 import { sendMessage } from "@/lib/actions/messages";
 import type { MessageView } from "@/lib/dal/messages";
-import { RichTextEditor } from "@/components/editor/rich-text-editor";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { RichTextViewer } from "@/components/editor/rich-text-viewer";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";

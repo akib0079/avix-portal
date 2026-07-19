@@ -8,7 +8,7 @@ import type { JSONContent } from "@tiptap/react";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
 import { createMilestone, updateMilestone } from "@/lib/actions/milestones";
 import type { MilestoneView } from "./milestone-types";
-import { RichTextEditor } from "@/components/editor/rich-text-editor";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { PricingFields } from "./pricing-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

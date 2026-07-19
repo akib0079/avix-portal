@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { getReportsData } from "@/lib/dal/reports";
 import { PageHeader } from "@/components/page-header";
-import { RevenueBarChart } from "@/components/reports/revenue-bar-chart";
-import { SourceDonut } from "@/components/reports/source-donut";
+import { RevenueBarChart, SourceDonut } from "@/components/charts-lazy";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,

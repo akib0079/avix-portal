@@ -10,7 +10,7 @@ import {
   type TaskRequestInput,
 } from "@/lib/validation/task-request";
 import { submitTaskRequest } from "@/lib/actions/task-requests";
-import { RichTextEditor } from "@/components/editor/rich-text-editor";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

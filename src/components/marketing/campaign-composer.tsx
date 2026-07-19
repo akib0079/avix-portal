@@ -8,7 +8,7 @@ import type { JSONContent } from "@tiptap/react";
 import { campaignSchema, type CampaignInput } from "@/lib/validation/marketing";
 import { sendCampaign } from "@/lib/actions/marketing";
 import type { TemplateView } from "./template-manager";
-import { RichTextEditor } from "@/components/editor/rich-text-editor";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

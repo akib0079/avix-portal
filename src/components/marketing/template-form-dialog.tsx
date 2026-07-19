@@ -11,7 +11,7 @@ import {
 } from "@/lib/validation/marketing";
 import { createTemplate, updateTemplate } from "@/lib/actions/marketing";
 import type { TemplateView } from "./template-manager";
-import { RichTextEditor } from "@/components/editor/rich-text-editor";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

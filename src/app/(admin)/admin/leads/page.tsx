@@ -1,6 +1,6 @@
 import { listLeads } from "@/lib/dal/leads";
 import { PageHeader } from "@/components/page-header";
-import { LeadBoard } from "@/components/leads/lead-board";
+import { LeadBoard } from "@/components/boards-lazy";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Leads" };

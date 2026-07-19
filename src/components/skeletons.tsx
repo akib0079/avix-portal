@@ -71,3 +71,42 @@ export function DetailPageSkeleton({ cards = 3 }: { cards?: number }) {
     </div>
   );
 }
+
+/** Create/edit form page: header + a card of stacked field rows. */
+export function FormPageSkeleton({ fields = 6 }: { fields?: number }) {
+  return (
+    <div className="mx-auto max-w-3xl">
+      <PageHeaderSkeleton />
+      <div className="rounded-xl border bg-card p-6">
+        <div className="space-y-5">
+          {Array.from({ length: fields }).map((_, i) => (
+            <div key={i}>
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="mt-2 h-9 w-full" />
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <Skeleton className="h-9 w-20" />
+          <Skeleton className="h-9 w-32" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Settings: header + several stacked section cards. */
+export function SettingsPageSkeleton({ sections = 4 }: { sections?: number }) {
+  return (
+    <div className="mx-auto max-w-3xl">
+      <PageHeaderSkeleton />
+      {Array.from({ length: sections }).map((_, i) => (
+        <div key={i} className="mb-6 rounded-xl border bg-card p-6">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="mt-2 h-4 w-72" />
+          <Skeleton className="mt-4 h-9 w-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
