@@ -126,7 +126,7 @@ export async function updateBrandColor(color: string): Promise<ActionResult> {
 
 /** Upload a new logo or favicon; replaces + deletes the previous file. */
 export async function uploadBrandingFile(
-  which: "logo" | "favicon",
+  which: "logo" | "favicon" | "signature",
   formData: FormData,
 ): Promise<ActionResult> {
   await requireAdmin();
@@ -137,9 +137,19 @@ export async function uploadBrandingFile(
   const saved = await saveUpload("branding", file);
   if (!saved.ok) return { ok: false, error: saved.error };
 
-  const key = which === "logo" ? BRAND_KEYS.logo : BRAND_KEYS.favicon;
+  const key =
+    which === "logo"
+      ? BRAND_KEYS.logo
+      : which === "favicon"
+        ? BRAND_KEYS.favicon
+        : BRAND_KEYS.signature;
   const current = await getBranding();
-  const old = which === "logo" ? current.logoFile : current.faviconFile;
+  const old =
+    which === "logo"
+      ? current.logoFile
+      : which === "favicon"
+        ? current.faviconFile
+        : current.signatureFile;
 
   await setSetting(key, saved.fileName);
   if (old) await deleteUpload("branding", old);
@@ -150,12 +160,22 @@ export async function uploadBrandingFile(
 }
 
 export async function clearBrandingFile(
-  which: "logo" | "favicon",
+  which: "logo" | "favicon" | "signature",
 ): Promise<ActionResult> {
   await requireAdmin();
-  const key = which === "logo" ? BRAND_KEYS.logo : BRAND_KEYS.favicon;
+  const key =
+    which === "logo"
+      ? BRAND_KEYS.logo
+      : which === "favicon"
+        ? BRAND_KEYS.favicon
+        : BRAND_KEYS.signature;
   const current = await getBranding();
-  const old = which === "logo" ? current.logoFile : current.faviconFile;
+  const old =
+    which === "logo"
+      ? current.logoFile
+      : which === "favicon"
+        ? current.faviconFile
+        : current.signatureFile;
   await setSetting(key, "");
   if (old) await deleteUpload("branding", old);
   revalidatePath("/", "layout");

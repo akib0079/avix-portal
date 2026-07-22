@@ -67,12 +67,15 @@ export const BRAND_KEYS = {
   color: "brandColor",
   logo: "brandLogoFile",
   favicon: "brandFaviconFile",
+  /** Biller's signature image (PNG/JPG) stamped on generated invoice PDFs. */
+  signature: "brandSignatureFile",
 } as const;
 
 export type Branding = {
   color: string | null;
   logoFile: string | null;
   faviconFile: string | null;
+  signatureFile: string | null;
 };
 
 /**
@@ -82,12 +85,17 @@ export type Branding = {
  */
 export const getBranding = cache(async (): Promise<Branding> => {
   const rows = await prisma.appSetting.findMany({
-    where: { key: { in: [BRAND_KEYS.color, BRAND_KEYS.logo, BRAND_KEYS.favicon] } },
+    where: {
+      key: {
+        in: [BRAND_KEYS.color, BRAND_KEYS.logo, BRAND_KEYS.favicon, BRAND_KEYS.signature],
+      },
+    },
   });
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   return {
     color: map[BRAND_KEYS.color] || null,
     logoFile: map[BRAND_KEYS.logo] || null,
     faviconFile: map[BRAND_KEYS.favicon] || null,
+    signatureFile: map[BRAND_KEYS.signature] || null,
   };
 });

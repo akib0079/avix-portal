@@ -23,10 +23,25 @@ function parseDate(value: string | undefined): Date | null {
 }
 
 function extractFields(formData: FormData) {
+  // Line items travel as one JSON field (FormData is flat). Invalid JSON is
+  // treated as "no items" and the amount field governs, exactly as before.
+  let items: unknown;
+  const rawItems = formData.get("items");
+  if (typeof rawItems === "string" && rawItems) {
+    try {
+      items = JSON.parse(rawItems);
+    } catch {
+      items = undefined;
+    }
+  }
+  const amountRaw = Number(formData.get("amount"));
   const raw = {
+    items,
     clientId: String(formData.get("clientId") ?? ""),
     projectId: String(formData.get("projectId") ?? "none"),
-    amount: Number(formData.get("amount")),
+    // NaN (empty field while using line items) → 0; superRefine rejects 0
+    // only when there are no items.
+    amount: Number.isNaN(amountRaw) ? 0 : amountRaw,
     status: String(formData.get("status") ?? "ASSIGNED"),
     issueDate: String(formData.get("issueDate") ?? ""),
     dueDate: String(formData.get("dueDate") ?? ""),
@@ -34,6 +49,21 @@ function extractFields(formData: FormData) {
     pdfExternalUrl: String(formData.get("pdfExternalUrl") ?? ""),
   };
   return invoiceSchema.safeParse(raw);
+}
+
+/** Items win over the manual amount: the document IS the total. */
+function resolveAmount(data: { amount: number; items?: { qty: number; rate: number }[] }) {
+  if (!data.items || data.items.length === 0) return data.amount;
+  return Math.round(data.items.reduce((sum, i) => sum + i.qty * i.rate, 0) * 100) / 100;
+}
+
+function itemRows(items: { description: string; qty: number; rate: number }[] | undefined) {
+  return (items ?? []).map((i, index) => ({
+    description: i.description,
+    qty: i.qty,
+    rate: i.rate,
+    sortOrder: index,
+  }));
 }
 
 async function validateRelations(clientId: string, projectId: string) {
@@ -90,7 +120,7 @@ export async function createInvoice(
         invoiceNumber,
         clientId: data.clientId,
         projectId: relations.resolvedProjectId,
-        amount: data.amount,
+        amount: resolveAmount(data),
         status: data.status,
         issueDate: parseDate(data.issueDate)!,
         dueDate: parseDate(data.dueDate),
@@ -98,6 +128,7 @@ export async function createInvoice(
         pdfPath: pdf.fileName,
         pdfOriginalName: pdf.originalName,
         pdfExternalUrl: data.pdfExternalUrl || null,
+        items: { create: itemRows(data.items) },
       },
     });
   });
@@ -132,21 +163,25 @@ export async function updateInvoice(
     await deleteUpload("invoices", invoice.pdfPath);
   }
 
-  await prisma.invoice.update({
-    where: { id },
-    data: {
-      clientId: data.clientId,
-      projectId: relations.resolvedProjectId,
-      amount: data.amount,
-      status: data.status,
-      issueDate: parseDate(data.issueDate)!,
-      dueDate: parseDate(data.dueDate),
-      notes: data.notes || null,
-      pdfExternalUrl: data.pdfExternalUrl || null,
-      ...(pdf.fileName
-        ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
-        : {}),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+    await tx.invoice.update({
+      where: { id },
+      data: {
+        clientId: data.clientId,
+        projectId: relations.resolvedProjectId,
+        amount: resolveAmount(data),
+        status: data.status,
+        issueDate: parseDate(data.issueDate)!,
+        dueDate: parseDate(data.dueDate),
+        notes: data.notes || null,
+        pdfExternalUrl: data.pdfExternalUrl || null,
+        ...(pdf.fileName
+          ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
+          : {}),
+        items: { create: itemRows(data.items) },
+      },
+    });
   });
 
   revalidatePath("/admin/invoices");

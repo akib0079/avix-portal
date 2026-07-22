@@ -304,9 +304,20 @@ model TimeEntry {
   @@map("time_entries")
 }
 
+enum InvoiceCurrency {
+  USD
+  EUR
+}
+
 model Invoice {
   id              String        @id @default(cuid())
   invoiceNumber   String        @unique
+  /// Optional document headline, e.g. "Monthly retainer invoice — June".
+  /// Falls back to "Invoice {number}" on the generated PDF.
+  title           String?
+  /// Display currency for the document + portal. Reports still sum raw
+  /// amounts regardless of currency.
+  currency        InvoiceCurrency @default(USD)
   clientId        String
   client          User          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   projectId       String?
@@ -327,10 +338,28 @@ model Invoice {
   paymentClaimedAt DateTime?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  items           InvoiceItem[]
 
   @@index([clientId])
   @@index([status])
   @@map("invoices")
+}
+
+/// Line items for generated invoices. When present, Invoice.amount is
+/// recomputed server-side as Σ qty×rate on every write — amount stays the
+/// single source of truth for reports; items exist for the document.
+/// Zero items = legacy single-amount invoice (PDF falls back to one line).
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  qty         Decimal @default(1) @db.Decimal(8, 2)
+  rate        Decimal @db.Decimal(10, 2)
+  sortOrder   Int     @default(0)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
 }
 
 model TaskRequest {
