@@ -12,8 +12,8 @@ import {
 
 /**
  * Generated invoice document, matching the agency's house style (logo + NO.
- * header, big headline, Billed-to/From columns, Item/Amount table, Tax/Price/
- * Total, bank details + signature footer).
+ * header, big headline, Billed-to/From columns, Item/Amount table, bank
+ * details + signature footer).
  *
  * Everything arrives pre-serialized (no Decimals/Dates). Built-in Helvetica
  * only — font embedding is the classic breakage on restricted hosts. Logo and
@@ -103,10 +103,9 @@ function buildStyles(accent: string) {
     },
     thItem: { flex: 1, fontSize: 11, fontFamily: "Helvetica-Bold" },
     thAmount: { width: 120, fontSize: 11, fontFamily: "Helvetica-Bold", textAlign: "right" },
-    // minHeight keeps the Tax/Price/Total block pinned to the bottom of the
-    // box (via marginTop:"auto"). Sized so a typical invoice still leaves room
-    // for the bank/signature footer on page 1 — larger values pushed the whole
-    // footer onto page 2.
+    // Gives the item box a consistent presence on short invoices. Sized so a
+    // typical invoice still leaves room for the bank/signature footer on
+    // page 1 — larger values pushed the whole footer onto page 2.
     tableBody: { flexDirection: "row", borderWidth: 0.75, borderColor: "#d1d5db", minHeight: 170 },
     itemCol: { flex: 1, padding: 12, borderRightWidth: 0.75, borderRightColor: "#d1d5db" },
     amountCol: { width: 120, padding: 12 },
@@ -120,10 +119,6 @@ function buildStyles(accent: string) {
     amountBlock: { marginBottom: 12, alignItems: "flex-end" },
     amountBig: { fontFamily: "Helvetica-Bold", fontSize: 13 },
     amountNote: { fontSize: 7.5, color: "#6b7280", marginTop: 2 },
-    summary: { marginTop: "auto", alignItems: "flex-end" },
-    summaryRow: { flexDirection: "row", marginBottom: 3 },
-    summaryLabel: { fontFamily: "Helvetica-Bold", marginRight: 18 },
-    summaryValue: { width: 70, textAlign: "right" },
     paidStamp: {
       alignSelf: "flex-start", borderWidth: 2, borderColor: "#059669", color: "#059669",
       paddingVertical: 3, paddingHorizontal: 10, fontSize: 12,
@@ -243,20 +238,6 @@ export function invoicePdfDocument(data: InvoicePdfData) {
                 ) : null}
               </View>
             ))}
-            <View style={s.summary}>
-              <View style={s.summaryRow}>
-                <Text style={s.summaryLabel}>Tax</Text>
-                <Text style={s.summaryValue}>0</Text>
-              </View>
-              <View style={s.summaryRow}>
-                <Text style={s.summaryLabel}>Price</Text>
-                <Text style={s.summaryValue}>{money(data.total, data.currency)}</Text>
-              </View>
-              <View style={s.summaryRow}>
-                <Text style={s.summaryLabel}>Total -</Text>
-                <Text style={s.summaryValue}>{money(data.total, data.currency)}</Text>
-              </View>
-            </View>
           </View>
         </View>
 
