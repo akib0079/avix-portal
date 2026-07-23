@@ -15,6 +15,14 @@ export const invoiceCurrencyValues = ["USD", "EUR"] as const;
 export const invoiceSchema = z.object({
   /** Optional line items; when present the server recomputes amount = Σ qty×rate. */
   items: z.array(invoiceItemSchema).max(50).optional(),
+  /** Optional custom invoice number; empty = auto-assigned (INV-###). */
+  invoiceNumber: z
+    .string()
+    .trim()
+    .max(40)
+    .regex(/^[A-Za-z0-9/_-]*$/, "Use letters, numbers, dashes or slashes only")
+    .optional()
+    .or(z.literal("")),
   /** Generated-PDF headline; empty falls back to "Invoice {number}". */
   title: z.string().trim().max(160).optional().or(z.literal("")),
   currency: z.enum(invoiceCurrencyValues).optional(),

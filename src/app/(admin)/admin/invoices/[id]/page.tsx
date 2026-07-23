@@ -113,6 +113,7 @@ export default async function InvoiceDetailPage({
               notes: invoice.notes ?? "",
               pdfExternalUrl: invoice.pdfExternalUrl ?? "",
               pdfOriginalName: invoice.pdfOriginalName,
+              invoiceNumber: invoice.invoiceNumber,
               title: invoice.title ?? "",
               currency: invoice.currency,
               paymentAccountId: invoice.paymentAccountId ?? "none",

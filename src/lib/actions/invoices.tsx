@@ -48,6 +48,7 @@ function extractFields(formData: FormData) {
     dueDate: String(formData.get("dueDate") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     pdfExternalUrl: String(formData.get("pdfExternalUrl") ?? ""),
+    invoiceNumber: String(formData.get("invoiceNumber") ?? ""),
     title: String(formData.get("title") ?? ""),
     currency: String(formData.get("currency") ?? "USD"),
     paymentAccountId: String(formData.get("paymentAccountId") ?? ""),
@@ -128,8 +129,18 @@ export async function createInvoice(
   if (!pdf.ok) return { ok: false, error: pdf.error };
   const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
+  // Custom number if given (must be unique); otherwise auto-assign.
+  const custom = data.invoiceNumber?.trim();
+  if (custom) {
+    const clash = await prisma.invoice.findUnique({
+      where: { invoiceNumber: custom },
+      select: { id: true },
+    });
+    if (clash) return { ok: false, error: `Invoice number "${custom}" is already used.` };
+  }
+
   const invoice = await prisma.$transaction(async (tx) => {
-    const invoiceNumber = await nextInvoiceNumber(tx);
+    const invoiceNumber = custom || (await nextInvoiceNumber(tx));
     return tx.invoice.create({
       data: {
         invoiceNumber,
@@ -182,11 +193,23 @@ export async function updateInvoice(
   }
   const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
+  // Allow renaming the invoice number; keep it unique.
+  const custom = data.invoiceNumber?.trim();
+  const nextNumber = custom || invoice.invoiceNumber;
+  if (nextNumber !== invoice.invoiceNumber) {
+    const clash = await prisma.invoice.findFirst({
+      where: { invoiceNumber: nextNumber, id: { not: id } },
+      select: { id: true },
+    });
+    if (clash) return { ok: false, error: `Invoice number "${nextNumber}" is already used.` };
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
     await tx.invoice.update({
       where: { id },
       data: {
+        invoiceNumber: nextNumber,
         clientId: data.clientId,
         projectId: relations.resolvedProjectId,
         amount: resolveAmount(data),

@@ -1,4 +1,5 @@
 import "server-only";
+import path from "path";
 import React from "react";
 import {
   Document,
@@ -7,8 +8,33 @@ import {
   View,
   Image,
   StyleSheet,
+  Font,
   renderToBuffer,
 } from "@react-pdf/renderer";
+
+/**
+ * Poppins, embedded from bundled TTFs in public/fonts (the proven-reliable
+ * asset location — same as the logo). react-pdf can only parse TTF, so a
+ * woff/woff2 package would not work. Registered once per server process.
+ */
+const FONT = "Poppins";
+let fontsRegistered = false;
+function ensureFonts() {
+  if (fontsRegistered) return;
+  const dir = path.join(process.cwd(), "public", "fonts");
+  Font.register({
+    family: FONT,
+    fonts: [
+      { src: path.join(dir, "Poppins-Regular.ttf"), fontWeight: 400 },
+      { src: path.join(dir, "Poppins-Medium.ttf"), fontWeight: 500 },
+      { src: path.join(dir, "Poppins-SemiBold.ttf"), fontWeight: 600 },
+      { src: path.join(dir, "Poppins-Bold.ttf"), fontWeight: 700 },
+    ],
+  });
+  // Poppins has no hyphenation data; keep long words intact rather than split.
+  Font.registerHyphenationCallback((word) => [word]);
+  fontsRegistered = true;
+}
 
 /**
  * Generated invoice document, matching the agency's house style (logo + NO.
@@ -79,61 +105,79 @@ function money(n: number, currency: "USD" | "EUR"): string {
 
 function buildStyles(accent: string) {
   return StyleSheet.create({
-    page: { padding: 44, fontSize: 10, fontFamily: "Helvetica", color: "#111827" },
-    headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 22 },
-    logo: { height: 36, objectFit: "contain" },
-    wordmark: { fontSize: 22, fontFamily: "Helvetica-Bold", color: accent },
-    invoiceNo: { fontSize: 13, color: "#111827", letterSpacing: 0.5 },
+    page: { padding: 44, fontSize: 10, fontFamily: FONT, color: "#1f2937", lineHeight: 1.4 },
+    headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 26 },
+    logo: { height: 34, objectFit: "contain" },
+    wordmark: { fontSize: 20, fontWeight: 700, color: accent },
+    invoiceNo: { fontSize: 12, fontWeight: 500, color: "#6b7280", letterSpacing: 0.5 },
     headline: {
-      fontSize: 21, fontFamily: "Helvetica-Bold", textTransform: "uppercase",
-      lineHeight: 1.2, marginBottom: 16,
+      fontSize: 19, fontWeight: 700, color: "#111827",
+      lineHeight: 1.25, marginBottom: 16, maxWidth: "88%",
     },
-    issueRow: { flexDirection: "row", marginBottom: 14 },
-    bold: { fontFamily: "Helvetica-Bold" },
-    partiesRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
+    issueRow: { flexDirection: "row", marginBottom: 16 },
+    bold: { fontWeight: 700 },
+    semi: { fontWeight: 600 },
+    partiesRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 14 },
     partyCol: { width: "47%" },
-    partyHeading: { fontSize: 12, fontFamily: "Helvetica-Bold", marginBottom: 5 },
-    partyLine: { marginBottom: 1, lineHeight: 1.3 },
-    muted: { color: "#4b5563" },
-    notesLine: { textDecoration: "underline", marginBottom: 10 },
+    partyHeading: { fontSize: 11, fontWeight: 600, marginBottom: 4, color: accent, textTransform: "uppercase", letterSpacing: 0.5 },
+    partyName: { fontSize: 11.5, fontWeight: 600, marginBottom: 1 },
+    partyLine: { marginBottom: 0.5, fontSize: 9.5 },
+    muted: { color: "#6b7280" },
+    notesLine: { fontSize: 9.5, color: "#374151", marginBottom: 10 },
+    // Table
     tableHeader: {
-      flexDirection: "row", backgroundColor: "#e5e7eb",
-      paddingVertical: 8, paddingHorizontal: 12,
+      flexDirection: "row", backgroundColor: accent,
+      paddingVertical: 7, paddingHorizontal: 12,
     },
-    thItem: { flex: 1, fontSize: 11, fontFamily: "Helvetica-Bold" },
-    thAmount: { width: 120, fontSize: 11, fontFamily: "Helvetica-Bold", textAlign: "right" },
-    // Gives the item box a consistent presence on short invoices. Sized so a
-    // typical invoice still leaves room for the bank/signature footer on
-    // page 1 — larger values pushed the whole footer onto page 2.
-    tableBody: { flexDirection: "row", borderWidth: 0.75, borderColor: "#d1d5db", minHeight: 170 },
-    itemCol: { flex: 1, padding: 12, borderRightWidth: 0.75, borderRightColor: "#d1d5db" },
-    amountCol: { width: 120, padding: 12 },
-    itemTitle: { fontFamily: "Helvetica-Bold", fontSize: 11, marginBottom: 4 },
-    itemRow: { marginBottom: 10 },
-    /** "Heading :" lines inside a description — underlined like the house style. */
-    itemGroup: { textDecoration: "underline", fontSize: 8.5, marginTop: 4, marginBottom: 2 },
-    bulletRow: { flexDirection: "row", marginBottom: 1.5, paddingLeft: 6 },
-    bulletDot: { width: 8, fontSize: 8.5 },
-    bulletText: { flex: 1, fontSize: 8.5, lineHeight: 1.35 },
-    amountBlock: { marginBottom: 12, alignItems: "flex-end" },
-    amountBig: { fontFamily: "Helvetica-Bold", fontSize: 13 },
-    amountNote: { fontSize: 7.5, color: "#6b7280", marginTop: 2 },
+    thItem: { flex: 1, fontSize: 10, fontWeight: 600, color: "#ffffff", letterSpacing: 0.3 },
+    thAmount: { width: 110, fontSize: 10, fontWeight: 600, color: "#ffffff", textAlign: "right", letterSpacing: 0.3 },
+    tableBody: {
+      flexDirection: "row",
+      borderLeftWidth: 0.75, borderRightWidth: 0.75, borderBottomWidth: 0.75, borderColor: "#e5e7eb",
+      minHeight: 130,
+    },
+    itemCol: { flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRightWidth: 0.75, borderRightColor: "#e5e7eb" },
+    amountCol: { width: 110, paddingVertical: 10, paddingHorizontal: 12 },
+    itemTitle: { fontWeight: 600, fontSize: 10.5, marginBottom: 2 },
+    itemRow: { marginBottom: 5 },
+    /** "Heading :" lines inside a description. */
+    itemGroup: { fontWeight: 600, fontSize: 8.5, marginTop: 3, marginBottom: 1, color: "#4b5563" },
+    bulletRow: { flexDirection: "row", marginBottom: 0.5, paddingLeft: 4 },
+    bulletDot: { width: 8, fontSize: 8, color: accent },
+    bulletText: { flex: 1, fontSize: 8.5, lineHeight: 1.3, color: "#4b5563" },
+    amountBlock: { marginBottom: 5, alignItems: "flex-end" },
+    amountBig: { fontWeight: 600, fontSize: 11 },
+    amountNote: { fontSize: 7.5, color: "#9ca3af", marginTop: 1 },
+    // Total row (spans full width under the table)
+    totalRow: {
+      flexDirection: "row", alignItems: "center",
+      borderLeftWidth: 0.75, borderRightWidth: 0.75, borderBottomWidth: 0.75, borderColor: "#e5e7eb",
+      backgroundColor: "#f9fafb",
+    },
+    totalLabelCell: {
+      flex: 1, paddingVertical: 9, paddingHorizontal: 12,
+      borderRightWidth: 0.75, borderRightColor: "#e5e7eb",
+    },
+    totalLabel: { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 },
+    totalAmountCell: { width: 110, paddingVertical: 9, paddingHorizontal: 12, alignItems: "flex-end" },
+    totalAmount: { fontSize: 13, fontWeight: 700, color: accent },
     paidStamp: {
-      alignSelf: "flex-start", borderWidth: 2, borderColor: "#059669", color: "#059669",
-      paddingVertical: 3, paddingHorizontal: 10, fontSize: 12,
-      fontFamily: "Helvetica-Bold", marginBottom: 14,
+      alignSelf: "flex-start", borderWidth: 1.5, borderColor: "#059669", color: "#059669",
+      paddingVertical: 2, paddingHorizontal: 9, fontSize: 11,
+      fontWeight: 700, marginBottom: 12, borderRadius: 3,
     },
-    bankBlock: { marginTop: 16 },
+    bankBlock: { marginTop: 18 },
     bankHeading: {
-      fontSize: 9, fontFamily: "Helvetica-Bold", marginBottom: 5,
-      textTransform: "uppercase", letterSpacing: 0.5, color: "#4b5563",
+      fontSize: 9, fontWeight: 700, marginBottom: 5,
+      textTransform: "uppercase", letterSpacing: 0.5, color: accent,
     },
-    bankLine: { marginBottom: 1.5, lineHeight: 1.3, fontSize: 9 },
-    bankLabel: { fontFamily: "Helvetica-Bold", textDecoration: "underline" },
+    bankLine: { marginBottom: 1, lineHeight: 1.35, fontSize: 9 },
+    bankLabel: { fontWeight: 600 },
   });
 }
 
 export function invoicePdfDocument(data: InvoicePdfData) {
+  ensureFonts();
   const s = buildStyles(data.branding.color);
   const rows =
     data.items.length > 0
@@ -172,22 +216,17 @@ export function invoicePdfDocument(data: InvoicePdfData) {
 
         <View style={s.partiesRow}>
           <View style={s.partyCol}>
-            <Text style={s.partyHeading}>Billed to:</Text>
-            <Text style={s.partyLine}>{data.client.name}</Text>
+            <Text style={s.partyHeading}>Billed to</Text>
+            <Text style={s.partyName}>{data.client.name}</Text>
             {data.client.company ? (
-              <Text style={s.partyLine}>
-                <Text style={s.bold}>Company: </Text>
-                {data.client.company}
-              </Text>
+              <Text style={s.partyLine}>{data.client.company}</Text>
             ) : null}
             <Text style={{ ...s.partyLine, ...s.muted }}>{data.client.email}</Text>
           </View>
           <View style={s.partyCol}>
-            <Text style={s.partyHeading}>From:</Text>
-            <Text style={s.partyLine}>{AGENCY.name},</Text>
-            <Text style={s.partyLine}>
-              <Text style={s.bold}>Company </Text>: {AGENCY.company}
-            </Text>
+            <Text style={s.partyHeading}>From</Text>
+            <Text style={s.partyName}>{AGENCY.name}</Text>
+            <Text style={s.partyLine}>{AGENCY.company}</Text>
             <Text style={s.partyLine}>{AGENCY.address}</Text>
             <Text style={{ ...s.partyLine, ...s.muted }}>{AGENCY.email}</Text>
             <Text style={s.partyLine}>{AGENCY.role}</Text>
@@ -237,6 +276,15 @@ export function invoicePdfDocument(data: InvoicePdfData) {
                 ) : null}
               </View>
             ))}
+          </View>
+        </View>
+
+        <View style={s.totalRow} wrap={false}>
+          <View style={s.totalLabelCell}>
+            <Text style={s.totalLabel}>Total</Text>
+          </View>
+          <View style={s.totalAmountCell}>
+            <Text style={s.totalAmount}>{money(data.total, data.currency)}</Text>
           </View>
         </View>
 

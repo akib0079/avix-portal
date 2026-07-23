@@ -84,6 +84,7 @@ export function InvoiceForm({
       dueDate: invoice?.dueDate ?? "",
       notes: invoice?.notes ?? "",
       pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
+      invoiceNumber: invoice?.invoiceNumber ?? "",
       title: invoice?.title ?? "",
       currency: invoice?.currency ?? "USD",
       paymentAccountId: invoice?.paymentAccountId ?? "none",
@@ -329,6 +330,23 @@ export function InvoiceForm({
                     </FormControl>
                     <p className="text-xs text-muted-foreground">
                       The headline on the PDF. Defaults to the invoice number.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="invoiceNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Invoice number (optional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Auto — e.g. INV-012 or 2026-001" {...field} />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Leave blank to auto-assign the next number.
                     </p>
                     <FormMessage />
                   </FormItem>
