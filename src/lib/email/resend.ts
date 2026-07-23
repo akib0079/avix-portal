@@ -16,12 +16,15 @@ export async function sendEmail(options: {
   to: string;
   subject: string;
   react: ReactElement;
+  /** Optional file attachments (e.g. a generated invoice PDF). */
+  attachments?: { filename: string; content: Buffer }[];
   /** Logged in dev when no API key is configured (e.g. an invite link). */
   devHint?: string;
 }) {
   if (!resend) {
     console.log(
       `[email:dev] to=${options.to} subject="${options.subject}"` +
+        (options.attachments?.length ? ` attachments=${options.attachments.length}` : "") +
         (options.devHint ? `\n[email:dev] ${options.devHint}` : ""),
     );
     return { ok: true as const, skipped: true as const };
@@ -31,6 +34,9 @@ export async function sendEmail(options: {
     to: options.to,
     subject: options.subject,
     react: options.react,
+    ...(options.attachments?.length
+      ? { attachments: options.attachments.map((a) => ({ filename: a.filename, content: a.content })) }
+      : {}),
   });
   if (error) {
     console.error("[email] send failed:", error);

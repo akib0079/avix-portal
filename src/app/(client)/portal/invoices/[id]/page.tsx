@@ -85,8 +85,8 @@ export default async function ClientInvoiceDetailPage({
             </div>
           )}
 
-          {(invoice.pdfPath || invoice.pdfExternalUrl) && (
-            <div className="mt-6">
+          <div className="mt-6">
+            {invoice.pdfExternalUrl || invoice.pdfPath ? (
               <Button asChild>
                 <Link
                   href={`/api/files/invoice/${invoice.id}`}
@@ -99,13 +99,20 @@ export default async function ClientInvoiceDetailPage({
                     </>
                   ) : (
                     <>
-                      <Download /> Download PDF
+                      <Download /> Download the invoice
                     </>
                   )}
                 </Link>
               </Button>
-            </div>
-          )}
+            ) : (
+              /* No supplied file → the generated PDF, always available. */
+              <Button asChild>
+                <Link href={`/api/invoices/${invoice.id}/pdf`} prefetch={false} target="_blank">
+                  <Download /> Download the invoice
+                </Link>
+              </Button>
+            )}
+          </div>
 
           {invoice.notes && (
             <div className="mt-6 border-t pt-4">

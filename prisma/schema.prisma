@@ -336,6 +336,10 @@ model Invoice {
   /// Set when the client reports having sent the payment; admin confirms
   /// by moving the status to PAID.
   paymentClaimedAt DateTime?
+  /// Which saved bank account prints on the generated PDF. SetNull so deleting
+  /// an account never blocks or corrupts an existing invoice.
+  paymentAccountId String?
+  paymentAccount   PaymentAccount? @relation(fields: [paymentAccountId], references: [id], onDelete: SetNull)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   items           InvoiceItem[]
@@ -578,6 +582,7 @@ model PaymentAccount {
   position   Int           @default(0)
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
+  invoices   Invoice[]
 
   @@index([isActive, position])
   @@map("payment_accounts")

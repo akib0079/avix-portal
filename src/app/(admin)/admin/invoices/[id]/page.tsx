@@ -25,12 +25,17 @@ export default async function InvoiceDetailPage({
 }) {
   await requireAdmin();
   const { id } = await params;
-  const [invoice, clients, projects] = await Promise.all([
+  const [invoice, clients, projects, paymentAccounts] = await Promise.all([
     getInvoice(id),
     listActiveClientOptions(),
     prisma.project.findMany({
       orderBy: { createdAt: "desc" },
       select: { id: true, projectName: true, clientId: true },
+    }),
+    prisma.paymentAccount.findMany({
+      where: { isActive: true },
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+      select: { id: true, title: true },
     }),
   ]);
   if (!invoice) notFound();
@@ -48,7 +53,8 @@ export default async function InvoiceDetailPage({
               </span>
             )}
             <InvoiceStatusBadge status={invoice.status} />
-            {(invoice.pdfPath || invoice.pdfExternalUrl) && (
+            {invoice.pdfExternalUrl || invoice.pdfPath ? (
+              /* An admin-supplied document (link or upload) takes precedence. */
               <Button asChild variant="outline" size="sm">
                 <Link
                   href={`/api/files/invoice/${invoice.id}`}
@@ -64,6 +70,13 @@ export default async function InvoiceDetailPage({
                       <Download /> PDF
                     </>
                   )}
+                </Link>
+              </Button>
+            ) : (
+              /* No supplied file → the generated document. */
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/api/invoices/${invoice.id}/pdf`} prefetch={false} target="_blank">
+                  <Download /> Download PDF
                 </Link>
               </Button>
             )}
@@ -88,6 +101,7 @@ export default async function InvoiceDetailPage({
           <InvoiceForm
             clients={clients}
             projects={projects}
+            paymentAccounts={paymentAccounts}
             invoice={{
               id: invoice.id,
               clientId: invoice.clientId,
@@ -99,6 +113,14 @@ export default async function InvoiceDetailPage({
               notes: invoice.notes ?? "",
               pdfExternalUrl: invoice.pdfExternalUrl ?? "",
               pdfOriginalName: invoice.pdfOriginalName,
+              title: invoice.title ?? "",
+              currency: invoice.currency,
+              paymentAccountId: invoice.paymentAccountId ?? "none",
+              items: invoice.items.map((i) => ({
+                description: i.description,
+                qty: Number(i.qty),
+                rate: Number(i.rate),
+              })),
             }}
           />
         </CardContent>

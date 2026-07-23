@@ -119,7 +119,19 @@ async function generateRetainerInvoices(now: Date) {
           status: "ASSIGNED",
           issueDate: now,
           dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
+          title: `${retainer.title} — ${monthLabel}`,
           notes: `${retainer.title} — ${monthLabel}${retainer.notes ? `\n${retainer.notes}` : ""}`,
+          // Line item so the generated PDF is complete without editing.
+          items: {
+            create: [
+              {
+                description: `${retainer.title} — ${monthLabel}`,
+                qty: 1,
+                rate: retainer.amount,
+                sortOrder: 0,
+              },
+            ],
+          },
         },
       });
       await tx.retainer.update({

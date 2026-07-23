@@ -8,6 +8,7 @@ import { nextInvoiceNumber } from "@/lib/invoice-number";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { sendEmail } from "@/lib/email/resend";
 import InvoiceSentEmail from "@/emails/invoice-sent";
+import { renderInvoicePdfById } from "@/lib/pdf/invoice-render";
 import { usd } from "@/lib/format";
 import { appUrl } from "@/lib/app-url";
 import type { InvoiceStatus } from "@prisma/client";
@@ -47,8 +48,21 @@ function extractFields(formData: FormData) {
     dueDate: String(formData.get("dueDate") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     pdfExternalUrl: String(formData.get("pdfExternalUrl") ?? ""),
+    title: String(formData.get("title") ?? ""),
+    currency: String(formData.get("currency") ?? "USD"),
+    paymentAccountId: String(formData.get("paymentAccountId") ?? ""),
   };
   return invoiceSchema.safeParse(raw);
+}
+
+/** "none"/empty → null; else the id (validated against active accounts). */
+async function resolvePaymentAccountId(value: string | undefined): Promise<string | null> {
+  if (!value || value === "none") return null;
+  const account = await prisma.paymentAccount.findUnique({
+    where: { id: value },
+    select: { id: true },
+  });
+  return account?.id ?? null;
 }
 
 /** Items win over the manual amount: the document IS the total. */
@@ -112,6 +126,7 @@ export async function createInvoice(
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
+  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
   const invoice = await prisma.$transaction(async (tx) => {
     const invoiceNumber = await nextInvoiceNumber(tx);
@@ -125,6 +140,9 @@ export async function createInvoice(
         issueDate: parseDate(data.issueDate)!,
         dueDate: parseDate(data.dueDate),
         notes: data.notes || null,
+        title: data.title || null,
+        currency: data.currency ?? "USD",
+        paymentAccountId,
         pdfPath: pdf.fileName,
         pdfOriginalName: pdf.originalName,
         pdfExternalUrl: data.pdfExternalUrl || null,
@@ -162,6 +180,7 @@ export async function updateInvoice(
   if (pdf.fileName && invoice.pdfPath) {
     await deleteUpload("invoices", invoice.pdfPath);
   }
+  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
   await prisma.$transaction(async (tx) => {
     await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
@@ -175,6 +194,9 @@ export async function updateInvoice(
         issueDate: parseDate(data.issueDate)!,
         dueDate: parseDate(data.dueDate),
         notes: data.notes || null,
+        title: data.title || null,
+        currency: data.currency ?? "USD",
+        paymentAccountId,
         pdfExternalUrl: data.pdfExternalUrl || null,
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
@@ -227,6 +249,14 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
     fields: (a.fields as { label: string; value: string }[]) ?? [],
   }));
 
+  // Attach the generated PDF unless the admin supplied their own document
+  // (an uploaded file or an external link the client opens directly).
+  let attachments: { filename: string; content: Buffer }[] | undefined;
+  if (!invoice.pdfPath && !invoice.pdfExternalUrl) {
+    const pdf = await renderInvoicePdfById(invoice.id);
+    if (pdf) attachments = [{ filename: `${invoice.invoiceNumber}.pdf`, content: pdf }];
+  }
+
   const portalUrl = `${appUrl()}/portal/invoices/${invoice.id}`;
   const sent = await sendEmail({
     to: invoice.client.email,
@@ -239,8 +269,10 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
         projectName={invoice.project?.projectName}
         portalUrl={portalUrl}
         paymentAccounts={paymentAccounts}
+        pdfAttached={!!attachments}
       />
     ),
+    attachments,
     devHint: `invoice ${invoice.invoiceNumber} → ${invoice.client.email}`,
   });
   if (!sent.ok) {

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
 import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
@@ -27,7 +27,8 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
-import { Loader2, FileText, Upload, Link2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Loader2, FileText, Upload, Link2, Plus, Trash2 } from "lucide-react";
 
 export type InvoiceClientOption = {
   id: string;
@@ -42,13 +43,20 @@ export type InvoiceProjectOption = {
   clientId: string | null;
 };
 
+export type InvoicePaymentAccountOption = {
+  id: string;
+  title: string;
+};
+
 export function InvoiceForm({
   clients,
   projects,
+  paymentAccounts,
   invoice,
 }: {
   clients: InvoiceClientOption[];
   projects: InvoiceProjectOption[];
+  paymentAccounts: InvoicePaymentAccountOption[];
   invoice?: InvoiceInput & { id: string; pdfOriginalName: string | null };
 }) {
   const router = useRouter();
@@ -56,6 +64,14 @@ export function InvoiceForm({
   const isEdit = !!invoice;
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+
+  // How this invoice's document is produced. Existing invoices reopen in the
+  // mode that matches whatever they already have.
+  const [docMode, setDocMode] = useState<"generate" | "link" | "upload">(() => {
+    if (invoice?.pdfExternalUrl) return "link";
+    if (invoice?.pdfOriginalName) return "upload";
+    return "generate";
+  });
 
   const form = useForm<InvoiceInput>({
     resolver: zodResolver(invoiceSchema),
@@ -68,7 +84,18 @@ export function InvoiceForm({
       dueDate: invoice?.dueDate ?? "",
       notes: invoice?.notes ?? "",
       pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
+      title: invoice?.title ?? "",
+      currency: invoice?.currency ?? "USD",
+      paymentAccountId: invoice?.paymentAccountId ?? "none",
+      items: invoice?.items?.length
+        ? invoice.items
+        : [{ description: "", qty: 1, rate: "" as unknown as number }],
     },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "items",
   });
 
   const selectedClient = form.watch("clientId");
@@ -76,12 +103,31 @@ export function InvoiceForm({
     (p) => p.clientId === selectedClient || p.clientId === null,
   );
 
+  const watchedItems = form.watch("items");
+  const currency = form.watch("currency");
+  const currencySymbol = currency === "EUR" ? "€" : "$";
+  const itemsTotal = (watchedItems ?? []).reduce((sum, i) => {
+    const qty = typeof i?.qty === "number" && !Number.isNaN(i.qty) ? i.qty : 0;
+    const rate = typeof i?.rate === "number" && !Number.isNaN(i.rate) ? i.rate : 0;
+    return sum + qty * rate;
+  }, 0);
+
   async function onSubmit(values: InvoiceInput) {
     const formData = new FormData();
-    Object.entries(values).forEach(([key, value]) => {
+    // Only the chosen document mode's data is submitted, so switching modes
+    // clears the others rather than leaving a stale link/upload behind.
+    const { items, ...scalars } = values;
+    Object.entries(scalars).forEach(([key, value]) => {
+      if (key === "pdfExternalUrl" && docMode !== "link") {
+        formData.append(key, "");
+        return;
+      }
       formData.append(key, String(value ?? ""));
     });
-    const file = fileRef.current?.files?.[0];
+    if (docMode === "generate" && items?.length) {
+      formData.append("items", JSON.stringify(items));
+    }
+    const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
 
     const label = file ? "Uploading invoice…" : "Saving…";
@@ -234,8 +280,257 @@ export function InvoiceForm({
           )}
         />
 
-        <div>
-          <p className="mb-2 text-sm font-medium">Invoice PDF</p>
+        {/* How the client gets their document: we build it, or you supply it. */}
+        <div className="rounded-xl border p-4">
+          <p className="text-sm font-medium">Invoice document</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Generate a branded PDF from line items, or attach one you made
+            yourself.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(
+              [
+                { value: "generate", label: "Generate PDF" },
+                { value: "link", label: "Paste a link" },
+                { value: "upload", label: "Upload PDF" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setDocMode(opt.value)}
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-sm transition-colors",
+                  docMode === opt.value
+                    ? "border-primary bg-brand-tint font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {docMode === "generate" && (
+            <div className="mt-4 space-y-4">
+              <FormField
+                control={form.control}
+                name="title"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Invoice title</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="e.g. Monthly retainer invoice — June"
+                        {...field}
+                        value={field.value ?? ""}
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      The headline on the PDF. Defaults to the invoice number.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="currency"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Currency</FormLabel>
+                      <Select value={field.value ?? "USD"} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="USD">USD ($)</SelectItem>
+                          <SelectItem value="EUR">EUR (€)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="paymentAccountId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Payment account on PDF</FormLabel>
+                      <Select value={field.value || "none"} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="None" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="none">No bank details</SelectItem>
+                          {paymentAccounts.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        The one account whose details print at the bottom.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="rounded-lg border p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-medium">Line items</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => append({ description: "", qty: 1, rate: "" as unknown as number })}
+                  >
+                    <Plus className="size-3.5" /> Add item
+                  </Button>
+                </div>
+
+                <div className="space-y-2">
+                  {fields.map((row, index) => (
+                    <div key={row.id} className="flex items-start gap-2">
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.description`}
+                        render={({ field }) => (
+                          <FormItem className="flex-1">
+                            <FormControl>
+                              <Textarea
+                                rows={2}
+                                placeholder={
+                                  "Monthly Development & Design work\nZiener website :\nMegamenu development"
+                                }
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.qty`}
+                        render={({ field }) => (
+                          <FormItem className="w-16">
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={0.01}
+                                step="0.01"
+                                placeholder="Qty"
+                                value={(field.value as number | string) ?? ""}
+                                onChange={(e) =>
+                                  field.onChange(
+                                    e.target.value === ""
+                                      ? ("" as unknown as number)
+                                      : Number(e.target.value),
+                                  )
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.rate`}
+                        render={({ field }) => (
+                          <FormItem className="w-28">
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                placeholder="Rate"
+                                value={(field.value as number | string) ?? ""}
+                                onChange={(e) =>
+                                  field.onChange(
+                                    e.target.value === ""
+                                      ? ("" as unknown as number)
+                                      : Number(e.target.value),
+                                  )
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="mt-0.5 size-9 shrink-0 text-destructive hover:text-destructive"
+                        disabled={fields.length === 1}
+                        onClick={() => remove(index)}
+                      >
+                        <Trash2 className="size-4" />
+                        <span className="sr-only">Remove item</span>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="mt-2 text-xs text-muted-foreground">
+                  First line of a description is the bold title; lines ending in
+                  &quot;:&quot; become group headings, the rest become bullets.
+                </p>
+
+                <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
+                  <span className="text-muted-foreground">
+                    Total (replaces the amount above)
+                  </span>
+                  <span className="font-heading text-lg font-bold text-primary">
+                    {currencySymbol}
+                    {itemsTotal.toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {docMode === "link" && (
+            <FormField
+              control={form.control}
+              name="pdfExternalUrl"
+              render={({ field }) => (
+                <FormItem className="mt-4">
+                  <FormLabel className="flex items-center gap-1.5">
+                    <Link2 className="size-3.5" />
+                    Link an external file (Google Drive / Dropbox)
+                  </FormLabel>
+                  <FormControl>
+                    <Input type="url" placeholder="https://drive.google.com/…" {...field} />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    The invoice&apos;s download button opens this directly.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+
+          {docMode === "upload" && (
+          <div className="mt-4">
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -263,30 +558,8 @@ export function InvoiceForm({
             className="hidden"
             onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
           />
-          <FormField
-            control={form.control}
-            name="pdfExternalUrl"
-            render={({ field }) => (
-              <FormItem className="mt-3">
-                <FormLabel className="flex items-center gap-1.5 font-normal text-muted-foreground">
-                  <Link2 className="size-3.5" />
-                  …or link an external file (Google Drive / Dropbox)
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    type="url"
-                    placeholder="https://drive.google.com/…"
-                    {...field}
-                  />
-                </FormControl>
-                <p className="text-xs text-muted-foreground">
-                  When a link is set, the invoice&apos;s download button opens it
-                  directly (takes priority over an uploaded PDF).
-                </p>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          </div>
+          )}
         </div>
 
         <FormField

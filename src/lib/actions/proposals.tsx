@@ -412,12 +412,24 @@ async function runHandoff(
         amount: depositAmount,
         status: "ASSIGNED",
         issueDate: new Date(),
+        title: `${proposal.title} — ${proposal.depositPercent}% deposit`,
         notes: `${proposal.depositPercent}% deposit for "${proposal.title}"`,
         // Carry the invoice document attached in the builder, so the client
         // gets the paperwork with the deposit invoice.
         pdfPath: proposal.invoicePdfPath,
         pdfOriginalName: proposal.invoicePdfOriginalName,
         pdfExternalUrl: proposal.invoicePdfExternalUrl,
+        // A line item so the generated PDF is complete without editing.
+        items: {
+          create: [
+            {
+              description: `${proposal.title} — ${proposal.depositPercent}% deposit`,
+              qty: 1,
+              rate: depositAmount,
+              sortOrder: 0,
+            },
+          ],
+        },
       },
     });
 

@@ -9,11 +9,16 @@ export const metadata = { title: "New Invoice" };
 
 export default async function NewInvoicePage() {
   await requireAdmin();
-  const [clients, projects] = await Promise.all([
+  const [clients, projects, paymentAccounts] = await Promise.all([
     listActiveClientOptions(),
     prisma.project.findMany({
       orderBy: { createdAt: "desc" },
       select: { id: true, projectName: true, clientId: true },
+    }),
+    prisma.paymentAccount.findMany({
+      where: { isActive: true },
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+      select: { id: true, title: true },
     }),
   ]);
 
@@ -25,7 +30,11 @@ export default async function NewInvoicePage() {
       />
       <Card>
         <CardContent className="pt-6">
-          <InvoiceForm clients={clients} projects={projects} />
+          <InvoiceForm
+            clients={clients}
+            projects={projects}
+            paymentAccounts={paymentAccounts}
+          />
         </CardContent>
       </Card>
     </div>

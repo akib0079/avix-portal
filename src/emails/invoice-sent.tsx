@@ -15,6 +15,7 @@ export default function InvoiceSentEmail({
   projectName,
   portalUrl,
   paymentAccounts = [],
+  pdfAttached = false,
 }: {
   firstName: string;
   invoiceNumber: string;
@@ -22,6 +23,8 @@ export default function InvoiceSentEmail({
   projectName?: string | null;
   portalUrl: string;
   paymentAccounts?: EmailPaymentAccount[];
+  /** True when the generated PDF is attached to this email. */
+  pdfAttached?: boolean;
 }) {
   return (
     <EmailShell preview={`Invoice ${invoiceNumber} from Avix Digital`}>
@@ -35,10 +38,14 @@ export default function InvoiceSentEmail({
             on <strong>{projectName}</strong>
           </>
         ) : null}{" "}
-        is ready in your Avix Digital portal. You can review the details and
-        download the PDF after signing in.
+        is ready.{" "}
+        {pdfAttached
+          ? "The invoice is attached to this email as a PDF, and you can also open it in your portal."
+          : "Open it in your Avix Digital portal to review and download."}
       </EmailBody>
-      <EmailButton href={portalUrl}>View invoice</EmailButton>
+      <EmailButton href={portalUrl}>
+        {pdfAttached ? "Download the invoice" : "View invoice"}
+      </EmailButton>
 
       {paymentAccounts.length > 0 && (
         <>

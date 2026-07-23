@@ -37,14 +37,13 @@ export type InvoicePdfData = {
   branding: {
     color: string;
     logoDataUri: string | null;
-    signatureDataUri: string | null;
   };
-  bankAccounts: {
-    title: string;
+  /** The one bank account the admin chose to print; null = omit. */
+  bankAccount: {
     holderName: string;
     bankName: string;
     fields: { label: string; value: string }[];
-  }[];
+  } | null;
 };
 
 /** The From block on every invoice. */
@@ -52,7 +51,7 @@ const AGENCY = {
   name: "Akib Zawayed",
   company: "Avixdigital",
   address: "187 G. RK Mission road -2200, Mymensigh",
-  email: "avixdigitalagency@gmail.com",
+  email: "info@avixdigital.com",
   role: "Project manager",
   site: "avixdigital.com",
 };
@@ -124,13 +123,13 @@ function buildStyles(accent: string) {
       paddingVertical: 3, paddingHorizontal: 10, fontSize: 12,
       fontFamily: "Helvetica-Bold", marginBottom: 14,
     },
-    footerRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 16 },
-    bankCol: { width: "58%" },
+    bankBlock: { marginTop: 16 },
+    bankHeading: {
+      fontSize: 9, fontFamily: "Helvetica-Bold", marginBottom: 5,
+      textTransform: "uppercase", letterSpacing: 0.5, color: "#4b5563",
+    },
     bankLine: { marginBottom: 1.5, lineHeight: 1.3, fontSize: 9 },
     bankLabel: { fontFamily: "Helvetica-Bold", textDecoration: "underline" },
-    signCol: { width: "34%", alignItems: "flex-start" },
-    signHeading: { fontSize: 13, fontFamily: "Helvetica-Bold", marginBottom: 8 },
-    signImage: { height: 46, objectFit: "contain" },
   });
 }
 
@@ -241,32 +240,22 @@ export function invoicePdfDocument(data: InvoicePdfData) {
           </View>
         </View>
 
-        <View style={s.footerRow}>
-          <View style={s.bankCol}>
-            {data.bankAccounts.map((acct, i) => (
-              <View key={i} style={{ marginBottom: 10 }}>
-                <Text style={s.bankLine}>
-                  <Text style={s.bankLabel}>Bank name</Text> : {acct.bankName},
-                </Text>
-                {acct.fields.map((f, j) => (
-                  <Text key={j} style={s.bankLine}>
-                    <Text style={s.bankLabel}>{f.label}</Text> : {f.value} ,
-                  </Text>
-                ))}
-                <Text style={s.bankLine}>
-                  <Text style={s.bankLabel}>Beneficiary name</Text> : {acct.holderName}
-                </Text>
-              </View>
+        {data.bankAccount ? (
+          <View style={s.bankBlock}>
+            <Text style={s.bankHeading}>Payment details</Text>
+            <Text style={s.bankLine}>
+              <Text style={s.bankLabel}>Bank name</Text> : {data.bankAccount.bankName},
+            </Text>
+            {data.bankAccount.fields.map((f, j) => (
+              <Text key={j} style={s.bankLine}>
+                <Text style={s.bankLabel}>{f.label}</Text> : {f.value} ,
+              </Text>
             ))}
+            <Text style={s.bankLine}>
+              <Text style={s.bankLabel}>Beneficiary name</Text> : {data.bankAccount.holderName}
+            </Text>
           </View>
-          <View style={s.signCol}>
-            <Text style={s.signHeading}>Billers Signature:</Text>
-            {data.branding.signatureDataUri ? (
-              /* eslint-disable-next-line jsx-a11y/alt-text -- react-pdf Image has no alt */
-              <Image src={data.branding.signatureDataUri} style={s.signImage} />
-            ) : null}
-          </View>
-        </View>
+        ) : null}
       </Page>
     </Document>
   );
