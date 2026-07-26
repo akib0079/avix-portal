@@ -2,7 +2,7 @@ import "server-only";
 import { readFile } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
-import { getBranding } from "@/lib/dal/settings";
+import { getBranding, getInvoiceFooter } from "@/lib/dal/settings";
 import { openUpload } from "@/lib/uploads";
 import { renderInvoicePdf, type InvoicePdfData } from "@/lib/pdf/invoice-pdf";
 
@@ -20,12 +20,13 @@ async function imageDataUri(fileName: string | null): Promise<string | null> {
 }
 
 /**
- * Logo for the document: the uploaded branding logo when embeddable, else the
- * bundled avixdigital PNG. The uploaded logo is commonly SVG/WebP (great on the
- * web, unusable in a PDF), and an invoice must never go out unbranded.
+ * Logo for the document: the dedicated invoice logo when set, else the bundled
+ * dark avixdigital PNG. Deliberately does NOT use the web branding logo — that
+ * one is light-on-dark for the app sidebar and prints invisibly on a white
+ * invoice. An invoice must never go out unbranded.
  */
-async function invoiceLogo(brandLogoFile: string | null): Promise<string | null> {
-  const uploaded = await imageDataUri(brandLogoFile);
+async function invoiceLogo(invoiceLogoFile: string | null): Promise<string | null> {
+  const uploaded = await imageDataUri(invoiceLogoFile);
   if (uploaded) return uploaded;
   try {
     const file = await readFile(path.join(process.cwd(), "public", "avix-logo.png"));
@@ -51,7 +52,7 @@ export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
   });
   if (!invoice) return null;
 
-  const branding = await getBranding();
+  const [branding, footer] = await Promise.all([getBranding(), getInvoiceFooter()]);
 
   const data: InvoicePdfData = {
     invoiceNumber: invoice.invoiceNumber,
@@ -75,9 +76,10 @@ export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
       address: invoice.billToAddress,
       extraEmail: invoice.billToEmail,
     },
+    footer: footer.trim() || null,
     branding: {
       color: branding.color || "#F65D0B",
-      logoDataUri: await invoiceLogo(branding.logoFile),
+      logoDataUri: await invoiceLogo(branding.invoiceLogoFile),
     },
     bankAccount: invoice.paymentAccount
       ? {

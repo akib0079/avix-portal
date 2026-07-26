@@ -69,13 +69,29 @@ export const BRAND_KEYS = {
   favicon: "brandFaviconFile",
   /** Biller's signature image (PNG/JPG) stamped on generated invoice PDFs. */
   signature: "brandSignatureFile",
+  /** Dedicated invoice logo (PNG/JPG). Separate from the web logo, which is
+   *  light-on-dark; invoices need a dark logo on white. Falls back to the
+   *  bundled dark avix-logo.png. */
+  invoiceLogo: "brandInvoiceLogoFile",
 } as const;
+
+/** Invoice footer note (e.g. preferred payment method). */
+export const INVOICE_FOOTER_KEY = "invoiceFooter";
+export const DEFAULT_INVOICE_FOOTER =
+  "Please use wise.com or your personal bank network to do the payment.";
+
+export async function getInvoiceFooter(): Promise<string> {
+  const row = await prisma.appSetting.findUnique({ where: { key: INVOICE_FOOTER_KEY } });
+  // Unset → default text; explicitly emptied (whitespace) → no footer.
+  return row ? row.value : DEFAULT_INVOICE_FOOTER;
+}
 
 export type Branding = {
   color: string | null;
   logoFile: string | null;
   faviconFile: string | null;
   signatureFile: string | null;
+  invoiceLogoFile: string | null;
 };
 
 /**
@@ -87,7 +103,7 @@ export const getBranding = cache(async (): Promise<Branding> => {
   const rows = await prisma.appSetting.findMany({
     where: {
       key: {
-        in: [BRAND_KEYS.color, BRAND_KEYS.logo, BRAND_KEYS.favicon, BRAND_KEYS.signature],
+        in: [BRAND_KEYS.color, BRAND_KEYS.logo, BRAND_KEYS.favicon, BRAND_KEYS.signature, BRAND_KEYS.invoiceLogo],
       },
     },
   });
@@ -97,5 +113,6 @@ export const getBranding = cache(async (): Promise<Branding> => {
     logoFile: map[BRAND_KEYS.logo] || null,
     faviconFile: map[BRAND_KEYS.favicon] || null,
     signatureFile: map[BRAND_KEYS.signature] || null,
+    invoiceLogoFile: map[BRAND_KEYS.invoiceLogo] || null,
   };
 });

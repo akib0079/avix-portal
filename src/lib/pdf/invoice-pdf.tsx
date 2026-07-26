@@ -56,6 +56,8 @@ export type InvoicePdfData = {
   issueDate: string;
   dueDate: string | null;
   notes: string | null;
+  /** Footer note printed at the bottom (e.g. preferred payment method). */
+  footer?: string | null;
   /** Line items; empty = legacy single-amount invoice (one fallback line). */
   items: { description: string; qty: number; rate: number }[];
   total: number;
@@ -180,6 +182,10 @@ function buildStyles(accent: string) {
     },
     bankLine: { marginBottom: 1, lineHeight: 1.35, fontSize: 9 },
     bankLabel: { fontWeight: 600 },
+    footer: {
+      marginTop: 22, paddingTop: 10, borderTopWidth: 0.75, borderTopColor: "#e5e7eb",
+      fontSize: 9, color: "#6b7280", lineHeight: 1.4,
+    },
   });
 }
 
@@ -317,6 +323,8 @@ export function invoicePdfDocument(data: InvoicePdfData) {
             </Text>
           </View>
         ) : null}
+
+        {data.footer ? <Text style={s.footer}>{data.footer}</Text> : null}
       </Page>
     </Document>
   );

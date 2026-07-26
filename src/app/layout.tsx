@@ -15,7 +15,7 @@ const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
 });
 
-const NO_BRANDING: Branding = { color: null, logoFile: null, faviconFile: null, signatureFile: null };
+const NO_BRANDING: Branding = { color: null, logoFile: null, faviconFile: null, signatureFile: null, invoiceLogoFile: null };
 
 async function branding(): Promise<Branding> {
   // Never let a slow/unavailable DB block the shell — fall back to defaults

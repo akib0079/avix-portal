@@ -19,11 +19,14 @@ function ImageUploader({
   label,
   hint,
   currentUrl,
+  lightPreview,
 }: {
-  which: "logo" | "favicon";
+  which: "logo" | "favicon" | "invoiceLogo";
   label: string;
   hint: string;
   currentUrl: string | null;
+  /** Preview on a white chip (for dark invoice logos) instead of the dark sidebar chip. */
+  lightPreview?: boolean;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -54,7 +57,7 @@ function ImageUploader({
       <p className="text-sm font-medium">{label}</p>
       <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
       <div className="mt-3 flex items-center gap-4">
-        <div className="flex h-14 w-24 items-center justify-center overflow-hidden rounded-md border bg-sidebar">
+        <div className={`flex h-14 w-24 items-center justify-center overflow-hidden rounded-md border ${lightPreview ? "bg-white" : "bg-sidebar"}`}>
           {currentUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={currentUrl} alt={label} className="max-h-10 max-w-20 object-contain" />
@@ -99,10 +102,12 @@ export function BrandingSetting({
   color,
   logoUrl,
   faviconUrl,
+  invoiceLogoUrl,
 }: {
   color: string | null;
   logoUrl: string | null;
   faviconUrl: string | null;
+  invoiceLogoUrl: string | null;
 }) {
   const router = useRouter();
   const [value, setValue] = useState(color ?? DEFAULT_COLOR);
@@ -168,6 +173,13 @@ export function BrandingSetting({
           label="Favicon"
           hint="The little browser-tab icon. A square PNG (512×512) is ideal."
           currentUrl={faviconUrl}
+        />
+        <ImageUploader
+          which="invoiceLogo"
+          label="Invoice logo"
+          hint="Printed on generated invoices (dark on white). PNG/JPG. Defaults to the dark Avix logo."
+          currentUrl={invoiceLogoUrl}
+          lightPreview
         />
       </div>
     </div>

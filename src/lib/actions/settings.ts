@@ -103,7 +103,7 @@ export async function updateWhatsappSupportUrl(url: string): Promise<ActionResul
 
 // ---------- Branding ----------
 import { saveUpload, deleteUpload } from "@/lib/uploads";
-import { BRAND_KEYS, getBranding } from "@/lib/dal/settings";
+import { BRAND_KEYS, getBranding, INVOICE_FOOTER_KEY } from "@/lib/dal/settings";
 
 async function setSetting(key: string, value: string) {
   await prisma.appSetting.upsert({
@@ -124,9 +124,17 @@ export async function updateBrandColor(color: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/** The note printed at the bottom of generated invoices. Empty = hide it. */
+export async function updateInvoiceFooter(text: string): Promise<ActionResult> {
+  await requireAdmin();
+  await setSetting(INVOICE_FOOTER_KEY, text.trim().slice(0, 300));
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
 /** Upload a new logo or favicon; replaces + deletes the previous file. */
 export async function uploadBrandingFile(
-  which: "logo" | "favicon" | "signature",
+  which: "logo" | "favicon" | "signature" | "invoiceLogo",
   formData: FormData,
 ): Promise<ActionResult> {
   await requireAdmin();
@@ -142,14 +150,18 @@ export async function uploadBrandingFile(
       ? BRAND_KEYS.logo
       : which === "favicon"
         ? BRAND_KEYS.favicon
-        : BRAND_KEYS.signature;
+        : which === "signature"
+          ? BRAND_KEYS.signature
+          : BRAND_KEYS.invoiceLogo;
   const current = await getBranding();
   const old =
     which === "logo"
       ? current.logoFile
       : which === "favicon"
         ? current.faviconFile
-        : current.signatureFile;
+        : which === "signature"
+          ? current.signatureFile
+          : current.invoiceLogoFile;
 
   await setSetting(key, saved.fileName);
   if (old) await deleteUpload("branding", old);
@@ -160,7 +172,7 @@ export async function uploadBrandingFile(
 }
 
 export async function clearBrandingFile(
-  which: "logo" | "favicon" | "signature",
+  which: "logo" | "favicon" | "signature" | "invoiceLogo",
 ): Promise<ActionResult> {
   await requireAdmin();
   const key =
@@ -168,14 +180,18 @@ export async function clearBrandingFile(
       ? BRAND_KEYS.logo
       : which === "favicon"
         ? BRAND_KEYS.favicon
-        : BRAND_KEYS.signature;
+        : which === "signature"
+          ? BRAND_KEYS.signature
+          : BRAND_KEYS.invoiceLogo;
   const current = await getBranding();
   const old =
     which === "logo"
       ? current.logoFile
       : which === "favicon"
         ? current.faviconFile
-        : current.signatureFile;
+        : which === "signature"
+          ? current.signatureFile
+          : current.invoiceLogoFile;
   await setSetting(key, "");
   if (old) await deleteUpload("branding", old);
   revalidatePath("/", "layout");
