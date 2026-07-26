@@ -91,6 +91,7 @@ enum NotificationType {
   MEETING_CANCELLED
   RETAINER_GENERATED
   PROPOSAL_ACCEPTED
+  DELIVERABLE_POSTED
 }
 
 enum MeetingStatus {
@@ -253,6 +254,7 @@ model Project {
 
   milestones   Milestone[]
   invoices     Invoice[]
+  deliverables Deliverable[]
   taskRequests TaskRequest[]
   messages     Message[]
   meetings     Meeting[]
@@ -360,6 +362,23 @@ model Invoice {
 /// recomputed server-side as Σ qty×rate on every write — amount stays the
 /// single source of truth for reports; items exist for the document.
 /// Zero items = legacy single-amount invoice (PDF falls back to one line).
+/// A finished asset the agency posts for the client on a project: an uploaded
+/// PDF/image OR an external link (Figma/Drive/etc). Collected in one place so
+/// clients aren't hunting through chat for final work.
+model Deliverable {
+  id               String   @id @default(cuid())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  filePath         String?
+  fileOriginalName String?
+  externalUrl      String?
+  createdAt        DateTime @default(now())
+
+  @@index([projectId])
+  @@map("deliverables")
+}
+
 model InvoiceItem {
   id          String  @id @default(cuid())
   invoiceId   String

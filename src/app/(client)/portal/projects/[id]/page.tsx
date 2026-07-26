@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getMyProject, listMyProjectOptions } from "@/lib/dal/portal";
 import { getProjectMessages } from "@/lib/dal/messages";
+import { listByProject } from "@/lib/dal/deliverables";
+import { DeliverablesList } from "@/components/deliverables/deliverables-list";
 import { getWhatsappSupportUrl } from "@/lib/dal/settings";
 import { ClientProjectTimeline } from "@/components/projects/client-project-timeline";
 import { ChatWidget } from "@/components/messages/chat-widget";
@@ -29,7 +31,10 @@ export default async function MyProjectPage({
   ]);
   if (!project) notFound();
   // After ownership is confirmed above (getMyProject scopes to the session).
-  const messages = await getProjectMessages(project.id);
+  const [messages, deliverables] = await Promise.all([
+    getProjectMessages(project.id),
+    listByProject(project.id),
+  ]);
 
   const milestones = project.milestones.map(toMilestoneView);
 
@@ -76,6 +81,8 @@ export default async function MyProjectPage({
           )}
         </CardContent>
       </Card>
+
+      <DeliverablesList deliverables={deliverables} />
 
       <Card className="mb-6">
         <CardContent className="pt-6">

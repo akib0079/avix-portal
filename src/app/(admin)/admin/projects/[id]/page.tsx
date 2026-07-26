@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProject } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
+import { listByProject } from "@/lib/dal/deliverables";
+import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
 import { MilestoneBoard } from "@/components/boards-lazy";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
@@ -35,10 +37,11 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [viewer, project, messages] = await Promise.all([
+  const [viewer, project, messages, deliverables] = await Promise.all([
     requireTeam(),
     getProject(id),
     getProjectMessages(id),
+    listByProject(id),
   ]);
   if (!project) notFound();
   // Staff are money-blind. getProject already strips prices server-side; this
@@ -131,6 +134,10 @@ export default async function ProjectDetailPage({
           />
         </CardContent>
       </Card>
+
+      {isAdmin && (
+        <DeliverablesCard projectId={project.id} deliverables={deliverables} />
+      )}
 
       {isAdmin && (
       <Card>
