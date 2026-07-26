@@ -35,6 +35,7 @@ import {
   Repeat,
   FileSignature,
   CircleCheckBig,
+  CalendarPlus,
 } from "lucide-react";
 
 /** Only the admin shell varies by role; the portal is always CLIENT. */
@@ -76,6 +77,7 @@ const staffNav: NavItem[] = [
 const clientNav: NavItem[] = [
   { href: "/portal", label: "Overview", icon: LayoutGrid },
   { href: "/portal/actions", label: "Action Center", icon: CircleCheckBig, badge: "actions" },
+  { href: "/portal/book", label: "Book a Meeting", icon: CalendarPlus },
   { href: "/portal/messages", label: "Chat with us", icon: MessagesSquare },
   { href: "/portal/projects", label: "My Projects", icon: FolderKanban },
   { href: "/portal/invoices", label: "Invoices", icon: FileText },

@@ -621,6 +621,22 @@ model AppSetting {
   @@map("app_settings")
 }
 
+/// A recurring weekly window during which clients may self-book meetings.
+/// Times are minutes-from-midnight interpreted in the agency timezone
+/// (AppSetting "agencyTimezone"). weekday: 0=Sun … 6=Sat.
+model AvailabilityWindow {
+  id        String   @id @default(cuid())
+  weekday   Int
+  startMin  Int
+  endMin    Int
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([weekday])
+  @@map("availability_windows")
+}
+
 /// Bank-transfer payment accounts shown to clients (admin-managed). The
 /// `fields` JSON is an ordered [{label, value}] list so each region can carry
 /// its own set (ACH routing/account vs IBAN/SWIFT vs IBAN/sort-code).
