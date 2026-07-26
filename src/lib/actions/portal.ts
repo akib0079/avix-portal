@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
+import { logActivity } from "@/lib/dal/activity";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -32,6 +33,15 @@ export async function approveMilestone(id: string): Promise<ActionResult> {
     type: "MILESTONE_APPROVED",
     title: `${user.firstName || "Client"} approved: ${milestone.title}`,
     body: `on ${milestone.project.projectName}`,
+    link: `/admin/projects/${milestone.project.id}`,
+  });
+  await logActivity({
+    type: "milestone.approved",
+    summary: `${user.firstName || "Client"} approved milestone: ${milestone.title}`,
+    actorId: user.id,
+    clientId: user.id,
+    entity: "project",
+    entityId: milestone.project.id,
     link: `/admin/projects/${milestone.project.id}`,
   });
 
@@ -104,6 +114,15 @@ export async function claimInvoicePayment(id: string): Promise<ActionResult> {
     type: "PAYMENT_CLAIMED",
     title: `${user.firstName || "Client"} says ${invoice.invoiceNumber} is paid`,
     body: "Confirm the transfer and mark it paid.",
+    link: `/admin/invoices/${invoice.id}`,
+  });
+  await logActivity({
+    type: "invoice.claimed",
+    summary: `${user.firstName || "Client"} reported paying ${invoice.invoiceNumber}`,
+    actorId: user.id,
+    clientId: user.id,
+    entity: "invoice",
+    entityId: invoice.id,
     link: `/admin/invoices/${invoice.id}`,
   });
 

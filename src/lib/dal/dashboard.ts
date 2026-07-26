@@ -8,6 +8,9 @@ export async function getAdminDashboard() {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const soon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const in30Days = new Date(now.getTime() + 30 * 86_400_000);
+  const days30Ago = new Date(now.getTime() - 30 * 86_400_000);
+  const days60Ago = new Date(now.getTime() - 60 * 86_400_000);
 
   const [
     totalClients,
@@ -21,7 +24,11 @@ export async function getAdminDashboard() {
     recentProjects,
     invoicesByStatus,
     upcomingInvoices,
-    recentActivity,
+    mrrAgg,
+    agingCurrent,
+    aging30,
+    aging60,
+    expectedInvoicesAgg,
   ] = await Promise.all([
     prisma.user.count({ where: { role: "CLIENT" } }),
     prisma.project.count({ where: { status: { not: "COMPLETED" } } }),
@@ -54,11 +61,28 @@ export async function getAdminDashboard() {
       take: 5,
       include: { client: { select: { firstName: true, lastName: true } } },
     }),
-    prisma.notification.findMany({
-      where: { user: { role: "ADMIN" } },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-      select: { id: true, type: true, title: true, createdAt: true, link: true },
+    // MRR — recurring monthly value of all active retainers.
+    prisma.retainer.aggregate({ where: { active: true }, _sum: { amount: true } }),
+    // Aging: unpaid invoices past due, bucketed by how overdue.
+    prisma.invoice.aggregate({
+      where: { status: { not: "PAID" }, dueDate: { gte: days30Ago, lt: now } },
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    prisma.invoice.aggregate({
+      where: { status: { not: "PAID" }, dueDate: { gte: days60Ago, lt: days30Ago } },
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    prisma.invoice.aggregate({
+      where: { status: { not: "PAID" }, dueDate: { not: null, lt: days60Ago } },
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    // Expected inflow: unpaid invoices due within the next 30 days.
+    prisma.invoice.aggregate({
+      where: { status: { not: "PAID" }, dueDate: { gte: now, lte: in30Days } },
+      _sum: { amount: true },
     }),
   ]);
 
@@ -83,13 +107,26 @@ export async function getAdminDashboard() {
       dueDate: inv.dueDate!.toISOString(),
       clientName: `${inv.client.firstName} ${inv.client.lastName}`.trim(),
     })),
-    recentActivity: recentActivity.map((n) => ({
-      id: n.id,
-      type: n.type,
-      title: n.title,
-      createdAt: n.createdAt.toISOString(),
-      link: n.link,
-    })),
+    money: {
+      mrr: Number(mrrAgg._sum.amount ?? 0),
+      // Recurring value expected next 30 days = one-off invoices due soon + MRR.
+      expectedNext30:
+        Number(expectedInvoicesAgg._sum.amount ?? 0) + Number(mrrAgg._sum.amount ?? 0),
+      aging: {
+        current: {
+          amount: Number(agingCurrent._sum.amount ?? 0),
+          count: agingCurrent._count._all,
+        },
+        thirty: {
+          amount: Number(aging30._sum.amount ?? 0),
+          count: aging30._count._all,
+        },
+        sixtyPlus: {
+          amount: Number(aging60._sum.amount ?? 0),
+          count: aging60._count._all,
+        },
+      },
+    },
   };
 }
 

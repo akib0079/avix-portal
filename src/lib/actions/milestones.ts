@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireTeam } from "@/lib/dal/session";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
+import { logActivity } from "@/lib/dal/activity";
 import type { Prisma, MilestoneStatus } from "@prisma/client";
 
 const clientInclude = {
@@ -194,6 +195,14 @@ export async function setMilestoneStatus(
         body: `${done} of ${total} milestones done on ${milestone.project.projectName}`,
         link: `/portal/projects/${milestone.projectId}`,
       },
+    });
+    await logActivity({
+      type: "milestone.completed",
+      summary: `Milestone completed: ${milestone.title} (${milestone.project.projectName})`,
+      clientId: client.id,
+      entity: "project",
+      entityId: milestone.projectId,
+      link: `/admin/projects/${milestone.projectId}`,
     });
   }
 

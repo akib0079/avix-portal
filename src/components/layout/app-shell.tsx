@@ -11,6 +11,7 @@ import { initials } from "@/lib/format";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/layout/notification-bell";
+import { QuickAdd } from "@/components/layout/quick-add";
 import { ActivityProvider } from "@/components/layout/activity-indicator";
 import { GlobalSearchProvider, SearchTrigger } from "@/components/layout/global-search";
 import {
@@ -266,6 +267,7 @@ export function AppShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const isStaff = role === "STAFF";
+  const showQuickAdd = variant === "admin" && !isStaff;
 
   const shell = (
     <div className="flex min-h-screen w-full">
@@ -306,7 +308,8 @@ export function AppShell({
           </SheetContent>
         </Sheet>
         <LogoMark logoUrl={logoUrl} width={110} height={28} />
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {showQuickAdd && <QuickAdd tone="dark" />}
           <NotificationBell tone="dark" />
         </div>
       </div>
@@ -314,7 +317,8 @@ export function AppShell({
       {/* Main content */}
       <main className="min-w-0 flex-1 pt-14 lg:pt-0 lg:pl-60">
         {/* Desktop topbar */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
+        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-2 border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
+          {showQuickAdd && <QuickAdd tone="light" />}
           <NotificationBell tone="light" />
         </div>
         <div className="mx-auto w-full max-w-[88rem] px-4 py-8 sm:px-6 lg:px-10">

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getClient } from "@/lib/dal/users";
+import { listActivity } from "@/lib/dal/activity";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { PageHeader } from "@/components/page-header";
 import { ClientForm } from "@/components/clients/client-form";
 import { ClientActions } from "@/components/clients/client-actions";
@@ -33,6 +35,7 @@ export default async function ClientDetailPage({
   const { id } = await params;
   const client = await getClient(id);
   if (!client) notFound();
+  const activity = await listActivity({ clientId: id, take: 15 });
 
   return (
     <div>
@@ -171,6 +174,15 @@ export default async function ClientDetailPage({
           </Card>
         </div>
       </div>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">Activity</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ActivityFeed items={activity} emptyLabel="No recorded activity for this client yet." />
+        </CardContent>
+      </Card>
     </div>
   );
 }

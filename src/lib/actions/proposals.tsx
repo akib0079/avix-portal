@@ -10,6 +10,7 @@ import { nextInvoiceNumber } from "@/lib/invoice-number";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
+import { logActivity } from "@/lib/dal/activity";
 import { proposalContact } from "@/lib/dal/proposals";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
@@ -468,6 +469,15 @@ async function runHandoff(
       link: "/admin/proposals",
     });
   }
+
+  await logActivity({
+    type: "proposal.accepted",
+    summary: `${contact.name} accepted "${proposal.title}" · ${usd.format(total)}`,
+    clientId: result.user.id,
+    entity: "proposal",
+    entityId: id,
+    link: "/admin/proposals",
+  });
 
   revalidatePath("/admin/proposals");
   revalidatePath("/admin/leads");

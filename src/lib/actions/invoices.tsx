@@ -9,6 +9,7 @@ import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { sendEmail } from "@/lib/email/resend";
 import InvoiceSentEmail from "@/emails/invoice-sent";
 import { renderInvoicePdfById } from "@/lib/pdf/invoice-render";
+import { logActivity } from "@/lib/dal/activity";
 import { usd } from "@/lib/format";
 import { appUrl } from "@/lib/app-url";
 import type { InvoiceStatus } from "@prisma/client";
@@ -252,6 +253,16 @@ export async function setInvoiceStatus(
   if (!invoice) return { ok: false, error: "Invoice not found." };
 
   await prisma.invoice.update({ where: { id }, data: { status } });
+  if (status === "PAID" && invoice.status !== "PAID") {
+    await logActivity({
+      type: "invoice.paid",
+      summary: `Invoice ${invoice.invoiceNumber} marked paid · ${usd.format(Number(invoice.amount))}`,
+      clientId: invoice.clientId,
+      entity: "invoice",
+      entityId: invoice.id,
+      link: `/admin/invoices/${invoice.id}`,
+    });
+  }
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${id}`);
   revalidatePath("/admin");
@@ -330,6 +341,15 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
       },
     }),
   ]);
+
+  await logActivity({
+    type: "invoice.sent",
+    summary: `Invoice ${invoice.invoiceNumber} sent · ${usd.format(Number(invoice.amount))}`,
+    clientId: invoice.client.id,
+    entity: "invoice",
+    entityId: invoice.id,
+    link: `/admin/invoices/${invoice.id}`,
+  });
 
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${id}`);

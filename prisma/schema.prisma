@@ -434,6 +434,30 @@ model Notification {
   @@map("notifications")
 }
 
+/// Append-only audit trail of meaningful events (invoice sent/paid, proposal
+/// accepted, milestone completed, message, meeting). Written best-effort — a
+/// failed log must never break the mutation that triggered it. Read only by
+/// admins on the dashboard and per-client timeline.
+model ActivityEvent {
+  id        String   @id @default(cuid())
+  /// Short machine key, e.g. "invoice.sent", "milestone.completed".
+  type      String
+  /// Who triggered it (admin or client user id), when known.
+  actorId   String?
+  /// The client this event concerns, for the per-client timeline.
+  clientId  String?
+  /// Entity kind + id it points at, e.g. entity="invoice".
+  entity    String?
+  entityId  String?
+  summary   String
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([clientId, createdAt])
+  @@map("activity_events")
+}
+
 model ImageUpload {
   id           String   @id @default(uuid())
   fileName     String   @unique

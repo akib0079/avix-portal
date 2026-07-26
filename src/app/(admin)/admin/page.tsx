@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getAdminDashboard, getTodayItems } from "@/lib/dal/dashboard";
+import { listActivity } from "@/lib/dal/activity";
 import { getPipelineSummary } from "@/lib/dal/leads";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { InvoiceStatusDonut } from "@/components/charts-lazy";
@@ -15,7 +17,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usd, projectTypeLabels, formatDate } from "@/lib/format";
-import { formatDistanceToNow } from "date-fns";
 import { requireAdmin } from "@/lib/dal/session";
 import {
   FolderKanban,
@@ -26,6 +27,7 @@ import {
   CalendarClock,
   Activity,
   ArrowRight,
+  Repeat,
 } from "lucide-react";
 
 export const metadata = { title: "Dashboard" };
@@ -34,12 +36,37 @@ function fmtHours(hours: number): string {
   return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
 }
 
+function AgingRow({
+  label,
+  bucket,
+  tone,
+}: {
+  label: string;
+  bucket: { amount: number; count: number };
+  tone: string;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={`font-medium ${bucket.amount > 0 ? tone : "text-muted-foreground"}`}>
+        {usd.format(bucket.amount)}
+        {bucket.count > 0 && (
+          <span className="ml-1 text-xs text-muted-foreground">
+            ({bucket.count})
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
 export default async function AdminDashboardPage() {
   await requireAdmin();
-  const [data, pipeline, today] = await Promise.all([
+  const [data, pipeline, today, activity] = await Promise.all([
     getAdminDashboard(),
     getPipelineSummary(),
     getTodayItems(),
+    listActivity({ take: 8 }),
   ]);
 
   return (
@@ -111,6 +138,48 @@ export default async function AdminDashboardPage() {
           icon={<Clock className="size-5" />}
           iconClassName="bg-info-tint text-info"
         />
+      </div>
+
+      {/* Money: recurring revenue + what's owed, aged */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Repeat className="size-3.5" /> Monthly recurring (MRR)
+            </p>
+            <p className="mt-1 font-heading text-2xl font-bold">
+              {usd.format(data.money.mrr)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              from active retainers
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <TrendingUp className="size-3.5" /> Expected next 30 days
+            </p>
+            <p className="mt-1 font-heading text-2xl font-bold">
+              {usd.format(data.money.expectedNext30)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              invoices due soon + MRR
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <CalendarClock className="size-3.5" /> Overdue, aged
+            </p>
+            <dl className="mt-2 space-y-1.5 text-sm">
+              <AgingRow label="1–30 days" bucket={data.money.aging.current} tone="text-amber-600" />
+              <AgingRow label="31–60 days" bucket={data.money.aging.thirty} tone="text-orange-600" />
+              <AgingRow label="60+ days" bucket={data.money.aging.sixtyPlus} tone="text-red-600" />
+            </dl>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Action strip: things needing attention */}
@@ -259,38 +328,7 @@ export default async function AdminDashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {data.recentActivity.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No activity yet.
-              </p>
-            ) : (
-              <ul className="space-y-3">
-                {data.recentActivity.map((n) => {
-                  const body = (
-                    <>
-                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" />
-                      <div className="min-w-0">
-                        <p className="text-sm leading-snug">{n.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
-                        </p>
-                      </div>
-                    </>
-                  );
-                  return (
-                    <li key={n.id}>
-                      {n.link ? (
-                        <Link href={n.link} className="flex gap-2.5 hover:opacity-80">
-                          {body}
-                        </Link>
-                      ) : (
-                        <div className="flex gap-2.5">{body}</div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            <ActivityFeed items={activity} />
           </CardContent>
         </Card>
       </div>

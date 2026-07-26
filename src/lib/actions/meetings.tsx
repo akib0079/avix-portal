@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { meetingSchema, type MeetingInput } from "@/lib/validation/meeting";
+import { logActivity } from "@/lib/dal/activity";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
 import { googleCalendarUrl, formatInTimezone } from "@/lib/calendar-links";
@@ -110,6 +111,15 @@ export async function createMeeting(
   if (client.status === "ACTIVE") {
     await notifyClient(meeting, client, false);
   }
+
+  await logActivity({
+    type: "meeting.scheduled",
+    summary: `Meeting scheduled: ${meeting.title}`,
+    clientId: client.id,
+    entity: "meeting",
+    entityId: meeting.id,
+    link: "/admin/calendar",
+  });
 
   revalidatePath("/admin/calendar");
   revalidatePath("/portal");
