@@ -9,8 +9,10 @@ import { WhatsappSetting } from "@/components/settings/whatsapp-setting";
 import { BrandingSetting } from "@/components/settings/branding-setting";
 import { TeamManager } from "@/components/settings/team-manager";
 import { AvailabilityManager } from "@/components/settings/availability-manager";
+import { GoogleCalendarSetting } from "@/components/settings/google-calendar-setting";
 import { listStaff } from "@/lib/dal/users";
 import { listAvailabilityWindows, getBookingConfig } from "@/lib/dal/availability";
+import { calendarStatus } from "@/lib/google-calendar";
 import { Card, CardContent } from "@/components/ui/card";
 import { requireAdmin } from "@/lib/dal/session";
 
@@ -27,6 +29,7 @@ export default async function SettingsPage() {
       listAvailabilityWindows(),
       getBookingConfig(),
     ]);
+  const gcal = await calendarStatus();
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -67,6 +70,11 @@ export default async function SettingsPage() {
               endMin: w.endMin,
             }))}
           />
+        </CardContent>
+      </Card>
+      <Card className="mt-6">
+        <CardContent className="pt-6">
+          <GoogleCalendarSetting connected={gcal.connected} email={gcal.email} />
         </CardContent>
       </Card>
       <Card className="mt-6">

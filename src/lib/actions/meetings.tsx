@@ -10,6 +10,7 @@ import { appUrl } from "@/lib/app-url";
 import { googleCalendarUrl, formatInTimezone } from "@/lib/calendar-links";
 import { createMeetingIcsToken } from "@/lib/marketing-token";
 import MeetingScheduledEmail from "@/emails/meeting-scheduled";
+import { pushMeeting, deleteEvent } from "@/lib/google-calendar";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -112,6 +113,12 @@ export async function createMeeting(
     await notifyClient(meeting, client, false);
   }
 
+  // Mirror to Google Calendar (best-effort; no-op unless connected).
+  const eventId = await pushMeeting(meeting, client.email);
+  if (eventId) {
+    await prisma.meeting.update({ where: { id: meeting.id }, data: { googleEventId: eventId } });
+  }
+
   await logActivity({
     type: "meeting.scheduled",
     summary: `Meeting scheduled: ${meeting.title}`,
@@ -140,6 +147,9 @@ export async function cancelMeeting(id: string): Promise<ActionResult> {
   if (meeting.status === "CANCELLED") return { ok: true };
 
   await prisma.meeting.update({ where: { id }, data: { status: "CANCELLED" } });
+
+  // Remove the mirrored Google Calendar event (best-effort).
+  if (meeting.googleEventId) await deleteEvent(meeting.googleEventId);
 
   if (meeting.client.status === "ACTIVE") {
     await notifyClient(meeting, meeting.client, true);

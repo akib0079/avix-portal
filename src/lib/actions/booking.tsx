@@ -11,6 +11,7 @@ import { appUrl } from "@/lib/app-url";
 import { googleCalendarUrl, formatInTimezone } from "@/lib/calendar-links";
 import { createMeetingIcsToken } from "@/lib/marketing-token";
 import MeetingScheduledEmail from "@/emails/meeting-scheduled";
+import { pushMeeting } from "@/lib/google-calendar";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -75,6 +76,12 @@ export async function bookMeeting(
   });
 
   if (!meeting) return { ok: false, error: "That slot was just taken — pick another." };
+
+  // Mirror to Google Calendar (best-effort; no-op unless connected).
+  const eventId = await pushMeeting(meeting, client.email);
+  if (eventId) {
+    await prisma.meeting.update({ where: { id: meeting.id }, data: { googleEventId: eventId } });
+  }
 
   // Notify the client (email + in-app) and the admins.
   const whenText = formatInTimezone(meeting.startsAt, client.timezone);

@@ -603,6 +603,9 @@ model Meeting {
   status       MeetingStatus @default(SCHEDULED)
   /// Set once the 24h-before reminder email went out (duties engine).
   reminderSentAt DateTime?
+  /// Google Calendar event id once this meeting is mirrored there (v20 sync).
+  /// Null = never pushed (or Calendar not connected). Best-effort.
+  googleEventId  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
