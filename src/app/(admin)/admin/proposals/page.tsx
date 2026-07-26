@@ -8,7 +8,7 @@ export const metadata = { title: "Proposals" };
 
 export default async function ProposalsPage() {
   await requireAdmin();
-  const [proposals, leads] = await Promise.all([
+  const [proposals, leads, paymentAccounts] = await Promise.all([
     listProposals(),
     prisma.lead.findMany({
       // Won/lost leads are done — proposals are built for live ones.
@@ -22,6 +22,11 @@ export default async function ProposalsPage() {
         brandInfo: true,
       },
     }),
+    prisma.paymentAccount.findMany({
+      where: { isActive: true },
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+      select: { id: true, title: true },
+    }),
   ]);
 
   return (
@@ -32,6 +37,7 @@ export default async function ProposalsPage() {
       />
       <ProposalManager
         proposals={proposals}
+        paymentAccounts={paymentAccounts}
         leads={leads.map((l) => ({
           ...l,
           estimatedValue: l.estimatedValue == null ? null : Number(l.estimatedValue),

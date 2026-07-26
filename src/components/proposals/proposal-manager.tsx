@@ -61,9 +61,11 @@ function formatDate(iso: string | null) {
 export function ProposalManager({
   proposals,
   leads,
+  paymentAccounts,
 }: {
   proposals: ProposalView[];
   leads: ProposalLeadOption[];
+  paymentAccounts: { id: string; title: string }[];
 }) {
   const router = useRouter();
   const [formOpen, setFormOpen] = useState(false);
@@ -301,6 +303,7 @@ export function ProposalManager({
       <ProposalFormDialog
         proposal={editing}
         leads={leads}
+        paymentAccounts={paymentAccounts}
         open={formOpen}
         onOpenChange={setFormOpen}
       />

@@ -45,6 +45,22 @@ export type ProposalView = {
   convertedInvoiceId: string | null;
   createdAt: string;
   items: ProposalItemView[];
+  /** The draft invoice created alongside this proposal (for editing step 2). */
+  invoiceDraft: ProposalInvoiceDraft | null;
+};
+
+export type ProposalInvoiceDraft = {
+  title: string | null;
+  currency: "USD" | "EUR";
+  paymentAccountId: string | null;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate: string | null;
+  notes: string | null;
+  billToCompany: string | null;
+  billToAddress: string | null;
+  billToEmail: string | null;
+  items: { description: string; qty: number; rate: number }[];
 };
 
 /** Read-only slice safe to render on the public accept page (no admin data). */
@@ -103,8 +119,39 @@ export async function listProposals(): Promise<ProposalView[]> {
       lead: { select: { name: true, company: true, email: true } },
     },
   });
+
+  // Pull the linked draft invoices in one query so the builder can edit step 2.
+  const invoiceIds = rows.map((p) => p.convertedInvoiceId).filter((v): v is string => !!v);
+  const invoices = invoiceIds.length
+    ? await prisma.invoice.findMany({
+        where: { id: { in: invoiceIds } },
+        include: { items: { orderBy: { sortOrder: "asc" } } },
+      })
+    : [];
+  const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+
   return rows.map((p) => {
     const contact = proposalContact(p);
+    const inv = p.convertedInvoiceId ? invoiceById.get(p.convertedInvoiceId) : undefined;
+    const invoiceDraft: ProposalInvoiceDraft | null = inv
+      ? {
+          title: inv.title,
+          currency: inv.currency,
+          paymentAccountId: inv.paymentAccountId,
+          invoiceNumber: inv.invoiceNumber,
+          issueDate: inv.issueDate.toISOString().slice(0, 10),
+          dueDate: inv.dueDate ? inv.dueDate.toISOString().slice(0, 10) : null,
+          notes: inv.notes,
+          billToCompany: inv.billToCompany,
+          billToAddress: inv.billToAddress,
+          billToEmail: inv.billToEmail,
+          items: inv.items.map((it) => ({
+            description: it.description,
+            qty: Number(it.qty),
+            rate: Number(it.rate),
+          })),
+        }
+      : null;
     return {
       id: p.id,
       title: p.title,
@@ -135,6 +182,7 @@ export async function listProposals(): Promise<ProposalView[]> {
       convertedInvoiceId: p.convertedInvoiceId,
       createdAt: p.createdAt.toISOString(),
       items: p.items.map(toItemView),
+      invoiceDraft,
     };
   });
 }

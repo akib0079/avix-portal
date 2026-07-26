@@ -23,6 +23,28 @@ export const proposalItemSchema = z.object({
   amount: z.number().min(0, "Amount can't be negative").max(9999999),
 });
 
+/** Step-2 invoice line (qty × rate, like the standalone invoice entry). */
+export const proposalInvoiceItemSchema = z.object({
+  description: z.string().trim().min(1, "Describe this line item").max(200),
+  qty: z.number().min(0).max(100000),
+  rate: z.number().min(0).max(9999999),
+});
+
+/** The full deposit/first invoice built alongside the proposal (step 2). */
+export const proposalInvoiceSchema = z.object({
+  title: z.string().trim().max(160).optional().or(z.literal("")),
+  currency: z.enum(["USD", "EUR"]),
+  paymentAccountId: z.string().optional().or(z.literal("")),
+  invoiceNumber: z.string().trim().max(40).optional().or(z.literal("")),
+  issueDate: z.string().min(1, "Issue date is required"),
+  dueDate: z.string().optional().or(z.literal("")),
+  notes: z.string().trim().max(2000).optional().or(z.literal("")),
+  billToCompany: z.string().trim().max(160).optional().or(z.literal("")),
+  billToAddress: z.string().trim().max(300).optional().or(z.literal("")),
+  billToEmail: z.string().trim().email("Enter a valid email").max(255).optional().or(z.literal("")),
+  items: z.array(proposalInvoiceItemSchema).min(1, "Add at least one invoice line"),
+});
+
 /** Where the recipient comes from: an existing pipeline lead, or typed in by hand. */
 export const proposalSourceValues = ["lead", "manual"] as const;
 
@@ -60,6 +82,8 @@ export const proposalSchema = z
     /** Set by the builder when the user clears an existing attachment. */
     removeInvoicePdf: z.boolean().optional(),
     items: z.array(proposalItemSchema).min(1, "Add at least one line item"),
+    /** Step 2 — the full invoice created for the client alongside the proposal. */
+    invoice: proposalInvoiceSchema,
   })
   .superRefine((val, ctx) => {
     if (val.source === "lead") {

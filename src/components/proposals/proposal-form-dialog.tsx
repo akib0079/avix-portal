@@ -47,15 +47,35 @@ export type ProposalLeadOption = {
   brandInfo: string | null;
 };
 
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const emptyInvoice = () => ({
+  title: "",
+  currency: "USD" as const,
+  paymentAccountId: "none",
+  invoiceNumber: "",
+  issueDate: today(),
+  dueDate: "",
+  notes: "",
+  billToCompany: "",
+  billToAddress: "",
+  billToEmail: "",
+  items: [{ description: "", qty: 1, rate: "" as unknown as number }],
+});
+
 export function ProposalFormDialog({
   proposal,
   leads,
+  paymentAccounts = [],
   presetLeadId,
   open,
   onOpenChange,
 }: {
   proposal?: ProposalView | null;
   leads: ProposalLeadOption[];
+  paymentAccounts?: { id: string; title: string }[];
   /** When opened from the leads board, the lead is fixed up front. */
   presetLeadId?: string | null;
   open: boolean;
@@ -63,6 +83,8 @@ export function ProposalFormDialog({
 }) {
   const router = useRouter();
   const isEdit = !!proposal;
+  const [step, setStep] = useState<1 | 2>(1);
+  const invoiceSeeded = useRef(false);
 
   const form = useForm<ProposalInput>({
     resolver: zodResolver(proposalSchema),
@@ -81,6 +103,7 @@ export function ProposalFormDialog({
       invoicePdfExternalUrl: "",
       removeInvoicePdf: false,
       items: [{ description: "", amount: "" as unknown as number }],
+      invoice: emptyInvoice(),
     },
   });
 
@@ -93,12 +116,16 @@ export function ProposalFormDialog({
     control: form.control,
     name: "items",
   });
+  const invoiceItems = useFieldArray({ control: form.control, name: "invoice.items" });
 
   useEffect(() => {
     if (!open) return;
+    setStep(1);
+    invoiceSeeded.current = false;
     setPdfFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (proposal) {
+      const draft = proposal.invoiceDraft;
       setAttachMode(
         proposal.invoicePdfPath ? "upload" : proposal.invoicePdfExternalUrl ? "link" : "none",
       );
@@ -117,7 +144,24 @@ export function ProposalFormDialog({
         invoicePdfExternalUrl: proposal.invoicePdfExternalUrl ?? "",
         removeInvoicePdf: false,
         items: proposal.items.map((i) => ({ description: i.description, amount: i.amount })),
+        invoice: draft
+          ? {
+              title: draft.title ?? "",
+              currency: draft.currency,
+              paymentAccountId: draft.paymentAccountId ?? "none",
+              invoiceNumber: draft.invoiceNumber ?? "",
+              issueDate: draft.issueDate,
+              dueDate: draft.dueDate ?? "",
+              notes: draft.notes ?? "",
+              billToCompany: draft.billToCompany ?? "",
+              billToAddress: draft.billToAddress ?? "",
+              billToEmail: draft.billToEmail ?? "",
+              items: draft.items.length ? draft.items : emptyInvoice().items,
+            }
+          : emptyInvoice(),
       });
+      // An existing proposal already has its invoice — don't re-seed from scope.
+      invoiceSeeded.current = true;
       return;
     }
     setAttachMode("none");
@@ -145,6 +189,7 @@ export function ProposalFormDialog({
           amount: (lead?.estimatedValue ?? "") as unknown as number,
         },
       ],
+      invoice: emptyInvoice(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, proposal?.id, presetLeadId]);
@@ -157,6 +202,43 @@ export function ProposalFormDialog({
     0,
   );
   const deposit = Math.round(total * (depositPercent || 0)) / 100;
+
+  const invItems = form.watch("invoice.items");
+  const invoiceTotal = (invItems ?? []).reduce((sum, i) => {
+    const qty = typeof i.qty === "number" && !Number.isNaN(i.qty) ? i.qty : 0;
+    const rate = typeof i.rate === "number" && !Number.isNaN(i.rate) ? i.rate : 0;
+    return sum + qty * rate;
+  }, 0);
+
+  // Step 1 → 2: validate the proposal fields, then seed the invoice lines from
+  // the scope the first time (so the invoice starts pre-filled, still editable).
+  async function goToInvoice() {
+    const ok = await form.trigger([
+      "source",
+      "leadId",
+      "recipientName",
+      "recipientEmail",
+      "title",
+      "projectType",
+      "items",
+    ]);
+    if (!ok) return;
+    if (!invoiceSeeded.current) {
+      const scope = form.getValues("items") ?? [];
+      const seeded = scope
+        .filter((s) => (s.description ?? "").trim() || Number(s.amount) > 0)
+        .map((s) => ({
+          description: s.description || "Project scope",
+          qty: 1,
+          rate: (typeof s.amount === "number" && !Number.isNaN(s.amount) ? s.amount : 0) as number,
+        }));
+      if (seeded.length) form.setValue("invoice.items", seeded);
+      const title = form.getValues("title");
+      if (title) form.setValue("invoice.title", title);
+      invoiceSeeded.current = true;
+    }
+    setStep(2);
+  }
 
   async function onSubmit(values: ProposalInput) {
     // Only one attachment kind survives, so switching modes clears the other.
@@ -184,17 +266,21 @@ export function ProposalFormDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="font-heading">
-            {isEdit ? "Edit proposal" : "New proposal"}
+            {isEdit ? "Edit proposal" : "New proposal"}{" "}
+            <span className="text-sm font-normal text-muted-foreground">
+              · Step {step} of 2 — {step === 1 ? "Proposal" : "Invoice"}
+            </span>
           </DialogTitle>
           <DialogDescription>
-            Build the scope and price. When you send it, the prospect gets a link
-            to accept online — which creates their account, project and deposit
-            invoice automatically.
+            {step === 1
+              ? "Build the scope and price. Creating the proposal sets up the client account and a draft invoice automatically."
+              : "Build the invoice for this client — it's saved as a draft you can send whenever you're ready."}
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <div className={cn("space-y-4", step !== 1 && "hidden")}>
             {/* Where the recipient comes from */}
             <FormField
               control={form.control}
@@ -586,6 +672,257 @@ export function ProposalFormDialog({
                 </div>
               )}
             </div>
+            </div>
+
+            {/* Step 2 — the full invoice for the client */}
+            <div className={cn("space-y-4", step !== 2 && "hidden")}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <FormField
+                  control={form.control}
+                  name="invoice.currency"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Currency</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="USD">USD ($)</SelectItem>
+                          <SelectItem value="EUR">EUR (€)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="invoice.paymentAccountId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Payment account</FormLabel>
+                      <Select value={field.value || "none"} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          {paymentAccounts.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="invoice.invoiceNumber"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Invoice no. (optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Auto" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="invoice.issueDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Issue date</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="invoice.dueDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Due date (optional)</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Invoice line items (qty × rate) */}
+              <div className="rounded-xl border p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-medium">Invoice items</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      invoiceItems.append({ description: "", qty: 1, rate: "" as unknown as number })
+                    }
+                  >
+                    <Plus className="size-3.5" /> Add line
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {invoiceItems.fields.map((row, index) => (
+                    <div key={row.id} className="flex items-start gap-2">
+                      <FormField
+                        control={form.control}
+                        name={`invoice.items.${index}.description`}
+                        render={({ field }) => (
+                          <FormItem className="flex-1">
+                            <FormControl>
+                              <Input placeholder="e.g. Website build" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`invoice.items.${index}.qty`}
+                        render={({ field }) => (
+                          <FormItem className="w-16">
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="1"
+                                placeholder="Qty"
+                                value={(field.value as number | string) ?? ""}
+                                onChange={(e) =>
+                                  field.onChange(e.target.value === "" ? 0 : Number(e.target.value))
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`invoice.items.${index}.rate`}
+                        render={({ field }) => (
+                          <FormItem className="w-28">
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                placeholder="Rate"
+                                value={(field.value as number | string) ?? ""}
+                                onChange={(e) =>
+                                  field.onChange(
+                                    e.target.value === "" ? ("" as unknown as number) : Number(e.target.value),
+                                  )
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="mt-0.5 size-9 shrink-0 text-destructive hover:text-destructive"
+                        disabled={invoiceItems.fields.length === 1}
+                        onClick={() => invoiceItems.remove(index)}
+                      >
+                        <Trash2 className="size-4" />
+                        <span className="sr-only">Remove line</span>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
+                  <span className="text-muted-foreground">Invoice total</span>
+                  <span className="font-heading text-lg font-bold text-primary">
+                    {usd.format(invoiceTotal)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Billed-to overrides */}
+              <div className="rounded-xl border p-3">
+                <p className="mb-2 text-sm font-medium">Billed to (optional)</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="invoice.billToCompany"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Company name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Client company" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="invoice.billToEmail"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Additional email</FormLabel>
+                        <FormControl>
+                          <Input type="email" placeholder="billing@client.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="invoice.billToAddress"
+                  render={({ field }) => (
+                    <FormItem className="mt-3">
+                      <FormLabel>Address</FormLabel>
+                      <FormControl>
+                        <Textarea rows={2} placeholder="Street, city, country" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="invoice.notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Invoice notes (optional)</FormLabel>
+                    <FormControl>
+                      <Textarea rows={2} placeholder="Shown on the invoice." {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <DialogFooter>
               <Button
@@ -596,10 +933,21 @@ export function ProposalFormDialog({
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={form.formState.isSubmitting}>
-                {form.formState.isSubmitting && <Loader2 className="animate-spin" />}
-                {isEdit ? "Save changes" : "Create proposal"}
-              </Button>
+              {step === 1 ? (
+                <Button type="button" onClick={goToInvoice}>
+                  Next: invoice →
+                </Button>
+              ) : (
+                <>
+                  <Button type="button" variant="outline" onClick={() => setStep(1)}>
+                    ← Back
+                  </Button>
+                  <Button type="submit" disabled={form.formState.isSubmitting}>
+                    {form.formState.isSubmitting && <Loader2 className="animate-spin" />}
+                    {isEdit ? "Save changes" : "Create proposal"}
+                  </Button>
+                </>
+              )}
             </DialogFooter>
           </form>
         </Form>

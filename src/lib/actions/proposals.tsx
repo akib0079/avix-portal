@@ -35,6 +35,75 @@ function mapSource(source: LeadSource | null): ProjectSource {
   return "INDEPENDENT";
 }
 
+function parseDate(value: string | undefined | null): Date | null {
+  if (!value) return null;
+  const d = new Date(`${value}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Effective recipient (name/email/company), resolving a lead when needed. */
+async function resolveContact(
+  data: ProposalInput,
+): Promise<{ name: string; email: string; company: string | null } | null> {
+  if (data.source === "lead") {
+    const lead = await prisma.lead.findUnique({
+      where: { id: data.leadId as string },
+      select: { name: true, email: true, company: true },
+    });
+    if (!lead) return null;
+    return { name: lead.name, email: (lead.email ?? "").toLowerCase(), company: lead.company };
+  }
+  return {
+    name: data.recipientName ?? "",
+    email: (data.recipientEmail ?? "").toLowerCase(),
+    company: data.recipientCompany || null,
+  };
+}
+
+/** "none"/empty → null; else the id validated against a real account. */
+async function resolvePaymentAccountId(value: string | undefined): Promise<string | null> {
+  if (!value || value === "none") return null;
+  const account = await prisma.paymentAccount.findUnique({ where: { id: value }, select: { id: true } });
+  return account?.id ?? null;
+}
+
+function invoiceAmount(items: { qty: number; rate: number }[]): number {
+  return Math.round(items.reduce((sum, i) => sum + i.qty * i.rate, 0) * 100) / 100;
+}
+
+/**
+ * Find an existing user by email, or create a silent CLIENT account (no invite
+ * email — that goes out only when they accept). Returns the user id.
+ */
+async function findOrCreateClient(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  contact: { name: string; email: string; company: string | null },
+  passwordHash: string,
+): Promise<string> {
+  const existing = await tx.user.findUnique({ where: { email: contact.email }, select: { id: true } });
+  if (existing) return existing.id;
+  const [firstName, ...rest] = contact.name.trim().split(/\s+/);
+  const user = await tx.user.create({
+    data: {
+      email: contact.email,
+      name: contact.name.trim() || contact.email,
+      firstName: firstName || contact.email,
+      lastName: rest.join(" "),
+      role: "CLIENT",
+      company: contact.company,
+      emailVerified: false,
+    },
+  });
+  await tx.account.create({
+    data: { userId: user.id, accountId: user.id, providerId: "credential", password: passwordHash },
+  });
+  return user.id;
+}
+
+function invoiceItemRows(items: { description: string; qty: number; rate: number }[]) {
+  return items.map((i, index) => ({ description: i.description, qty: i.qty, rate: i.rate, sortOrder: index }));
+}
+
 /**
  * The builder posts FormData: `payload` is the JSON-encoded ProposalInput and
  * `pdf` is an optional invoice file. FormData is required because a server
@@ -111,27 +180,95 @@ export async function createProposal(
     if (!lead) return { ok: false, error: "Lead not found." };
   }
 
+  // Onboarding: creating a proposal now also provisions the client account and
+  // a draft invoice up front. That needs a contact email.
+  const contact = await resolveContact(data);
+  if (!contact) return { ok: false, error: "Lead not found." };
+  if (!contact.email) {
+    return {
+      ok: false,
+      error: data.source === "lead"
+        ? "Add an email to this lead first — it becomes the client's login."
+        : "An email is required — it becomes the client's login.",
+    };
+  }
+
   const pdf = await handleInvoicePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
 
-  const proposal = await prisma.proposal.create({
-    data: {
-      ...recipientFields(data),
-      title: data.title,
-      intro: data.intro || null,
-      projectType: data.projectType,
-      timelineWeeks: data.timelineWeeks ?? null,
-      depositPercent: data.depositPercent,
-      expiresInDays: data.expiresInDays,
-      invoicePdfPath: pdf.fileName,
-      invoicePdfOriginalName: pdf.originalName,
-      invoicePdfExternalUrl: data.invoicePdfExternalUrl || null,
-      items: { create: itemsFromInput(data.items) },
-    },
+  const inv = data.invoice;
+  const paymentAccountId = await resolvePaymentAccountId(inv.paymentAccountId);
+  const issueDate = parseDate(inv.issueDate) ?? new Date();
+
+  // Custom invoice number must be unique if supplied.
+  const customNo = inv.invoiceNumber?.trim();
+  if (customNo) {
+    const clash = await prisma.invoice.findUnique({ where: { invoiceNumber: customNo }, select: { id: true } });
+    if (clash) return { ok: false, error: `Invoice number "${customNo}" is already used.` };
+  }
+
+  const passwordHash = await (await auth.$context).password.hash(randomBytes(24).toString("base64url"));
+
+  const created = await prisma.$transaction(async (tx) => {
+    const clientId = await findOrCreateClient(tx, contact, passwordHash);
+
+    const proposal = await tx.proposal.create({
+      data: {
+        ...recipientFields(data),
+        title: data.title,
+        intro: data.intro || null,
+        projectType: data.projectType,
+        timelineWeeks: data.timelineWeeks ?? null,
+        depositPercent: data.depositPercent,
+        expiresInDays: data.expiresInDays,
+        invoicePdfPath: pdf.fileName,
+        invoicePdfOriginalName: pdf.originalName,
+        invoicePdfExternalUrl: data.invoicePdfExternalUrl || null,
+        convertedClientId: clientId,
+        items: { create: itemsFromInput(data.items) },
+      },
+    });
+
+    const invoiceNumber = customNo || (await nextInvoiceNumber(tx));
+    const invoice = await tx.invoice.create({
+      data: {
+        invoiceNumber,
+        clientId,
+        amount: invoiceAmount(inv.items),
+        status: "ASSIGNED",
+        issueDate,
+        dueDate: parseDate(inv.dueDate),
+        title: inv.title || data.title,
+        currency: inv.currency,
+        notes: inv.notes || null,
+        billToCompany: inv.billToCompany || null,
+        billToAddress: inv.billToAddress || null,
+        billToEmail: inv.billToEmail || null,
+        paymentAccountId,
+        pdfPath: pdf.fileName,
+        pdfOriginalName: pdf.originalName,
+        pdfExternalUrl: data.invoicePdfExternalUrl || null,
+        items: { create: invoiceItemRows(inv.items) },
+      },
+    });
+
+    await tx.proposal.update({ where: { id: proposal.id }, data: { convertedInvoiceId: invoice.id } });
+    return { proposalId: proposal.id, clientId };
+  });
+
+  await logActivity({
+    type: "proposal.created",
+    summary: `Proposal "${data.title}" created for ${contact.name || contact.email}`,
+    clientId: created.clientId,
+    entity: "proposal",
+    entityId: created.proposalId,
+    link: "/admin/proposals",
   });
 
   revalidatePath("/admin/proposals");
-  return { ok: true, data: { id: proposal.id } };
+  revalidatePath("/admin/clients");
+  revalidatePath("/admin/invoices");
+  return { ok: true, data: { id: created.proposalId } };
 }
 
 export async function updateProposal(
@@ -147,7 +284,12 @@ export async function updateProposal(
 
   const existing = await prisma.proposal.findUnique({
     where: { id },
-    select: { status: true, invoicePdfPath: true, invoicePdfOriginalName: true },
+    select: {
+      status: true,
+      invoicePdfPath: true,
+      invoicePdfOriginalName: true,
+      convertedInvoiceId: true,
+    },
   });
   if (!existing) return { ok: false, error: "Proposal not found." };
   if (existing.status !== "DRAFT") {
@@ -163,6 +305,18 @@ export async function updateProposal(
 
   const pdf = await handleInvoicePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
+
+  const inv = data.invoice;
+  const invPaymentAccountId = await resolvePaymentAccountId(inv.paymentAccountId);
+  const invIssueDate = parseDate(inv.issueDate) ?? new Date();
+  const customNo = inv.invoiceNumber?.trim();
+  if (customNo && existing.convertedInvoiceId) {
+    const clash = await prisma.invoice.findFirst({
+      where: { invoiceNumber: customNo, id: { not: existing.convertedInvoiceId } },
+      select: { id: true },
+    });
+    if (clash) return { ok: false, error: `Invoice number "${customNo}" is already used.` };
+  }
 
   // A new upload replaces the old one; an explicit clear drops it. Otherwise
   // the existing attachment is left alone.
@@ -193,6 +347,32 @@ export async function updateProposal(
         items: { create: itemsFromInput(data.items) },
       },
     });
+
+    // Keep the draft invoice created alongside the proposal in sync.
+    if (existing.convertedInvoiceId) {
+      await tx.invoiceItem.deleteMany({ where: { invoiceId: existing.convertedInvoiceId } });
+      await tx.invoice.update({
+        where: { id: existing.convertedInvoiceId },
+        data: {
+          amount: invoiceAmount(inv.items),
+          ...(customNo ? { invoiceNumber: customNo } : {}),
+          issueDate: invIssueDate,
+          dueDate: parseDate(inv.dueDate),
+          title: inv.title || data.title,
+          currency: inv.currency,
+          notes: inv.notes || null,
+          billToCompany: inv.billToCompany || null,
+          billToAddress: inv.billToAddress || null,
+          billToEmail: inv.billToEmail || null,
+          paymentAccountId: invPaymentAccountId,
+          ...(nextPdfPath !== existing.invoicePdfPath
+            ? { pdfPath: nextPdfPath, pdfOriginalName: nextPdfName }
+            : {}),
+          pdfExternalUrl: data.invoicePdfExternalUrl || null,
+          items: { create: invoiceItemRows(inv.items) },
+        },
+      });
+    }
   });
 
   // Drop the superseded file only after the row is safely updated.
@@ -208,19 +388,28 @@ export async function deleteProposal(id: string): Promise<ActionResult> {
   await requireAdmin();
   const existing = await prisma.proposal.findUnique({
     where: { id },
-    select: { id: true, invoicePdfPath: true, convertedInvoiceId: true },
+    select: { id: true, status: true, invoicePdfPath: true, convertedInvoiceId: true },
   });
   if (!existing) return { ok: false, error: "Proposal not found." };
 
-  await prisma.proposal.delete({ where: { id } });
+  // A non-accepted proposal owns the draft invoice auto-created with it — remove
+  // it so deleting the proposal doesn't leave an orphan invoice behind. Once
+  // accepted, the invoice is the client's real invoice; leave it alone.
+  const dropInvoice = existing.status !== "ACCEPTED" && existing.convertedInvoiceId;
 
-  // Accepted proposals hand the same file to their deposit invoice — deleting
-  // it here would break that invoice's download.
-  if (existing.invoicePdfPath && !existing.convertedInvoiceId) {
+  await prisma.proposal.delete({ where: { id } });
+  if (dropInvoice) {
+    await prisma.invoice.delete({ where: { id: existing.convertedInvoiceId! } }).catch(() => {});
+  }
+
+  // The uploaded doc is shared with that draft invoice; safe to remove now
+  // (dropped with it above, or never linked to a surviving invoice).
+  if (existing.invoicePdfPath && (dropInvoice || !existing.convertedInvoiceId)) {
     await deleteUpload("invoices", existing.invoicePdfPath);
   }
 
   revalidatePath("/admin/proposals");
+  revalidatePath("/admin/invoices");
   return { ok: true };
 }
 
@@ -342,6 +531,93 @@ async function runHandoff(
     return { ok: false, error: "This proposal is no longer available." };
   }
 
+  const total = proposal.items.reduce((acc, i) => acc + Number(i.amount), 0);
+
+  // NEW FLOW: the client account + invoice were provisioned when the proposal
+  // was created. Accepting only spins up the project, links things, and sends
+  // the (until-now-withheld) portal invite.
+  if (proposal.convertedClientId) {
+    const client = await prisma.user.findUnique({
+      where: { id: proposal.convertedClientId },
+      select: { id: true, email: true, firstName: true, name: true },
+    });
+    if (client) {
+      const template = milestoneTemplates[proposal.projectType];
+      const project = await prisma.$transaction(async (tx) => {
+        const proj = await tx.project.create({
+          data: {
+            projectName: proposal.title,
+            clientId: client.id,
+            type: proposal.projectType,
+            source: mapSource(proposal.lead?.source ?? null),
+            priority: "MEDIUM",
+            status: "PLANNING",
+            billingType: "CONTRACT",
+            contractPrice: total,
+            milestones: {
+              create: template.map((m, index) => ({
+                title: m.title,
+                description: textToDoc(m.description),
+                position: index,
+              })),
+            },
+          },
+        });
+        // Attach the pre-made invoice to the new project.
+        if (proposal.convertedInvoiceId) {
+          await tx.invoice.update({
+            where: { id: proposal.convertedInvoiceId },
+            data: { projectId: proj.id },
+          });
+        }
+        if (proposal.lead) {
+          await tx.lead.update({
+            where: { id: proposal.lead.id },
+            data: { stage: "WON", convertedClientId: client.id },
+          });
+        }
+        await tx.proposal.update({
+          where: { id },
+          data: {
+            status: "ACCEPTED",
+            acceptedAt: new Date(),
+            acceptedName: signedName,
+            acceptedByAdmin: byAdmin,
+            convertedProjectId: proj.id,
+          },
+        });
+        return proj;
+      });
+
+      // Now that they've said yes, send the set-your-password invite.
+      await sendPasswordLink(client.email);
+
+      if (!byAdmin) {
+        await notifyAllAdmins({
+          type: "PROPOSAL_ACCEPTED",
+          title: `${client.name || client.firstName} accepted "${proposal.title}"`,
+          body: `${usd.format(total)} · project created, invoice ready to send`,
+          link: "/admin/proposals",
+        });
+      }
+      await logActivity({
+        type: "proposal.accepted",
+        summary: `${client.name || client.firstName} accepted "${proposal.title}" · ${usd.format(total)}`,
+        clientId: client.id,
+        entity: "proposal",
+        entityId: id,
+        link: "/admin/proposals",
+      });
+      void project;
+      revalidatePath("/admin/proposals");
+      revalidatePath("/admin/leads");
+      revalidatePath("/admin/clients");
+      revalidatePath("/admin");
+      return { ok: true, data: { accepted: true } };
+    }
+    // Client row vanished (edge case) — fall through to the legacy rebuild.
+  }
+
   const contact = proposalContact(proposal);
   if (!contact.email) {
     return { ok: false, error: "No contact email on file for this proposal." };
@@ -358,7 +634,6 @@ async function runHandoff(
     };
   }
 
-  const total = proposal.items.reduce((acc, i) => acc + Number(i.amount), 0);
   const depositAmount = Math.round(total * proposal.depositPercent) / 100;
   const [firstName, ...rest] = contact.name.trim().split(/\s+/);
   const lastName = rest.join(" ");
