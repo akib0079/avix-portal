@@ -33,12 +33,12 @@ export default function AuthLayout({
             <br />
             <span className="text-primary">One portal.</span>
           </h1>
-          <p className="mt-4 text-sm leading-relaxed text-slate-400">
+          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
             Follow your project&apos;s progress in real time, review invoices,
             and request new work — all in one place.
           </p>
         </div>
-        <p className="relative text-xs text-slate-500">
+        <p className="relative text-xs text-muted-foreground">
           © {new Date().getFullYear()} Avix Digital · avixdigital.com
         </p>
       </div>

@@ -69,7 +69,7 @@ export function AdminInbox({
                 isActive ? "border-primary/40 bg-brand-tint" : "bg-card hover:bg-muted/50",
               )}
             >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-foreground">
                 {initials(c.clientName)}
               </span>
               <span className="min-w-0 flex-1">

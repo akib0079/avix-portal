@@ -34,7 +34,7 @@ function Pill({
 }
 
 const projectStatusStyles: Record<ProjectStatus, string> = {
-  PLANNING: "bg-slate-100 text-slate-700",
+  PLANNING: "bg-muted text-foreground",
   IN_PROGRESS: "bg-info-tint text-info",
   REVIEW: "bg-warning-tint text-warning",
   COMPLETED: "bg-success-tint text-success",
@@ -45,7 +45,7 @@ export function ProjectStatusBadge({ status }: { status: ProjectStatus }) {
 }
 
 const milestoneStatusStyles: Record<MilestoneStatus, string> = {
-  PENDING: "bg-slate-100 text-slate-700",
+  PENDING: "bg-muted text-foreground",
   IN_PROGRESS: "bg-info-tint text-info",
   COMPLETED: "bg-success-tint text-success",
 };
@@ -55,7 +55,7 @@ export function MilestoneStatusBadge({ status }: { status: MilestoneStatus }) {
 }
 
 const invoiceStatusStyles: Record<InvoiceStatus, string> = {
-  ASSIGNED: "bg-slate-100 text-slate-700",
+  ASSIGNED: "bg-muted text-foreground",
   SENT: "bg-info-tint text-info",
   IN_REVIEW: "bg-warning-tint text-warning",
   PAID: "bg-success-tint text-success",
@@ -68,7 +68,7 @@ export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
 const taskRequestStatusStyles: Record<TaskRequestStatus, string> = {
   PENDING: "bg-warning-tint text-warning",
   APPROVED: "bg-success-tint text-success",
-  REJECTED: "bg-red-50 text-red-700",
+  REJECTED: "bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300",
 };
 
 export function TaskRequestStatusBadge({ status }: { status: TaskRequestStatus }) {
@@ -80,9 +80,9 @@ export function TaskRequestStatusBadge({ status }: { status: TaskRequestStatus }
 }
 
 const priorityStyles: Record<Priority, string> = {
-  HIGH: "bg-red-50 text-red-700",
+  HIGH: "bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300",
   MEDIUM: "bg-warning-tint text-warning",
-  LOW: "bg-slate-100 text-slate-700",
+  LOW: "bg-muted text-foreground",
 };
 
 export function PriorityBadge({ priority }: { priority: Priority }) {
@@ -93,7 +93,7 @@ export function UserStatusBadge({ status }: { status: "ACTIVE" | "INACTIVE" }) {
   return (
     <Pill
       className={
-        status === "ACTIVE" ? "bg-success-tint text-success" : "bg-slate-100 text-slate-500"
+        status === "ACTIVE" ? "bg-success-tint text-success" : "bg-muted text-muted-foreground"
       }
     >
       {status === "ACTIVE" ? "Active" : "Inactive"}

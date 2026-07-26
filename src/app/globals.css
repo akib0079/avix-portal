@@ -102,37 +102,49 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+  --card: #131c2e;
+  --card-foreground: #e2e8f0;
+  --popover: #131c2e;
+  --popover-foreground: #e2e8f0;
+  /* Keep the Avix orange as the brand accent in dark mode. */
+  --primary: #fb6a1a;
+  --primary-foreground: #ffffff;
+  --secondary: #1e293b;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1a2436;
+  --muted-foreground: #94a3b8;
+  --accent: #24314a;
+  --accent-foreground: #e2e8f0;
+  --destructive: #ef4444;
+  --border: #253149;
+  --input: #2a3752;
+  --ring: #fb6a1a;
+  --chart-1: #4ade80;
+  --chart-2: #60a5fa;
+  --chart-3: #fbbf24;
+  --chart-4: #94a3b8;
+  --chart-5: #fb6a1a;
+  /* Sidebar is already dark in light mode; nudge it a touch deeper here. */
+  --sidebar: #0a0f1c;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-primary: #fb6a1a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #fb6a1a;
+  /* Brand + semantic tints, re-tuned for dark surfaces. */
+  --brand: #fb6a1a;
+  --brand-hover: #fc7f38;
+  --brand-tint: #3a2113;
+  --success: #22c55e;
+  --success-tint: #0f2a1c;
+  --info: #3b82f6;
+  --info-tint: #122744;
+  --warning: #f59e0b;
+  --warning-tint: #2c2109;
 }
 
 @layer base {

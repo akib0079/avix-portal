@@ -48,7 +48,7 @@ export function SearchTrigger({ tone = "light" }: { tone?: "light" | "dark" }) {
       className={cn(
         "flex w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors",
         tone === "dark"
-          ? "border-sidebar-border bg-sidebar-accent/40 text-slate-400 hover:bg-sidebar-accent hover:text-white"
+          ? "border-sidebar-border bg-sidebar-accent/40 text-muted-foreground hover:bg-sidebar-accent hover:text-white"
           : "bg-background text-muted-foreground hover:bg-muted/50",
       )}
     >

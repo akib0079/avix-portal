@@ -66,7 +66,7 @@ export function NotificationBell({ tone = "dark" }: { tone?: "dark" | "light" })
           className={cn(
             "relative",
             tone === "dark"
-              ? "text-slate-300 hover:bg-sidebar-accent hover:text-white"
+              ? "text-muted-foreground hover:bg-sidebar-accent hover:text-white"
               : "text-muted-foreground hover:text-foreground",
           )}
           aria-label="Notifications"

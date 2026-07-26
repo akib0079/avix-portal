@@ -43,10 +43,10 @@ import {
 
 const statusStyles: Record<string, string> = {
   DRAFT: "bg-muted text-muted-foreground",
-  SENT: "bg-blue-50 text-blue-700",
-  ACCEPTED: "bg-emerald-50 text-emerald-700",
-  DECLINED: "bg-red-50 text-red-700",
-  EXPIRED: "bg-amber-50 text-amber-700",
+  SENT: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
+  ACCEPTED: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300",
+  DECLINED: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300",
+  EXPIRED: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
 };
 
 function formatDate(iso: string | null) {
@@ -135,7 +135,7 @@ export function ProposalManager({
                 <div className="min-w-0">
                   <p className="flex flex-wrap items-center gap-2 font-medium">
                     {p.status === "ACCEPTED" ? (
-                      <CheckCircle2 className="size-4 text-emerald-600" />
+                      <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-300" />
                     ) : (
                       <FileSignature className="size-4 text-primary" />
                     )}
@@ -174,7 +174,7 @@ export function ProposalManager({
                   </p>
 
                   {p.status === "ACCEPTED" && (
-                    <p className="mt-1.5 text-sm text-emerald-700">
+                    <p className="mt-1.5 text-sm text-emerald-700 dark:text-emerald-300">
                       {p.acceptedByAdmin ? "Recorded as agreed by " : "Signed by "}
                       <strong>{p.acceptedName}</strong> on {formatDate(p.acceptedAt)}
                       {p.acceptedByAdmin ? " (marked by you)" : ""}
@@ -183,7 +183,7 @@ export function ProposalManager({
                           {" · "}
                           <Link
                             href={`/admin/projects/${p.convertedProjectId}`}
-                            className="underline hover:text-emerald-800"
+                            className="underline hover:text-emerald-800 dark:text-emerald-300"
                           >
                             View project
                           </Link>
@@ -194,7 +194,7 @@ export function ProposalManager({
                           {" · "}
                           <Link
                             href={`/admin/invoices/${p.convertedInvoiceId}`}
-                            className="underline hover:text-emerald-800"
+                            className="underline hover:text-emerald-800 dark:text-emerald-300"
                           >
                             Deposit invoice
                           </Link>
@@ -269,7 +269,7 @@ export function ProposalManager({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-emerald-600 hover:text-emerald-700"
+                      className="text-emerald-600 dark:text-emerald-300 hover:text-emerald-700 dark:text-emerald-300"
                       title="They agreed by call or chat — close it yourself"
                       onClick={() => {
                         setAcceptName(p.contactName);

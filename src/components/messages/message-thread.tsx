@@ -108,7 +108,7 @@ export function MessageThread({
                     "flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
                     m.senderRole === "ADMIN"
                       ? "bg-primary text-white"
-                      : "bg-slate-200 text-slate-700",
+                      : "bg-slate-200 text-foreground",
                   )}
                 >
                   {initials(m.senderName)}

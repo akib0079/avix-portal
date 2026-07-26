@@ -119,7 +119,7 @@ function SortableRow({
             <p className="font-medium">{milestone.title}</p>
             <MilestoneStatusBadge status={milestone.status} />
             {milestone.clientApprovedAt && (
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600">
+              <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-300">
                 Client approved
               </span>
             )}
@@ -129,8 +129,8 @@ function SortableRow({
                 className={cn(
                   "rounded-full px-2 py-0.5 text-xs font-medium",
                   milestone.clientRating === 1
-                    ? "bg-emerald-50 text-emerald-600"
-                    : "bg-amber-50 text-amber-600",
+                    ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-300"
+                    : "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-300",
                 )}
               >
                 {milestone.clientRating === 1 ? "👍 Rated" : "👎 Rated"}

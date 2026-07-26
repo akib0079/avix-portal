@@ -189,11 +189,11 @@ export function CampaignComposer({
             />
 
             {showPreview && hasRichTextContent(body) && (
-              <div className="rounded-xl border bg-slate-50 p-4">
+              <div className="rounded-xl border bg-muted p-4">
                 <p className="mb-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                   Email preview
                 </p>
-                <div className="mx-auto max-w-lg overflow-hidden rounded-xl border bg-white shadow-sm">
+                <div className="mx-auto max-w-lg overflow-hidden rounded-xl border bg-card shadow-sm">
                   <div className="bg-[#0F172A] px-6 py-4">
                     <span className="font-heading text-sm font-bold text-white">
                       Avix<span className="text-[#F65D0B]">.</span> Digital
@@ -204,7 +204,7 @@ export function CampaignComposer({
                       {form.watch("subject") || "(no subject)"}
                     </p>
                     <RichTextViewer content={body} />
-                    <p className="mt-5 border-t pt-3 text-[11px] text-slate-400">
+                    <p className="mt-5 border-t pt-3 text-[11px] text-muted-foreground">
                       Unsubscribe from marketing emails — project and invoice
                       emails are unaffected.
                     </p>
@@ -276,7 +276,7 @@ export function CampaignComposer({
                                 "flex size-5 shrink-0 items-center justify-center rounded border",
                                 checked
                                   ? "border-primary bg-primary text-white"
-                                  : "border-slate-300 bg-white",
+                                  : "border-input bg-card",
                               )}
                             >
                               {checked && <Check className="size-3.5" />}
@@ -301,7 +301,7 @@ export function CampaignComposer({
             />
 
             {selectedIds.length > TIMEOUT_WARN_COUNT && (
-              <p className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+              <p className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-700 dark:text-amber-300">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
                 Large send — emails go out one by one, so this may take a while.
                 If it stops partway, open the campaign afterwards and use

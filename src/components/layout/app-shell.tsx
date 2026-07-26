@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { QuickAdd } from "@/components/layout/quick-add";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { ActivityProvider } from "@/components/layout/activity-indicator";
 import { GlobalSearchProvider, SearchTrigger } from "@/components/layout/global-search";
 import {
@@ -207,7 +208,7 @@ function SidebarInner({
           <LogoMark logoUrl={logoUrl} width={132} height={33} />
         </Link>
       </div>
-      <p className="px-5 pb-2 text-[11px] font-semibold tracking-[0.14em] text-slate-500 uppercase">
+      <p className="px-5 pb-2 text-[11px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
         {variant === "admin" ? (isStaff ? "Staff Panel" : "Admin Panel") : "Client Portal"}
       </p>
       {/* Search is admin-only — /api/search returns invoice amounts. */}
@@ -226,14 +227,14 @@ function SidebarInner({
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-white">{user.name}</p>
-            <p className="truncate text-xs text-slate-500">{user.email}</p>
+            <p className="truncate text-xs text-muted-foreground">{user.email}</p>
           </div>
         </div>
         <button
           onClick={signOut}
           disabled={signingOut}
           aria-busy={signingOut}
-          className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-400 transition-colors hover:bg-sidebar-accent hover:text-white disabled:pointer-events-none disabled:opacity-80"
+          className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-white disabled:pointer-events-none disabled:opacity-80"
         >
           {signingOut ? (
             <>
@@ -310,6 +311,7 @@ export function AppShell({
         <LogoMark logoUrl={logoUrl} width={110} height={28} />
         <div className="ml-auto flex items-center gap-2">
           {showQuickAdd && <QuickAdd tone="dark" />}
+          <ThemeToggle tone="dark" />
           <NotificationBell tone="dark" />
         </div>
       </div>
@@ -319,6 +321,7 @@ export function AppShell({
         {/* Desktop topbar */}
         <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-2 border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
           {showQuickAdd && <QuickAdd tone="light" />}
+          <ThemeToggle tone="light" />
           <NotificationBell tone="light" />
         </div>
         <div className="mx-auto w-full max-w-[88rem] px-4 py-8 sm:px-6 lg:px-10">

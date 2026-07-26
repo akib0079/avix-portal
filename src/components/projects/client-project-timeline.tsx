@@ -43,7 +43,7 @@ function StatusIcon({ status }: { status: MilestoneStatus }) {
     );
   }
   return (
-    <span className="flex size-7 items-center justify-center rounded-full border-2 border-slate-200 bg-white text-slate-400">
+    <span className="flex size-7 items-center justify-center rounded-full border-2 border-border bg-card text-muted-foreground">
       <CircleDashed className="size-4" />
     </span>
   );
@@ -78,7 +78,7 @@ export function ClientProjectTimeline({
                 aria-hidden
                 className={cn(
                   "absolute top-8 left-[13px] h-[calc(100%-2rem)] w-0.5",
-                  milestone.status === "COMPLETED" ? "bg-success/40" : "bg-slate-200",
+                  milestone.status === "COMPLETED" ? "bg-success/40" : "bg-border",
                 )}
               />
             )}
@@ -133,7 +133,7 @@ export function ClientProjectTimeline({
                     .map((entry) => (
                       <li
                         key={entry.id}
-                        className="rounded-lg border border-slate-100 bg-white px-3.5 py-2 text-xs"
+                        className="rounded-lg border border-border bg-card px-3.5 py-2 text-xs"
                       >
                         <span className="font-medium text-foreground">
                           {formatDate(entry.date)} · {fmtHours(entry.hours)}

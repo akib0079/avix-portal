@@ -65,7 +65,7 @@ export function ChatWidget({
               {open ? "Close" : "Chat with us"}
             </span>
             {!open && (
-              <span className="block text-[11px] text-slate-400">
+              <span className="block text-[11px] text-muted-foreground">
                 {viewerRole === "CLIENT"
                   ? "Message the team about this project"
                   : "Message this client"}
@@ -85,7 +85,7 @@ export function ChatWidget({
             <SheetTitle className="font-heading text-base text-white">
               {title}
             </SheetTitle>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               {viewerRole === "CLIENT"
                 ? "We usually reply within one business day."
                 : "Messages are visible to the client."}
@@ -100,9 +100,9 @@ export function ChatWidget({
             href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2.5 border-b bg-emerald-50 px-5 py-3 text-sm text-emerald-800 transition-colors hover:bg-emerald-100"
+            className="flex items-center gap-2.5 border-b bg-emerald-50 dark:bg-emerald-950/40 px-5 py-3 text-sm text-emerald-800 dark:text-emerald-300 transition-colors hover:bg-emerald-100 dark:bg-emerald-900/40"
           >
-            <WhatsappIcon className="size-4.5 shrink-0 text-emerald-600" />
+            <WhatsappIcon className="size-4.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
             <span>
               Urgent? <span className="font-semibold">Call or message us on WhatsApp</span>
             </span>

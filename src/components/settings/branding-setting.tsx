@@ -59,7 +59,7 @@ function ImageUploader({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={currentUrl} alt={label} className="max-h-10 max-w-20 object-contain" />
           ) : (
-            <span className="text-[10px] text-slate-400">default</span>
+            <span className="text-[10px] text-muted-foreground">default</span>
           )}
         </div>
         <div className="flex flex-wrap gap-2">

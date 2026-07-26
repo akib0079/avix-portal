@@ -63,7 +63,7 @@ export default async function MyRequestsPage() {
               </div>
 
               {request.status === "REJECTED" && request.adminNote && (
-                <p className="mt-3 rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-800">
+                <p className="mt-3 rounded-lg bg-red-50 dark:bg-red-950/40 px-4 py-2.5 text-sm text-red-800 dark:text-red-300">
                   <span className="font-medium">Note from Avix Digital:</span>{" "}
                   {request.adminNote}
                 </p>

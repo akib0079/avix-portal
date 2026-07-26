@@ -22,12 +22,12 @@ export default async function UnsubscribePage({
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md rounded-2xl border bg-white p-8 text-center shadow-sm">
-        <p className="font-heading text-xl font-bold text-slate-900">
+    <div className="flex min-h-screen items-center justify-center bg-muted px-4">
+      <div className="w-full max-w-md rounded-2xl border bg-card p-8 text-center shadow-sm">
+        <p className="font-heading text-xl font-bold text-foreground">
           {ok ? "You're unsubscribed" : "This link isn't valid"}
         </p>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
           {ok
             ? "You won't receive marketing emails from Avix Digital anymore. Emails about your projects and invoices are unaffected."
             : "The unsubscribe link is invalid or incomplete. If you keep receiving unwanted emails, reply to any of them and we'll remove you manually."}

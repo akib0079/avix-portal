@@ -38,19 +38,19 @@ export default async function ReportsPage() {
       label: "Outstanding",
       value: usd.format(kpis.outstanding),
       icon: Receipt,
-      accent: "text-amber-600",
+      accent: "text-amber-600 dark:text-amber-300",
     },
     {
       label: "Avg paid invoice",
       value: usd.format(kpis.avgInvoice),
       icon: BadgeDollarSign,
-      accent: "text-emerald-600",
+      accent: "text-emerald-600 dark:text-emerald-300",
     },
     {
       label: "Hours this month",
       value: fmtHours(kpis.hoursThisMonth),
       icon: Clock,
-      accent: "text-sky-600",
+      accent: "text-sky-600 dark:text-sky-300",
     },
   ];
 
@@ -134,10 +134,10 @@ export default async function ReportsPage() {
                       <TableCell className="hidden text-sm sm:table-cell">
                         {client.projects}
                       </TableCell>
-                      <TableCell className="text-sm font-medium text-emerald-600">
+                      <TableCell className="text-sm font-medium text-emerald-600 dark:text-emerald-300">
                         {usd.format(client.paid)}
                       </TableCell>
-                      <TableCell className="text-sm text-amber-600">
+                      <TableCell className="text-sm text-amber-600 dark:text-amber-300">
                         {client.outstanding > 0 ? usd.format(client.outstanding) : "—"}
                       </TableCell>
                     </TableRow>
@@ -175,7 +175,7 @@ export default async function ReportsPage() {
               </p>
             </div>
             {underBilled > 0 && (
-              <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+              <p className="rounded-lg bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-700 dark:text-amber-300">
                 Hourly work worth {usd.format(underBilled)} hasn&apos;t been
                 invoiced yet.
               </p>

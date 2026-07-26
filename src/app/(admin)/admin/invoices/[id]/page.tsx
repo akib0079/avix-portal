@@ -48,7 +48,7 @@ export default async function InvoiceDetailPage({
         action={
           <div className="flex items-center gap-2">
             {invoice.paymentClaimedAt && invoice.status !== "PAID" && (
-              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+              <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
                 Client says paid · {formatDate(invoice.paymentClaimedAt)}
               </span>
             )}

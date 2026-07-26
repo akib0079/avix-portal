@@ -54,7 +54,7 @@ export function LocalTime({
     <span
       className={cn(
         "inline-flex items-center gap-1 text-xs",
-        asleep ? "text-amber-500" : "text-slate-400",
+        asleep ? "text-amber-500" : "text-muted-foreground",
         className,
       )}
       title={`${timezone} — the client's local time`}

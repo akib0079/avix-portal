@@ -91,7 +91,7 @@ export default async function CampaignDetailPage({
                           ? "text-emerald-600"
                           : r.error
                             ? "text-red-600"
-                            : "text-slate-500",
+                            : "text-muted-foreground",
                       )}
                       title={r.error ?? undefined}
                     >

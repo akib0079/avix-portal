@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Inter } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "@/components/theme-provider";
 import { getBranding, type Branding } from "@/lib/dal/settings";
 import "./globals.css";
 
@@ -83,7 +84,7 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         {brandCss && <style dangerouslySetInnerHTML={{ __html: brandCss }} />}
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
         <Toaster position="top-right" richColors />
       </body>
     </html>
