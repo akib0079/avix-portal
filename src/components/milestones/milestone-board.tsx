@@ -123,6 +123,20 @@ function SortableRow({
                 Client approved
               </span>
             )}
+            {milestone.clientRating != null && (
+              <span
+                title={milestone.clientRatingNote ?? undefined}
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-xs font-medium",
+                  milestone.clientRating === 1
+                    ? "bg-emerald-50 text-emerald-600"
+                    : "bg-amber-50 text-amber-600",
+                )}
+              >
+                {milestone.clientRating === 1 ? "👍 Rated" : "👎 Rated"}
+                {milestone.clientRatingNote ? " · note" : ""}
+              </span>
+            )}
           </div>
           {pricing && (
             <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-primary">

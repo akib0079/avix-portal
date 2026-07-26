@@ -17,6 +17,7 @@ export async function notifyAllAdmins(input: {
   type:
     | "TASK_REQUEST_SUBMITTED"
     | "MILESTONE_APPROVED"
+    | "MILESTONE_UPDATED"
     | "PAYMENT_CLAIMED"
     | "RETAINER_GENERATED"
     | "PROPOSAL_ACCEPTED";

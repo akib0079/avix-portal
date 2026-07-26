@@ -41,6 +41,46 @@ export async function approveMilestone(id: string): Promise<ActionResult> {
 }
 
 /**
+ * Client rates satisfaction on a COMPLETED milestone: 1 = 👍, -1 = 👎, with an
+ * optional note. Idempotent-ish — re-rating overwrites. In-app admin notice only.
+ */
+export async function rateMilestone(
+  id: string,
+  rating: 1 | -1,
+  note?: string,
+): Promise<ActionResult> {
+  const user = await requireClient();
+  if (rating !== 1 && rating !== -1) {
+    return { ok: false, error: "Invalid rating." };
+  }
+
+  const milestone = await prisma.milestone.findFirst({
+    where: { id, project: { clientId: user.id } },
+    include: { project: { select: { id: true, projectName: true } } },
+  });
+  if (!milestone) return { ok: false, error: "Milestone not found." };
+  if (milestone.status !== "COMPLETED") {
+    return { ok: false, error: "Only completed milestones can be rated." };
+  }
+
+  const trimmed = note?.trim().slice(0, 1000) || null;
+  await prisma.milestone.update({
+    where: { id },
+    data: { clientRating: rating, clientRatingNote: trimmed, ratedAt: new Date() },
+  });
+  await notifyAllAdmins({
+    type: "MILESTONE_UPDATED",
+    title: `${user.firstName || "Client"} rated ${rating === 1 ? "👍" : "👎"}: ${milestone.title}`,
+    body: trimmed ? `“${trimmed}”` : `on ${milestone.project.projectName}`,
+    link: `/admin/projects/${milestone.project.id}`,
+  });
+
+  revalidatePath(`/portal/projects/${milestone.project.id}`);
+  revalidatePath(`/admin/projects/${milestone.project.id}`);
+  return { ok: true };
+}
+
+/**
  * Client reports having sent the payment for one of their invoices.
  * Moves the invoice to IN_REVIEW; the admin confirms by marking it PAID.
  */
