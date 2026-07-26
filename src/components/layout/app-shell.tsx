@@ -32,6 +32,7 @@ import {
   CalendarDays,
   Repeat,
   FileSignature,
+  CircleCheckBig,
 } from "lucide-react";
 
 /** Only the admin shell varies by role; the portal is always CLIENT. */
@@ -41,8 +42,8 @@ type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  /** show the pending-task-requests badge on this item */
-  badge?: boolean;
+  /** which live count to show as a badge on this item, if any */
+  badge?: "tasks" | "actions";
 };
 
 const adminNav: NavItem[] = [
@@ -56,7 +57,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/retainers", label: "Retainers", icon: Repeat },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
   { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: true },
+  { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: "tasks" },
   { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
@@ -72,6 +73,7 @@ const staffNav: NavItem[] = [
 
 const clientNav: NavItem[] = [
   { href: "/portal", label: "Overview", icon: LayoutGrid },
+  { href: "/portal/actions", label: "Action Center", icon: CircleCheckBig, badge: "actions" },
   { href: "/portal/messages", label: "Chat with us", icon: MessagesSquare },
   { href: "/portal/projects", label: "My Projects", icon: FolderKanban },
   { href: "/portal/invoices", label: "Invoices", icon: FileText },
@@ -90,12 +92,16 @@ function NavLinks({
   pathname: string;
   onNavigate?: () => void;
 }) {
-  const { data } = useSWR<{ pendingTaskRequests: number } | null>(
+  const { data } = useSWR<{
+    pendingTaskRequests: number;
+    pendingActions: number;
+  } | null>(
     items.some((i) => i.badge) ? "/api/notifications" : null,
     fetcher,
     { refreshInterval: 30_000 },
   );
-  const pending = data?.pendingTaskRequests ?? 0;
+  const badgeCount = (kind: "tasks" | "actions") =>
+    kind === "tasks" ? (data?.pendingTaskRequests ?? 0) : (data?.pendingActions ?? 0);
 
   return (
     <nav className="flex flex-col gap-1">
@@ -120,9 +126,9 @@ function NavLinks({
             )}
             <Icon className="size-4 shrink-0" />
             <span className="flex-1">{item.label}</span>
-            {item.badge && pending > 0 && (
+            {item.badge && badgeCount(item.badge) > 0 && (
               <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
-                {pending > 99 ? "99+" : pending}
+                {badgeCount(item.badge) > 99 ? "99+" : badgeCount(item.badge)}
               </span>
             )}
           </Link>
