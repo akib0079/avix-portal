@@ -117,6 +117,9 @@ export default async function InvoiceDetailPage({
               title: invoice.title ?? "",
               currency: invoice.currency,
               paymentAccountId: invoice.paymentAccountId ?? "none",
+              billToCompany: invoice.billToCompany ?? "",
+              billToAddress: invoice.billToAddress ?? "",
+              billToEmail: invoice.billToEmail ?? "",
               items: invoice.items.map((i) => ({
                 description: i.description,
                 qty: Number(i.qty),

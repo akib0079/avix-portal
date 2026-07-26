@@ -24,12 +24,13 @@ function uploadRoot(): string {
   return path.resolve(process.env.UPLOAD_DIR ?? "./uploads");
 }
 
-export type UploadKind = "invoices" | "images" | "branding";
+export type UploadKind = "invoices" | "images" | "branding" | "deliverables";
 
 const limits: Record<UploadKind, number> = {
   invoices: 25 * 1024 * 1024, // 25 MB
   images: 5 * 1024 * 1024, // 5 MB
   branding: 2 * 1024 * 1024, // 2 MB (logo / favicon)
+  deliverables: 25 * 1024 * 1024, // 25 MB (PDF or image; else use a link)
 };
 
 const imageTypes: Record<string, string> = {
@@ -123,6 +124,20 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
       ext = mapped;
       mimeType = file.type;
     }
+  } else if (kind === "deliverables") {
+    // A finished asset: PDF or image. Anything else (Figma, zip, AI) is shared
+    // as an external link instead, which is the common real-world pattern.
+    if (file.type === "application/pdf") {
+      ext = "pdf";
+      mimeType = "application/pdf";
+    } else {
+      const mapped = imageTypes[file.type];
+      if (!mapped) {
+        return { ok: false, error: "Upload a PDF or image — for other files, paste a link." };
+      }
+      ext = mapped;
+      mimeType = file.type;
+    }
   } else {
     const mapped = imageTypes[file.type];
     if (!mapped) {
@@ -134,12 +149,16 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
 
   const buf = Buffer.from(await file.arrayBuffer());
   const svg = mimeType === "image/svg+xml";
+  // Deliverables validate as an invoice (PDF) or image, matching their two
+  // allowed kinds above.
+  const magicKind: UploadKind =
+    kind === "branding" ? "images" : kind === "deliverables" ? (mimeType === "application/pdf" ? "invoices" : "images") : kind;
   if (svg) {
     const head = buf.subarray(0, 512).toString("utf8").trimStart();
     if (!head.startsWith("<")) {
       return { ok: false, error: "The file content doesn't match its type." };
     }
-  } else if (!hasMagicBytes(buf, kind === "branding" ? "images" : kind, mimeType)) {
+  } else if (!hasMagicBytes(buf, magicKind, mimeType)) {
     return { ok: false, error: "The file content doesn't match its type." };
   }
 

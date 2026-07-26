@@ -318,6 +318,13 @@ model Invoice {
   /// Display currency for the document + portal. Reports still sum raw
   /// amounts regardless of currency.
   currency        InvoiceCurrency @default(USD)
+  /// Optional per-invoice "Billed to" overrides for the generated PDF. When
+  /// null, the PDF falls back to the client's own company/email. Address and
+  /// the extra email have no client-record equivalent, so they only appear
+  /// when set here.
+  billToCompany   String?
+  billToAddress   String?
+  billToEmail     String?
   clientId        String
   client          User          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   projectId       String?

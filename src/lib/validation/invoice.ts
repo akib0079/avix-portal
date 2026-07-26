@@ -26,6 +26,16 @@ export const invoiceSchema = z.object({
   /** Generated-PDF headline; empty falls back to "Invoice {number}". */
   title: z.string().trim().max(160).optional().or(z.literal("")),
   currency: z.enum(invoiceCurrencyValues).optional(),
+  /** Per-invoice "Billed to" overrides for the generated PDF. */
+  billToCompany: z.string().trim().max(160).optional().or(z.literal("")),
+  billToAddress: z.string().trim().max(300).optional().or(z.literal("")),
+  billToEmail: z
+    .string()
+    .trim()
+    .email("Enter a valid email")
+    .max(255)
+    .optional()
+    .or(z.literal("")),
   /** Which saved bank account prints on the generated PDF; "none" = omit. */
   paymentAccountId: z.string().optional().or(z.literal("")),
   clientId: z.string().min(1, "Select a client"),

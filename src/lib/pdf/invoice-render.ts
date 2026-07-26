@@ -69,8 +69,11 @@ export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
     total: Number(invoice.amount),
     client: {
       name: `${invoice.client.firstName} ${invoice.client.lastName}`.trim(),
-      company: invoice.client.company,
+      // Per-invoice company override falls back to the client's own company.
+      company: invoice.billToCompany || invoice.client.company,
       email: invoice.client.email,
+      address: invoice.billToAddress,
+      extraEmail: invoice.billToEmail,
     },
     branding: {
       color: branding.color || "#F65D0B",

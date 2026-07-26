@@ -88,6 +88,9 @@ export function InvoiceForm({
       title: invoice?.title ?? "",
       currency: invoice?.currency ?? "USD",
       paymentAccountId: invoice?.paymentAccountId ?? "none",
+      billToCompany: invoice?.billToCompany ?? "",
+      billToAddress: invoice?.billToAddress ?? "",
+      billToEmail: invoice?.billToEmail ?? "",
       items: invoice?.items?.length
         ? invoice.items
         : [{ description: "", qty: 1, rate: "" as unknown as number }],
@@ -399,6 +402,66 @@ export function InvoiceForm({
                       <p className="text-xs text-muted-foreground">
                         The one account whose details print at the bottom.
                       </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Billed-to overrides — the PDF falls back to the client record. */}
+              <div className="rounded-lg border p-3">
+                <p className="mb-2 text-sm font-medium">Billed to (optional)</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="billToCompany"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Company name</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Defaults to the client's company"
+                            {...field}
+                            value={field.value ?? ""}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="billToEmail"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Additional email</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="email"
+                            placeholder="accounts@client.com"
+                            {...field}
+                            value={field.value ?? ""}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="billToAddress"
+                  render={({ field }) => (
+                    <FormItem className="mt-3">
+                      <FormLabel>Address</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={2}
+                          placeholder="Street, city, postal code, country"
+                          {...field}
+                          value={field.value ?? ""}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}

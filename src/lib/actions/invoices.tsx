@@ -52,6 +52,9 @@ function extractFields(formData: FormData) {
     title: String(formData.get("title") ?? ""),
     currency: String(formData.get("currency") ?? "USD"),
     paymentAccountId: String(formData.get("paymentAccountId") ?? ""),
+    billToCompany: String(formData.get("billToCompany") ?? ""),
+    billToAddress: String(formData.get("billToAddress") ?? ""),
+    billToEmail: String(formData.get("billToEmail") ?? ""),
   };
   return invoiceSchema.safeParse(raw);
 }
@@ -153,6 +156,9 @@ export async function createInvoice(
         notes: data.notes || null,
         title: data.title || null,
         currency: data.currency ?? "USD",
+        billToCompany: data.billToCompany || null,
+        billToAddress: data.billToAddress || null,
+        billToEmail: data.billToEmail || null,
         paymentAccountId,
         pdfPath: pdf.fileName,
         pdfOriginalName: pdf.originalName,
@@ -219,6 +225,9 @@ export async function updateInvoice(
         notes: data.notes || null,
         title: data.title || null,
         currency: data.currency ?? "USD",
+        billToCompany: data.billToCompany || null,
+        billToAddress: data.billToAddress || null,
+        billToEmail: data.billToEmail || null,
         paymentAccountId,
         pdfExternalUrl: data.pdfExternalUrl || null,
         ...(pdf.fileName

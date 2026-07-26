@@ -59,7 +59,14 @@ export type InvoicePdfData = {
   /** Line items; empty = legacy single-amount invoice (one fallback line). */
   items: { description: string; qty: number; rate: number }[];
   total: number;
-  client: { name: string; company: string | null; email: string };
+  client: {
+    name: string;
+    company: string | null;
+    email: string;
+    /** Per-invoice overrides; company falls back to the client record. */
+    address?: string | null;
+    extraEmail?: string | null;
+  };
   branding: {
     color: string;
     logoDataUri: string | null;
@@ -221,7 +228,13 @@ export function invoicePdfDocument(data: InvoicePdfData) {
             {data.client.company ? (
               <Text style={s.partyLine}>{data.client.company}</Text>
             ) : null}
+            {data.client.address ? (
+              <Text style={s.partyLine}>{data.client.address}</Text>
+            ) : null}
             <Text style={{ ...s.partyLine, ...s.muted }}>{data.client.email}</Text>
+            {data.client.extraEmail ? (
+              <Text style={{ ...s.partyLine, ...s.muted }}>{data.client.extraEmail}</Text>
+            ) : null}
           </View>
           <View style={s.partyCol}>
             <Text style={s.partyHeading}>From</Text>
