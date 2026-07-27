@@ -21,17 +21,23 @@ export default function AuthLayout({
       <div className="relative grid w-full max-w-5xl overflow-hidden rounded-[28px] bg-card shadow-2xl ring-1 ring-black/5 lg:grid-cols-2 dark:ring-white/10">
         {/* Brand panel */}
         <div className="relative hidden min-h-[620px] flex-col justify-between overflow-hidden bg-sidebar p-10 lg:flex">
-          {/* Stock backdrop image (decorative) with dark wash for legibility */}
+          {/* Stock backdrop image (decorative), kept very subtle behind a
+              layered wash so the headline always reads cleanly. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1200&q=70"
             alt=""
             aria-hidden
-            className="absolute inset-0 size-full object-cover opacity-25"
+            className="absolute inset-0 size-full object-cover opacity-[0.12]"
           />
           <div
             aria-hidden
-            className="absolute inset-0 bg-gradient-to-b from-sidebar/70 via-sidebar/80 to-sidebar"
+            className="absolute inset-0 bg-gradient-to-br from-sidebar/85 via-sidebar/90 to-sidebar"
+          />
+          {/* Warm brand glow, bottom-left */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -bottom-24 -left-16 size-72 rounded-full bg-primary/20 blur-3xl"
           />
           {/* Concentric rings */}
           <div

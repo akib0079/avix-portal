@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Loader2, Eye, EyeOff, Mail, Lock, AlertCircle } from "lucide-react";
+import { Loader2, Eye, EyeOff, Mail, Lock, AlertCircle, ArrowRight } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
 
 function GoogleIcon() {
@@ -82,9 +82,14 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
   return (
     <div>
-      <div className="mb-8 flex items-center justify-between gap-4">
-        <h2 className="font-heading text-4xl font-bold tracking-tight">Sign in</h2>
-        <AvixBot size={34} className="shrink-0" />
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-heading text-4xl font-bold tracking-tight">Sign in</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Welcome back — pick up right where you left off.
+          </p>
+        </div>
+        <AvixBot size={30} glow={false} className="mt-1 shrink-0 drop-shadow-[0_0_10px_rgba(246,93,11,0.35)]" />
       </div>
 
       {googleEnabled && (
@@ -179,20 +184,25 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
         <Button
           type="submit"
           className={cn(
-            "h-12 w-full rounded-full border-0 bg-gradient-to-r from-[#fb7a3c] to-[#f65d0b] text-[15px] text-white shadow-md shadow-primary/20 transition-opacity hover:opacity-95",
+            "group h-12 w-full rounded-full border-0 bg-gradient-to-r from-[#fb7a3c] to-[#f65d0b] text-[15px] text-white shadow-md shadow-primary/20 transition-opacity hover:opacity-95",
           )}
           disabled={loading || googleLoading}
         >
-          {loading && <Loader2 className="animate-spin" />}
+          {loading ? <Loader2 className="animate-spin" /> : null}
           Sign In
+          {!loading && (
+            <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+          )}
         </Button>
       </form>
 
-      <p className="mt-8 text-center text-xs text-muted-foreground">
-        Client accounts are created by Avix Digital. Need access?{" "}
+      <p className="mt-8 text-center text-xs leading-relaxed text-muted-foreground">
+        Client accounts are created by Avix Digital.
+        <br />
+        Need access?{" "}
         <a
           href="mailto:avixdigitalagency@gmail.com"
-          className="font-medium text-primary hover:underline"
+          className="font-medium whitespace-nowrap text-primary hover:underline"
         >
           Contact us
         </a>
