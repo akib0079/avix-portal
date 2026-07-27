@@ -82,16 +82,9 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
   return (
     <div>
-      <div className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="font-heading text-3xl font-bold tracking-tight">
-            Welcome back
-          </h2>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Sign in to your Avix Digital portal.
-          </p>
-        </div>
-        <AvixBot size={32} className="mt-1 shrink-0" />
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <h2 className="font-heading text-4xl font-bold tracking-tight">Sign in</h2>
+        <AvixBot size={34} className="shrink-0" />
       </div>
 
       {googleEnabled && (
@@ -99,7 +92,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
           <Button
             type="button"
             variant="outline"
-            className="h-11 w-full"
+            className="h-12 w-full rounded-full"
             onClick={signInWithGoogle}
             disabled={googleLoading || loading}
           >
@@ -116,51 +109,47 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
         </>
       )}
 
-      <form onSubmit={onSubmit} className="space-y-5">
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="email" className="sr-only">
+            Email
+          </Label>
           <div className="relative">
-            <Mail className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Mail className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="email"
               type="email"
               autoComplete="email"
-              placeholder="you@company.com"
+              placeholder="Email or username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="h-11 pl-9"
+              className="h-12 rounded-full pl-11"
             />
           </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="password">Password</Label>
-            <Link
-              href="/forgot-password"
-              className="text-xs font-medium text-primary hover:underline"
-            >
-              Forgot password?
-            </Link>
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="password" className="sr-only">
+            Password
+          </Label>
           <div className="relative">
-            <Lock className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Lock className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="password"
               type={showPassword ? "text" : "password"}
               autoComplete="current-password"
-              placeholder="••••••••"
+              placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="h-11 px-9"
+              className="h-12 rounded-full pr-11 pl-11"
             />
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               aria-label={showPassword ? "Hide password" : "Show password"}
-              className="absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="absolute top-1/2 right-3 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               {showPassword ? (
                 <EyeOff className="size-4" />
@@ -169,6 +158,15 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
               )}
             </button>
           </div>
+        </div>
+
+        <div className="flex justify-start">
+          <Link
+            href="/forgot-password"
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Forgot password?
+          </Link>
         </div>
 
         {error && (
@@ -180,11 +178,13 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
         <Button
           type="submit"
-          className={cn("h-11 w-full text-[15px]")}
+          className={cn(
+            "h-12 w-full rounded-full border-0 bg-gradient-to-r from-[#fb7a3c] to-[#f65d0b] text-[15px] text-white shadow-md shadow-primary/20 transition-opacity hover:opacity-95",
+          )}
           disabled={loading || googleLoading}
         >
           {loading && <Loader2 className="animate-spin" />}
-          Sign in
+          Sign In
         </Button>
       </form>
 
