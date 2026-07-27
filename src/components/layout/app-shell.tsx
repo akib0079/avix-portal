@@ -318,10 +318,11 @@ export function AppShell({
         </div>
       </div>
 
-      {/* Main content */}
-      <main className="min-w-0 flex-1 pt-14 lg:pt-0 lg:pl-60">
+      {/* Main content — soft muted canvas in light mode so the rounded cards
+          pop (reference look); dark keeps its deep background. */}
+      <main className="min-w-0 flex-1 bg-muted/50 pt-14 lg:pt-0 lg:pl-60 dark:bg-transparent">
         {/* Desktop topbar */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-2 border-b bg-background/80 px-6 backdrop-blur lg:flex lg:px-10">
+        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-2 border-b bg-background/70 px-6 backdrop-blur lg:flex lg:px-10">
           {showQuickAdd && <QuickAdd tone="light" />}
           <ThemeToggle tone="light" />
           <NotificationBell tone="light" />
