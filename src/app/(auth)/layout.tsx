@@ -77,10 +77,10 @@ export default function AuthLayout({
         </div>
       </div>
 
-      {/* Floating form card — overlaps the dark panel's edge and hovers above
-          the page with a deep shadow. */}
-      <div className="relative flex min-h-screen items-center justify-center px-4 py-8 sm:px-6 lg:justify-end lg:px-[6vw]">
-        <div className="flex w-full max-w-[520px] flex-col rounded-[32px] bg-card px-7 py-9 shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-black/[0.06] sm:px-11 lg:min-h-[82vh] lg:py-11 dark:ring-white/10">
+      {/* Form panel — full height, flush to the right edge, overlapping the
+          dark panel's seam so it still reads as a floating surface. */}
+      <div className="relative flex min-h-screen lg:justify-end">
+        <div className="flex w-full flex-col bg-card px-6 py-8 shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] sm:px-10 lg:w-[46%] lg:rounded-l-[40px] lg:px-14 lg:py-10 lg:ring-1 lg:ring-black/[0.06] dark:lg:ring-white/10">
           {/* Top bar: mobile logo (dark panel hidden) + access link */}
           <div className="flex items-center justify-between">
             <div className="lg:hidden">
