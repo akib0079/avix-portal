@@ -81,23 +81,19 @@ export default function AuthLayout({
           dark panel's seam so it still reads as a floating surface. */}
       <div className="relative flex min-h-screen lg:justify-end">
         <div className="flex w-full flex-col bg-card px-6 py-8 shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] sm:px-10 lg:w-[46%] lg:rounded-l-[40px] lg:px-14 lg:py-10 lg:ring-1 lg:ring-black/[0.06] dark:lg:ring-white/10">
-          {/* Top bar: mobile logo (dark panel hidden) + access link */}
-          <div className="flex items-center justify-between">
-            <div className="lg:hidden">
-              <div className="rounded-xl bg-sidebar px-4 py-2.5">
-                <Image
-                  src="/avix-logo.png"
-                  alt="Avix Digital"
-                  width={104}
-                  height={26}
-                  priority
-                  className="brightness-0 invert"
-                />
-              </div>
-            </div>
+          {/* Top bar: logo (dark wordmark reads on white) + access link */}
+          <div className="flex items-center justify-between gap-4">
+            <Image
+              src="/avix-logo.png"
+              alt="Avix Digital"
+              width={132}
+              height={33}
+              priority
+              className="h-auto w-[132px] dark:brightness-0 dark:invert"
+            />
             <a
               href="mailto:avixdigitalagency@gmail.com"
-              className="ml-auto text-xs font-medium text-muted-foreground hover:text-foreground"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               Need access?
             </a>
