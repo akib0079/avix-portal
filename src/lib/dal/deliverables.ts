@@ -12,6 +12,9 @@ export async function listByProject(projectId: string) {
       filePath: true,
       fileOriginalName: true,
       externalUrl: true,
+      reviewStatus: true,
+      reviewNote: true,
+      reviewedAt: true,
       createdAt: true,
     },
   });

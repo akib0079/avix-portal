@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/dal/session";
+import { requireAdmin, requireClient } from "@/lib/dal/session";
+import { notifyAllAdmins } from "@/lib/dal/notifications";
+import { logActivity } from "@/lib/dal/activity";
 import { deliverableSchema } from "@/lib/validation/deliverable";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 
@@ -83,6 +85,62 @@ export async function createDeliverable(
   revalidatePath(`/admin/projects/${project.id}`);
   revalidatePath(`/portal/projects/${project.id}`);
   return { ok: true, data: { id: deliverable.id } };
+}
+
+/**
+ * The client approves a deliverable or asks for changes. Scoped to their own
+ * projects; notifies the admins so the feedback loop closes where the work is.
+ */
+export async function reviewDeliverable(
+  id: string,
+  decision: "APPROVED" | "CHANGES_REQUESTED",
+  note?: string,
+): Promise<ActionResult> {
+  const user = await requireClient();
+  if (decision !== "APPROVED" && decision !== "CHANGES_REQUESTED") {
+    return { ok: false, error: "Invalid decision." };
+  }
+
+  const deliverable = await prisma.deliverable.findFirst({
+    where: { id, project: { clientId: user.id } },
+    select: {
+      id: true,
+      title: true,
+      project: { select: { id: true, projectName: true } },
+    },
+  });
+  if (!deliverable) return { ok: false, error: "Deliverable not found." };
+
+  const trimmed = note?.trim().slice(0, 1000) || null;
+  if (decision === "CHANGES_REQUESTED" && !trimmed) {
+    return { ok: false, error: "Tell us what needs changing." };
+  }
+
+  await prisma.deliverable.update({
+    where: { id },
+    data: { reviewStatus: decision, reviewNote: trimmed, reviewedAt: new Date() },
+  });
+
+  const approved = decision === "APPROVED";
+  await notifyAllAdmins({
+    type: "DELIVERABLE_REVIEWED",
+    title: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"}: ${deliverable.title}`,
+    body: trimmed ? `“${trimmed}”` : deliverable.project.projectName,
+    link: `/admin/projects/${deliverable.project.id}`,
+  });
+  await logActivity({
+    type: approved ? "deliverable.approved" : "deliverable.changes",
+    summary: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"} “${deliverable.title}”`,
+    actorId: user.id,
+    clientId: user.id,
+    entity: "project",
+    entityId: deliverable.project.id,
+    link: `/admin/projects/${deliverable.project.id}`,
+  });
+
+  revalidatePath(`/portal/projects/${deliverable.project.id}`);
+  revalidatePath(`/admin/projects/${deliverable.project.id}`);
+  return { ok: true };
 }
 
 export async function deleteDeliverable(id: string): Promise<ActionResult> {

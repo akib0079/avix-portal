@@ -92,6 +92,12 @@ enum NotificationType {
   RETAINER_GENERATED
   PROPOSAL_ACCEPTED
   DELIVERABLE_POSTED
+  DELIVERABLE_REVIEWED
+}
+
+enum DeliverableReview {
+  APPROVED
+  CHANGES_REQUESTED
 }
 
 enum MeetingStatus {
@@ -378,6 +384,10 @@ model Deliverable {
   filePath         String?
   fileOriginalName String?
   externalUrl      String?
+  /// Client review: null = not reviewed, APPROVED, or CHANGES_REQUESTED.
+  reviewStatus     DeliverableReview?
+  reviewNote       String?
+  reviewedAt       DateTime?
   createdAt        DateTime @default(now())
 
   @@index([projectId])

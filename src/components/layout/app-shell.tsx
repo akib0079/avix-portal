@@ -47,6 +47,8 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
   /** which live count to show as a badge on this item, if any */
   badge?: "tasks" | "actions";
+  /** Group heading rendered above this item (first item of the group only). */
+  section?: string;
 };
 
 const adminNav: NavItem[] = [
@@ -76,13 +78,14 @@ const staffNav: NavItem[] = [
 
 const clientNav: NavItem[] = [
   { href: "/portal", label: "Overview", icon: LayoutGrid },
-  { href: "/portal/actions", label: "Action Center", icon: CircleCheckBig, badge: "actions" },
-  { href: "/portal/book", label: "Book a Meeting", icon: CalendarPlus },
-  { href: "/portal/messages", label: "Chat with us", icon: MessagesSquare },
-  { href: "/portal/projects", label: "My Projects", icon: FolderKanban },
-  { href: "/portal/invoices", label: "Invoices", icon: FileText },
-  { href: "/portal/payment", label: "How to Pay", icon: CreditCard },
+  { href: "/portal/actions", label: "Needs you", icon: CircleCheckBig, badge: "actions" },
+  { href: "/portal/projects", label: "My Projects", icon: FolderKanban, section: "Work" },
   { href: "/portal/requests", label: "Task Requests", icon: MessageSquarePlus },
+  { href: "/portal/invoices", label: "Invoices", icon: FileText, section: "Billing" },
+  { href: "/portal/payment", label: "How to Pay", icon: CreditCard },
+  { href: "/portal/messages", label: "Chat with us", icon: MessagesSquare, section: "Contact" },
+  { href: "/portal/book", label: "Book a Meeting", icon: CalendarPlus },
+  { href: "/portal/settings", label: "Settings", icon: Settings, section: "Account" },
 ];
 
 const fetcher = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null));
@@ -116,8 +119,13 @@ function NavLinks({
             : pathname.startsWith(item.href);
         const Icon = item.icon;
         return (
+          <div key={item.href}>
+            {item.section && (
+              <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">
+                {item.section}
+              </p>
+            )}
           <Link
-            key={item.href}
             href={item.href}
             onClick={onNavigate}
             className={cn(
@@ -136,6 +144,7 @@ function NavLinks({
               </span>
             )}
           </Link>
+          </div>
         );
       })}
     </nav>

@@ -146,6 +146,22 @@ export function DeliverablesCard({
                     {d.externalUrl ? "Link" : d.fileOriginalName ?? "File"} ·{" "}
                     {formatDate(d.createdAt.toISOString())}
                   </p>
+                  {d.reviewStatus && (
+                    <p
+                      title={d.reviewNote ?? undefined}
+                      className={
+                        "mt-0.5 text-xs font-medium " +
+                        (d.reviewStatus === "APPROVED"
+                          ? "text-emerald-600 dark:text-emerald-300"
+                          : "text-amber-600 dark:text-amber-300")
+                      }
+                    >
+                      {d.reviewStatus === "APPROVED"
+                        ? "✓ Client approved"
+                        : "⟳ Changes requested"}
+                      {d.reviewNote ? ` · “${d.reviewNote}”` : ""}
+                    </p>
+                  )}
                 </div>
                 <Button
                   variant="ghost"

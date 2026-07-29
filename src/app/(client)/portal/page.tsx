@@ -8,6 +8,7 @@ import { WelcomeModal } from "@/components/onboarding/welcome-modal";
 import { GettingStarted } from "@/components/onboarding/getting-started";
 import { UpcomingMeetings } from "@/components/portal/upcoming-meetings";
 import { listMyUpcomingMeetings } from "@/lib/dal/meetings";
+import { countClientActionItems } from "@/lib/dal/portal-actions";
 import { usd, formatDate, projectTypeLabels } from "@/lib/format";
 import { ArrowRight, Bell, FileText } from "lucide-react";
 
@@ -16,6 +17,7 @@ export const metadata = { title: "Overview" };
 export default async function PortalOverviewPage() {
   const [{ user, onboardedAt, projects, openInvoices, notifications, checklist }, meetings] =
     await Promise.all([getPortalOverview(), listMyUpcomingMeetings()]);
+  const pendingActions = await countClientActionItems(user.id);
   const openTotal = openInvoices.reduce((sum, inv) => sum + Number(inv.amount), 0);
 
   return (
@@ -27,6 +29,29 @@ export default async function PortalOverviewPage() {
         title={`Hi ${user.firstName || user.name}`}
         description="Here's where your projects stand."
       />
+
+      {/* Needs you — the one thing to lead with when something is waiting. */}
+      {pendingActions > 0 && (
+        <Link
+          href="/portal/actions"
+          className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-primary/25 bg-brand-tint/50 px-5 py-4 transition-colors hover:bg-brand-tint dark:bg-primary/10 dark:hover:bg-primary/15"
+        >
+          <span className="flex items-center gap-3">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
+              {pendingActions}
+            </span>
+            <span>
+              <span className="block font-heading text-sm font-semibold">
+                {pendingActions === 1 ? "1 thing needs you" : `${pendingActions} things need you`}
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                Approvals and invoices waiting on your go-ahead.
+              </span>
+            </span>
+          </span>
+          <ArrowRight className="size-4 shrink-0 text-primary" />
+        </Link>
+      )}
 
       <GettingStarted state={checklist} />
 
