@@ -28,7 +28,7 @@ function ResetPasswordForm() {
         <p className="mt-2 text-sm text-muted-foreground">
           This password link is missing or malformed. Request a new one below.
         </p>
-        <Button asChild className="mt-6">
+        <Button asChild className="mt-6 h-12 rounded-full px-6">
           <Link href="/forgot-password">Request a new link</Link>
         </Button>
       </div>
@@ -64,7 +64,7 @@ function ResetPasswordForm() {
 
   return (
     <div>
-      <h2 className="font-heading text-2xl font-bold">Choose a password</h2>
+      <h2 className="font-heading text-3xl font-bold tracking-tight">Choose a password</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Set the password you&apos;ll use to sign in to your portal.
       </p>
@@ -81,7 +81,7 @@ function ResetPasswordForm() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={10}
-              className="pr-9"
+              className="h-12 rounded-full pr-11 pl-5"
             />
             <button
               type="button"
@@ -105,6 +105,7 @@ function ResetPasswordForm() {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             required
+            className="h-12 rounded-full px-5"
           />
         </div>
 
@@ -114,7 +115,11 @@ function ResetPasswordForm() {
           </p>
         )}
 
-        <Button type="submit" className="w-full" disabled={loading}>
+        <Button
+          type="submit"
+          className="h-12 w-full rounded-full border-0 bg-gradient-to-r from-[#fb7a3c] to-[#f65d0b] text-[15px] text-white shadow-md shadow-primary/20 transition-opacity hover:opacity-95"
+          disabled={loading}
+        >
           {loading && <Loader2 className="animate-spin" />}
           Save password
         </Button>

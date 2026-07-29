@@ -6,7 +6,7 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Loader2, MailCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, MailCheck, Mail } from "lucide-react";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -37,7 +37,7 @@ export default function ForgotPasswordPage() {
           we&apos;ve sent a link to reset your password. The link is valid for
           24 hours.
         </p>
-        <Button asChild variant="outline" className="mt-6">
+        <Button asChild variant="outline" className="mt-6 h-12 rounded-full px-6">
           <Link href="/login">
             <ArrowLeft /> Back to sign in
           </Link>
@@ -48,27 +48,40 @@ export default function ForgotPasswordPage() {
 
   return (
     <div>
-      <h2 className="font-heading text-2xl font-bold">Reset your password</h2>
+      <h2 className="font-heading text-3xl font-bold tracking-tight">Reset your password</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Enter your account email and we&apos;ll send you a reset link.
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-5">
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            autoComplete="email"
-            placeholder="you@company.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+        <div className="space-y-1.5">
+          <Label htmlFor="email" className="sr-only">
+            Email
+          </Label>
+          <div className="relative">
+            <Mail className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="h-12 rounded-full pl-11"
+            />
+          </div>
         </div>
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading && <Loader2 className="animate-spin" />}
+        <Button
+          type="submit"
+          className="group h-12 w-full rounded-full border-0 bg-gradient-to-r from-[#fb7a3c] to-[#f65d0b] text-[15px] text-white shadow-md shadow-primary/20 transition-opacity hover:opacity-95"
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="animate-spin" /> : null}
           Send reset link
+          {!loading && (
+            <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+          )}
         </Button>
       </form>
 

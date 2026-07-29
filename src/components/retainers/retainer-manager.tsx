@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RetainerView } from "@/lib/dal/retainers";
-import { deleteRetainer } from "@/lib/actions/retainers";
+import { deleteRetainer, generateRetainerInvoice } from "@/lib/actions/retainers";
 import {
   RetainerFormDialog,
   type RetainerClientOption,
@@ -21,7 +21,7 @@ import {
 import { usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Loader2, Repeat, PauseCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Repeat, PauseCircle, FileText } from "lucide-react";
 
 export function RetainerManager({
   retainers,
@@ -37,6 +37,16 @@ export function RetainerManager({
   const [editing, setEditing] = useState<RetainerView | null>(null);
   const [deleting, setDeleting] = useState<RetainerView | null>(null);
   const [busy, setBusy] = useState(false);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+
+  async function generateNow(r: RetainerView) {
+    setGeneratingId(r.id);
+    const result = await generateRetainerInvoice(r.id);
+    setGeneratingId(null);
+    if (!result.ok) return void toast.error(result.error);
+    toast.success(`Invoice ${result.data?.invoiceNumber} drafted — review and send it.`);
+    router.refresh();
+  }
 
   const monthlyTotal = retainers
     .filter((r) => r.active)
@@ -110,6 +120,21 @@ export function RetainerManager({
                     {usd.format(r.amount)}
                     <span className="text-xs font-normal text-muted-foreground">/mo</span>
                   </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    disabled={generatingId === r.id}
+                    onClick={() => generateNow(r)}
+                    title="Draft this month's invoice now"
+                  >
+                    {generatingId === r.id ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <FileText className="size-3.5" />
+                    )}
+                    Generate invoice
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
