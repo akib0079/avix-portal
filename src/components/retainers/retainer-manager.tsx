@@ -3,7 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RetainerView } from "@/lib/dal/retainers";
-import { deleteRetainer, generateRetainerInvoice } from "@/lib/actions/retainers";
+import Link from "next/link";
+import {
+  deleteRetainer,
+  generateRetainerInvoice,
+  attachInvoiceToRetainer,
+  detachInvoiceFromRetainer,
+} from "@/lib/actions/retainers";
+import { InvoiceStatusBadge } from "@/components/status-badges";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   RetainerFormDialog,
   type RetainerClientOption,
@@ -21,7 +35,17 @@ import {
 import { usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Loader2, Repeat, PauseCircle, FileText } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  Repeat,
+  PauseCircle,
+  FileText,
+  Link2,
+  Unlink,
+} from "lucide-react";
 
 export function RetainerManager({
   retainers,
@@ -38,6 +62,30 @@ export function RetainerManager({
   const [deleting, setDeleting] = useState<RetainerView | null>(null);
   const [busy, setBusy] = useState(false);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [attachPick, setAttachPick] = useState<Record<string, string>>({});
+  const [attachingId, setAttachingId] = useState<string | null>(null);
+  const [detachingId, setDetachingId] = useState<string | null>(null);
+
+  async function attachNow(retainerId: string) {
+    const invoiceId = attachPick[retainerId];
+    if (!invoiceId) return;
+    setAttachingId(retainerId);
+    const result = await attachInvoiceToRetainer(retainerId, invoiceId);
+    setAttachingId(null);
+    if (!result.ok) return void toast.error(result.error);
+    setAttachPick((m) => ({ ...m, [retainerId]: "" }));
+    toast.success("Invoice linked to this retainer.");
+    router.refresh();
+  }
+
+  async function detachNow(invoiceId: string) {
+    setDetachingId(invoiceId);
+    const result = await detachInvoiceFromRetainer(invoiceId);
+    setDetachingId(null);
+    if (!result.ok) return void toast.error(result.error);
+    toast.success("Invoice unlinked.");
+    router.refresh();
+  }
 
   async function generateNow(r: RetainerView) {
     setGeneratingId(r.id);
@@ -157,6 +205,90 @@ export function RetainerManager({
                     <span className="sr-only">Delete</span>
                   </Button>
                 </div>
+              </div>
+
+              {/* Invoices for this plan — generated or attached */}
+              <div className="mt-3 border-t pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Invoices ({r.invoices.length})
+                  </p>
+                  {r.attachable.length > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <Select
+                        value={attachPick[r.id] ?? ""}
+                        onValueChange={(v) => setAttachPick((m) => ({ ...m, [r.id]: v }))}
+                      >
+                        <SelectTrigger size="sm" className="h-8 w-[210px]">
+                          <SelectValue placeholder="Add existing invoice…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {r.attachable.map((inv) => (
+                            <SelectItem key={inv.id} value={inv.id}>
+                              {inv.invoiceNumber} · {usd.format(inv.amount)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        disabled={!attachPick[r.id] || attachingId === r.id}
+                        onClick={() => attachNow(r.id)}
+                      >
+                        {attachingId === r.id ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <Link2 className="size-3.5" />
+                        )}
+                        Add
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {r.invoices.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    None yet — generate this month&apos;s, or attach an existing one.
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-1">
+                    {r.invoices.map((inv) => (
+                      <li key={inv.id} className="flex items-center gap-2 text-sm">
+                        <Link
+                          href={`/admin/invoices/${inv.id}`}
+                          className="font-medium hover:text-primary"
+                        >
+                          {inv.invoiceNumber}
+                        </Link>
+                        <span className="text-muted-foreground">
+                          {usd.format(inv.amount)} ·{" "}
+                          {new Date(inv.issueDate).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                        </span>
+                        <InvoiceStatusBadge status={inv.status as never} />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="ml-auto size-7 text-muted-foreground hover:text-destructive"
+                          title="Unlink from this retainer"
+                          disabled={detachingId === inv.id}
+                          onClick={() => detachNow(inv.id)}
+                        >
+                          {detachingId === inv.id ? (
+                            <Loader2 className="animate-spin" />
+                          ) : (
+                            <Unlink className="size-3.5" />
+                          )}
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           ))}

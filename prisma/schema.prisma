@@ -342,6 +342,9 @@ model Invoice {
   client          User          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   projectId       String?
   project         Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// Set when this invoice belongs to a retainer plan (generated or attached).
+  retainerId      String?
+  retainer        Retainer?     @relation(fields: [retainerId], references: [id], onDelete: SetNull)
   amount          Decimal       @db.Decimal(10, 2)
   status          InvoiceStatus @default(ASSIGNED)
   pdfPath         String?
@@ -590,6 +593,7 @@ model Retainer {
   active              Boolean  @default(true)
   lastGeneratedPeriod String?
   notes               String?
+  invoices            Invoice[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

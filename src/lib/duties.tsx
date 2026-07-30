@@ -115,6 +115,7 @@ async function generateRetainerInvoices(now: Date) {
           invoiceNumber,
           clientId: retainer.clientId,
           projectId: retainer.projectId,
+          retainerId: retainer.id,
           amount: retainer.amount,
           status: "ASSIGNED",
           issueDate: now,

@@ -120,6 +120,7 @@ export async function generateRetainerInvoice(
         invoiceNumber,
         clientId: retainer.clientId,
         projectId: retainer.projectId,
+        retainerId: retainer.id,
         amount: retainer.amount,
         status: "ASSIGNED",
         issueDate: now,
@@ -161,6 +162,54 @@ export async function generateRetainerInvoice(
     ok: true,
     data: { invoiceId: created.id, invoiceNumber: created.invoiceNumber },
   };
+}
+
+/**
+ * Attach an EXISTING invoice to a retainer — the "add" half of add-or-generate.
+ * Only invoices belonging to the retainer's own client can be linked, so a plan
+ * can never claim another client's money.
+ */
+export async function attachInvoiceToRetainer(
+  retainerId: string,
+  invoiceId: string,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const retainer = await prisma.retainer.findUnique({
+    where: { id: retainerId },
+    select: { id: true, clientId: true, title: true },
+  });
+  if (!retainer) return { ok: false, error: "Retainer not found." };
+
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, clientId: retainer.clientId },
+    select: { id: true, invoiceNumber: true, retainerId: true },
+  });
+  if (!invoice) {
+    return { ok: false, error: "Invoice not found for this retainer's client." };
+  }
+  if (invoice.retainerId && invoice.retainerId !== retainerId) {
+    return { ok: false, error: "That invoice is already linked to another retainer." };
+  }
+
+  await prisma.invoice.update({ where: { id: invoice.id }, data: { retainerId } });
+  revalidatePath("/admin/retainers");
+  revalidatePath("/admin/invoices");
+  return { ok: true };
+}
+
+/** Unlink an invoice from its retainer (the invoice itself is untouched). */
+export async function detachInvoiceFromRetainer(invoiceId: string): Promise<ActionResult> {
+  await requireAdmin();
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true },
+  });
+  if (!invoice) return { ok: false, error: "Invoice not found." };
+
+  await prisma.invoice.update({ where: { id: invoiceId }, data: { retainerId: null } });
+  revalidatePath("/admin/retainers");
+  revalidatePath("/admin/invoices");
+  return { ok: true };
 }
 
 export async function deleteRetainer(id: string): Promise<ActionResult> {
