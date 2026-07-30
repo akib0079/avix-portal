@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -36,6 +36,8 @@ import {
   FileSignature,
   CircleCheckBig,
   CalendarPlus,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 /** Only the admin shell varies by role; the portal is always CLIENT. */
@@ -278,13 +280,44 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  // Desktop sidebar can be switched off entirely; remembered across visits.
+  const [collapsed, setCollapsed] = useState(false);
   const isStaff = role === "STAFF";
   const showQuickAdd = variant === "admin" && !isStaff;
 
+  useEffect(() => {
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem("avix.sidebar.off");
+    } catch {
+      /* private mode — keep the default */
+    }
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (saved === "1") setCollapsed(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
+  function toggleSidebar() {
+    setCollapsed((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem("avix.sidebar.off", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
   const shell = (
-    <div className="flex min-h-screen w-full">
-      {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 lg:block">
+    <div className="flex min-h-screen w-full bg-muted/60 dark:bg-background">
+      {/* Desktop sidebar — floats above the canvas like the login panel */}
+      <aside
+        className={cn(
+          "fixed inset-y-3 left-3 z-30 hidden w-[17rem] overflow-hidden rounded-[26px] shadow-xl shadow-black/10 ring-1 ring-black/5 transition-transform duration-200 dark:ring-white/10",
+          collapsed ? "lg:hidden" : "lg:block",
+        )}
+      >
         <SidebarInner
           variant={variant}
           role={role}
@@ -329,9 +362,28 @@ export function AppShell({
 
       {/* Main content — soft muted canvas in light mode so the rounded cards
           pop (reference look); dark keeps its deep background. */}
-      <main className="min-w-0 flex-1 bg-muted/50 pt-14 lg:pt-0 lg:pl-60 dark:bg-transparent">
+      <main
+        className={cn(
+          "min-w-0 flex-1 pt-14 transition-[padding] duration-200 lg:pt-0",
+          collapsed ? "lg:pl-0" : "lg:pl-[18.25rem]",
+        )}
+      >
         {/* Desktop topbar */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-2 border-b bg-background/70 px-6 backdrop-blur lg:flex lg:px-10">
+        <div className="sticky top-0 z-20 hidden h-14 items-center gap-2 px-6 backdrop-blur lg:flex lg:px-10">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleSidebar}
+            aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+            title={collapsed ? "Show sidebar" : "Hide sidebar"}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="size-5" />
+            ) : (
+              <PanelLeftClose className="size-5" />
+            )}
+          </Button>
+          <div className="ml-auto" />
           {showQuickAdd && <QuickAdd tone="light" />}
           <ThemeToggle tone="light" />
           <NotificationBell tone="light" />
