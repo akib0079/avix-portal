@@ -2,9 +2,10 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
- * Signed unsubscribe tokens: `<userId>.<base64url HMAC-SHA256(userId)>`.
- * Lets a client opt out from an email link without logging in, and without a
- * token table. Keyed off BETTER_AUTH_SECRET (already required at runtime).
+ * Signed unsubscribe tokens: `<subject>.<base64url HMAC-SHA256(subject)>`.
+ * The subject is a user id, or `lead:<id>` for a prospect who isn't a client
+ * yet. Lets a recipient opt out from an email link without logging in, and
+ * without a token table. Keyed off BETTER_AUTH_SECRET.
  */
 
 function secret(): string {
@@ -19,6 +20,11 @@ function sign(userId: string): string {
 
 export function createUnsubscribeToken(userId: string): string {
   return `${userId}.${sign(userId)}`;
+}
+
+/** Unsubscribe token for a lead (not yet a client). */
+export function createLeadUnsubscribeToken(leadId: string): string {
+  return createUnsubscribeToken(`lead:${leadId}`);
 }
 
 function signMeeting(meetingId: string): string {
@@ -65,7 +71,7 @@ export function verifyProposalToken(proposalId: string, token: string): boolean 
   return Date.now() < expiresAtMs;
 }
 
-/** Returns the userId when the signature checks out, else null. */
+/** Returns the signed subject (user id, or `lead:<id>`) when valid, else null. */
 export function verifyUnsubscribeToken(token: string): string | null {
   const dot = token.lastIndexOf(".");
   if (dot <= 0) return null;

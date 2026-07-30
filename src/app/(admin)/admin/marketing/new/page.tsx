@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { listTemplates, listMarketingRecipients } from "@/lib/dal/marketing";
+import { listTemplates, listAudience, listSegments } from "@/lib/dal/marketing";
+import type { AudienceFilterInput } from "@/lib/validation/marketing";
 import { PageHeader } from "@/components/page-header";
 import { CampaignComposer } from "@/components/marketing/campaign-composer";
 import { ArrowLeft } from "lucide-react";
@@ -14,9 +15,10 @@ export default async function NewCampaignPage({
 }) {
   await requireAdmin();
   const { template } = await searchParams;
-  const [templates, recipients] = await Promise.all([
+  const [templates, audience, segments] = await Promise.all([
     listTemplates(),
-    listMarketingRecipients(),
+    listAudience(),
+    listSegments(),
   ]);
 
   return (
@@ -39,7 +41,12 @@ export default async function NewCampaignPage({
           body: t.body,
           updatedAt: t.updatedAt.toISOString(),
         }))}
-        recipients={recipients}
+        audience={audience}
+        segments={segments.map((seg) => ({
+          id: seg.id,
+          name: seg.name,
+          filter: seg.filter as AudienceFilterInput,
+        }))}
         initialTemplateId={template}
       />
     </div>

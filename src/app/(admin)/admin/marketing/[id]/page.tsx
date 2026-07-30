@@ -143,7 +143,7 @@ export default async function CampaignDetailPage({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Client</TableHead>
+                <TableHead>Recipient</TableHead>
                 <TableHead className="hidden sm:table-cell">Email</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -152,13 +152,20 @@ export default async function CampaignDetailPage({
               {campaign.recipients.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">
-                    {r.user.firstName} {r.user.lastName}
-                    {r.user.company ? (
-                      <span className="text-muted-foreground"> — {r.user.company}</span>
+                    {r.user
+                      ? `${r.user.firstName} ${r.user.lastName}`.trim()
+                      : (r.lead?.name ?? r.firstName ?? r.email)}
+                    {r.company ? (
+                      <span className="text-muted-foreground"> — {r.company}</span>
                     ) : null}
+                    {r.leadId && (
+                      <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        Lead
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                    {r.user.email}
+                    {r.email ?? r.user?.email}
                   </TableCell>
                   <TableCell>
                     <span

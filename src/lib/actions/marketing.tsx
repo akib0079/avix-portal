@@ -4,15 +4,13 @@ import { revalidatePath } from "next/cache";
 import { drainCampaignBatch } from "@/lib/duties";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
-import { sendEmail } from "@/lib/email/resend";
-import { appUrl } from "@/lib/app-url";
-import { createUnsubscribeToken } from "@/lib/marketing-token";
-import CampaignEmail from "@/emails/campaign";
 import {
   emailTemplateSchema,
   campaignSchema,
+  segmentSchema,
   type EmailTemplateInput,
   type CampaignInput,
+  type SegmentInput,
 } from "@/lib/validation/marketing";
 import type { Prisma } from "@prisma/client";
 
@@ -77,69 +75,95 @@ export async function deleteTemplate(id: string): Promise<ActionResult> {
 
 // ---------- Campaigns ----------
 
-const SEND_DELAY_MS = 600; // Resend free tier allows 2 req/s
+// ---------- Audience segments ----------
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function deliverTo(
-  recipient: { id: string; email: string },
-  campaign: { id: string; subject: string; body: unknown },
-): Promise<void> {
-  const unsubscribeUrl = `${appUrl()}/unsubscribe?token=${createUnsubscribeToken(recipient.id)}`;
-  try {
-    const result = await sendEmail({
-      to: recipient.email,
-      subject: campaign.subject,
-      react: (
-        <CampaignEmail
-          subject={campaign.subject}
-          body={campaign.body}
-          unsubscribeUrl={unsubscribeUrl}
-        />
-      ),
-      devHint: `campaign ${campaign.id} → ${recipient.email}`,
-    });
-    await prisma.campaignRecipient.update({
-      where: { campaignId_userId: { campaignId: campaign.id, userId: recipient.id } },
-      data: result.ok
-        ? { sentAt: new Date(), error: null }
-        : { error: "Email provider rejected the send" },
-    });
-  } catch (err) {
-    await prisma.campaignRecipient.update({
-      where: { campaignId_userId: { campaignId: campaign.id, userId: recipient.id } },
-      data: { error: String(err instanceof Error ? err.message : err).slice(0, 500) },
-    });
+/** Save the composer's current filters so a recurring send is one click. */
+export async function saveSegment(input: SegmentInput): Promise<ActionResult> {
+  await requireAdmin();
+  const parsed = segmentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
+  await prisma.audienceSegment.create({
+    data: {
+      name: parsed.data.name,
+      filter: parsed.data.filter as Prisma.InputJsonValue,
+    },
+  });
+  revalidatePath("/admin/marketing");
+  return { ok: true };
 }
 
-async function finalizeCampaignStatus(campaignId: string): Promise<void> {
-  const failed = await prisma.campaignRecipient.count({
-    where: { campaignId, sentAt: null },
-  });
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: failed === 0 ? { status: "SENT", sentAt: new Date() } : { status: "FAILED" },
-  });
+export async function deleteSegment(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  await prisma.audienceSegment.delete({ where: { id } });
+  revalidatePath("/admin/marketing");
+  return { ok: true };
 }
+
+// ---------- Campaigns ----------
 
 /**
- * Resolve the eligible audience for a campaign. Never trusts the client list —
- * re-filters to ACTIVE clients who haven't opted out, which also covers races
- * with /unsubscribe between composing and sending.
+ * Turn the composer's "client:<id>" / "lead:<id>" keys into recipient rows.
+ * Never trusts the submitted list — it re-resolves against the mailable
+ * audience, which also covers races with /unsubscribe between composing and
+ * sending. The address and merge values are snapshotted onto the row.
  */
-async function eligibleRecipients(recipientIds: string[]) {
-  return prisma.user.findMany({
-    where: {
-      id: { in: recipientIds },
-      role: "CLIENT",
-      status: "ACTIVE",
-      marketingOptOut: false,
-    },
-    select: { id: true, email: true },
-  });
+async function resolveRecipientRows(
+  keys: string[],
+): Promise<Prisma.CampaignRecipientCreateWithoutCampaignInput[]> {
+  const clientIds: string[] = [];
+  const leadIds: string[] = [];
+  for (const key of keys) {
+    // Bare ids are legacy client ids from before leads could be mailed.
+    if (key.startsWith("lead:")) leadIds.push(key.slice(5));
+    else clientIds.push(key.startsWith("client:") ? key.slice(7) : key);
+  }
+
+  const [clients, leads] = await Promise.all([
+    clientIds.length
+      ? prisma.user.findMany({
+          where: {
+            id: { in: clientIds },
+            role: "CLIENT",
+            status: "ACTIVE",
+            marketingOptOut: false,
+          },
+          select: { id: true, email: true, firstName: true, company: true },
+        })
+      : Promise.resolve([]),
+    leadIds.length
+      ? prisma.lead.findMany({
+          where: { id: { in: leadIds }, email: { not: null }, marketingOptOut: false },
+          select: { id: true, email: true, name: true, company: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const rows: Prisma.CampaignRecipientCreateWithoutCampaignInput[] = [];
+  const seen = new Set<string>();
+  for (const c of clients) {
+    if (seen.has(c.email.toLowerCase())) continue;
+    seen.add(c.email.toLowerCase());
+    rows.push({
+      user: { connect: { id: c.id } },
+      email: c.email,
+      firstName: c.firstName,
+      company: c.company,
+    });
+  }
+  for (const l of leads) {
+    const email = l.email!;
+    if (seen.has(email.toLowerCase())) continue;
+    seen.add(email.toLowerCase());
+    rows.push({
+      lead: { connect: { id: l.id } },
+      email,
+      firstName: l.name.split(" ")[0] ?? l.name,
+      company: l.company,
+    });
+  }
+  return rows;
 }
 
 /** Save a campaign without sending it. Editable until it is queued. */
@@ -152,7 +176,7 @@ export async function saveCampaignDraft(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
-  const eligible = await eligibleRecipients(data.recipientIds);
+  const rows = await resolveRecipientRows(data.recipientIds);
 
   const campaign = await prisma.campaign.create({
     data: {
@@ -160,7 +184,7 @@ export async function saveCampaignDraft(
       body: data.body as Prisma.InputJsonValue,
       templateId: data.templateId || null,
       status: "DRAFT",
-      recipients: { create: eligible.map((u) => ({ userId: u.id })) },
+      recipients: { create: rows },
     },
   });
 
@@ -188,7 +212,7 @@ export async function updateCampaign(
   }
 
   const data = parsed.data;
-  const eligible = await eligibleRecipients(data.recipientIds);
+  const rows = await resolveRecipientRows(data.recipientIds);
 
   await prisma.$transaction([
     prisma.campaignRecipient.deleteMany({ where: { campaignId: id, sentAt: null } }),
@@ -198,7 +222,7 @@ export async function updateCampaign(
         subject: data.subject,
         body: data.body as Prisma.InputJsonValue,
         templateId: data.templateId || null,
-        recipients: { create: eligible.map((u) => ({ userId: u.id })) },
+        recipients: { create: rows },
       },
     }),
   ]);
@@ -297,7 +321,11 @@ export async function duplicateCampaign(
   await requireAdmin();
   const source = await prisma.campaign.findUnique({
     where: { id },
-    include: { recipients: { select: { userId: true } } },
+    include: {
+      recipients: {
+        select: { userId: true, leadId: true, email: true, firstName: true, company: true },
+      },
+    },
   });
   if (!source) return { ok: false, error: "Campaign not found." };
 
@@ -308,9 +336,13 @@ export async function duplicateCampaign(
       templateId: source.templateId,
       status: "DRAFT",
       recipients: {
-        create: source.recipients
-          .filter((r) => r.userId)
-          .map((r) => ({ userId: r.userId })),
+        create: source.recipients.map((r) => ({
+          userId: r.userId,
+          leadId: r.leadId,
+          email: r.email,
+          firstName: r.firstName,
+          company: r.company,
+        })),
       },
     },
   });
@@ -329,11 +361,9 @@ export async function sendCampaign(
   }
   const data = parsed.data;
 
-  // Never trust the client-side list: re-filter against eligible recipients
-  // (ACTIVE clients who haven't opted out — covers races with /unsubscribe).
-  const eligible = await eligibleRecipients(data.recipientIds);
-  if (eligible.length === 0) {
-    return { ok: false, error: "None of the selected clients can receive marketing email." };
+  const rows = await resolveRecipientRows(data.recipientIds);
+  if (rows.length === 0) {
+    return { ok: false, error: "None of the selected people can receive marketing email." };
   }
 
   // Queued, not sent inline: the duties engine drains it in bounded batches so
@@ -344,7 +374,7 @@ export async function sendCampaign(
       body: data.body as Prisma.InputJsonValue,
       templateId: data.templateId || null,
       status: "QUEUED",
-      recipients: { create: eligible.map((u) => ({ userId: u.id })) },
+      recipients: { create: rows },
     },
   });
 
@@ -353,43 +383,30 @@ export async function sendCampaign(
   return { ok: true, data: { id: campaign.id } };
 }
 
-/** Re-send only the rows that failed or never got sent (e.g. after a timeout). */
+/**
+ * Re-send only the rows that failed. Clearing the error puts them back in the
+ * drain's pending set — the send itself still happens in bounded batches.
+ */
 export async function retryCampaignRecipients(
   campaignId: string,
 ): Promise<ActionResult> {
   await requireAdmin();
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    include: {
-      recipients: {
-        where: { sentAt: null },
-        include: { user: { select: { id: true, email: true, marketingOptOut: true, status: true } } },
-      },
-    },
+    select: { id: true, _count: { select: { recipients: { where: { sentAt: null } } } } },
   });
   if (!campaign) return { ok: false, error: "Campaign not found." };
-  if (campaign.recipients.length === 0) {
+  if (campaign._count.recipients === 0) {
     return { ok: false, error: "Nothing to retry — everyone received this campaign." };
   }
 
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: { status: "SENDING" },
-  });
-
-  for (const [index, row] of campaign.recipients.entries()) {
-    // Skip anyone who opted out or was deactivated since the original send.
-    if (row.user.marketingOptOut || row.user.status !== "ACTIVE") {
-      await prisma.campaignRecipient.update({
-        where: { id: row.id },
-        data: { error: "Skipped — recipient opted out or is inactive" },
-      });
-      continue;
-    }
-    if (index > 0) await sleep(SEND_DELAY_MS);
-    await deliverTo(row.user, campaign);
-  }
-  await finalizeCampaignStatus(campaignId);
+  await prisma.$transaction([
+    prisma.campaignRecipient.updateMany({
+      where: { campaignId, sentAt: null },
+      data: { error: null },
+    }),
+    prisma.campaign.update({ where: { id: campaignId }, data: { status: "QUEUED" } }),
+  ]);
 
   revalidatePath("/admin/marketing");
   revalidatePath(`/admin/marketing/${campaignId}`);

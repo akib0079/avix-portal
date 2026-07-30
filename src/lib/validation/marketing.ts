@@ -28,3 +28,22 @@ export const campaignSchema = z
   });
 
 export type CampaignInput = z.infer<typeof campaignSchema>;
+
+export const audienceFilterSchema = z.object({
+  audience: z.enum(["clients", "leads", "both"]).default("both"),
+  search: z.string().trim().max(120).optional(),
+  stages: z.array(z.enum(["NEW", "CONTACTED", "PROPOSAL", "WON", "LOST"])).optional(),
+  sources: z
+    .array(z.enum(["FIVERR", "UPWORK", "REFERRAL", "WEBSITE", "OTHER"]))
+    .optional(),
+  hasActiveProject: z.boolean().optional(),
+});
+
+export type AudienceFilterInput = z.infer<typeof audienceFilterSchema>;
+
+export const segmentSchema = z.object({
+  name: z.string().trim().min(1, "Name this segment").max(80),
+  filter: audienceFilterSchema,
+});
+
+export type SegmentInput = z.infer<typeof segmentSchema>;

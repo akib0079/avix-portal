@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { JSONContent } from "@tiptap/react";
-import { getCampaign, listTemplates, listMarketingRecipients } from "@/lib/dal/marketing";
+import { getCampaign, listTemplates, listAudience, listSegments } from "@/lib/dal/marketing";
+import type { AudienceFilterInput } from "@/lib/validation/marketing";
 import { PageHeader } from "@/components/page-header";
 import { CampaignComposer } from "@/components/marketing/campaign-composer";
 import { ArrowLeft } from "lucide-react";
@@ -16,10 +17,11 @@ export default async function EditCampaignPage({
 }) {
   await requireAdmin();
   const { id } = await params;
-  const [campaign, templates, recipients] = await Promise.all([
+  const [campaign, templates, audience, segments] = await Promise.all([
     getCampaign(id),
     listTemplates(),
-    listMarketingRecipients(),
+    listAudience(),
+    listSegments(),
   ]);
   if (!campaign) notFound();
   // Once it's queued the recipient rows are being written to — read-only from here.
@@ -47,14 +49,21 @@ export default async function EditCampaignPage({
           body: t.body,
           updatedAt: t.updatedAt.toISOString(),
         }))}
-        recipients={recipients}
+        audience={audience}
+        segments={segments.map((seg) => ({
+          id: seg.id,
+          name: seg.name,
+          filter: seg.filter as AudienceFilterInput,
+        }))}
         draft={{
           id: campaign.id,
           subject: campaign.subject,
           body: (campaign.body as JSONContent) ?? null,
           templateId: campaign.templateId,
           recipientIds: campaign.recipients
-            .map((r) => r.user?.id)
+            .map((r) =>
+              r.userId ? `client:${r.userId}` : r.leadId ? `lead:${r.leadId}` : null,
+            )
             .filter((v): v is string => Boolean(v)),
         }}
       />

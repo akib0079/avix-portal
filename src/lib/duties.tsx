@@ -5,7 +5,11 @@ import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
 import { googleCalendarUrl, formatInTimezone } from "@/lib/calendar-links";
-import { createMeetingIcsToken, createUnsubscribeToken } from "@/lib/marketing-token";
+import {
+  createMeetingIcsToken,
+  createUnsubscribeToken,
+  createLeadUnsubscribeToken,
+} from "@/lib/marketing-token";
 import MeetingScheduledEmail from "@/emails/meeting-scheduled";
 import CampaignEmail from "@/emails/campaign";
 
@@ -30,11 +34,14 @@ function sleep(ms: number) {
  */
 async function deliverCampaignEmail(
   campaign: { id: string; subject: string; body: unknown },
-  recipientRowId: string,
-  userId: string,
-  email: string,
+  recipient: { id: string; email: string; userId: string | null; leadId: string | null },
 ): Promise<void> {
-  const unsubscribeUrl = `${appUrl()}/unsubscribe?token=${createUnsubscribeToken(userId)}`;
+  const recipientRowId = recipient.id;
+  const email = recipient.email;
+  const token = recipient.userId
+    ? createUnsubscribeToken(recipient.userId)
+    : createLeadUnsubscribeToken(recipient.leadId ?? "");
+  const unsubscribeUrl = `${appUrl()}/unsubscribe?token=${token}`;
   try {
     const result = await sendEmail({
       to: email,
@@ -221,7 +228,10 @@ async function runCampaignBatch(
   const pending = await prisma.campaignRecipient.findMany({
     where: { campaignId: campaign.id, sentAt: null, error: null },
     take: CAMPAIGN_BATCH,
-    include: { user: { select: { id: true, email: true, status: true, marketingOptOut: true } } },
+    include: {
+      user: { select: { id: true, email: true, status: true, marketingOptOut: true } },
+      lead: { select: { id: true, email: true, marketingOptOut: true } },
+    },
   });
 
   if (pending.length === 0) {
@@ -247,16 +257,32 @@ async function runCampaignBatch(
 
   for (const [index, row] of pending.entries()) {
     if (index > 0) await sleep(CAMPAIGN_SEND_DELAY_MS);
-    const user = row.user;
-    // Someone may have opted out between composing and sending.
-    if (!user || user.status !== "ACTIVE" || user.marketingOptOut) {
+    // Someone may have opted out between composing and sending. The snapshot
+    // on the row is what we mail; the source record is only consulted for
+    // permission.
+    const optedOut = row.user
+      ? row.user.status !== "ACTIVE" || row.user.marketingOptOut
+      : row.lead
+        ? row.lead.marketingOptOut
+        : false;
+    const email = row.email ?? row.user?.email ?? row.lead?.email ?? null;
+    if (optedOut || !email) {
       await prisma.campaignRecipient.update({
         where: { id: row.id },
-        data: { error: "Skipped — recipient opted out or is inactive" },
+        data: {
+          error: email
+            ? "Skipped — recipient opted out or is inactive"
+            : "Skipped — no email address on file",
+        },
       });
       continue;
     }
-    await deliverCampaignEmail(campaign, row.id, user.id, user.email);
+    await deliverCampaignEmail(campaign, {
+      id: row.id,
+      email,
+      userId: row.userId,
+      leadId: row.leadId,
+    });
   }
 
   return prisma.campaignRecipient.count({

@@ -44,25 +44,17 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
-import { cn } from "@/lib/utils";
+import { AudiencePicker, type SegmentOption } from "@/components/marketing/audience-picker";
+import type { AudienceEntry } from "@/lib/dal/marketing";
 import {
   Loader2,
   Send,
   Eye,
   EyeOff,
   TriangleAlert,
-  Check,
   Save,
   Clock,
 } from "lucide-react";
-
-export type RecipientOption = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  company: string | null;
-};
 
 const TIMEOUT_WARN_COUNT = 40;
 
@@ -77,12 +69,14 @@ export type CampaignDraft = {
 
 export function CampaignComposer({
   templates,
-  recipients,
+  audience,
+  segments,
   initialTemplateId,
   draft,
 }: {
   templates: TemplateView[];
-  recipients: RecipientOption[];
+  audience: AudienceEntry[];
+  segments: SegmentOption[];
   initialTemplateId?: string;
   draft?: CampaignDraft;
 }) {
@@ -105,8 +99,6 @@ export function CampaignComposer({
 
   const selectedIds = form.watch("recipientIds");
   const body = form.watch("body");
-  const allSelected =
-    recipients.length > 0 && selectedIds.length === recipients.length;
 
   function applyTemplate(id: string) {
     const template = templates.find((t) => t.id === id);
@@ -117,19 +109,12 @@ export function CampaignComposer({
     }
   }
 
-  function toggleRecipient(id: string) {
-    const next = selectedIds.includes(id)
-      ? selectedIds.filter((r) => r !== id)
-      : [...selectedIds, id];
-    form.setValue("recipientIds", next, { shouldValidate: true });
-  }
-
   const [scheduling, setScheduling] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
 
   const selectedRecipients = useMemo(
-    () => recipients.filter((r) => selectedIds.includes(r.id)),
-    [recipients, selectedIds],
+    () => audience.filter((r) => selectedIds.includes(r.key)),
+    [audience, selectedIds],
   );
 
   /**
@@ -318,79 +303,14 @@ export function CampaignComposer({
               name="recipientIds"
               render={() => (
                 <FormItem>
-                  <div className="mb-3 flex items-center justify-between">
-                    <div>
-                      <FormLabel className="text-base">
-                        Recipients{" "}
-                        <span className="text-sm font-normal text-muted-foreground">
-                          ({selectedIds.length} of {recipients.length})
-                        </span>
-                      </FormLabel>
-                      <p className="text-xs text-muted-foreground">
-                        Active clients who haven&apos;t unsubscribed from marketing.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        form.setValue(
-                          "recipientIds",
-                          allSelected ? [] : recipients.map((r) => r.id),
-                          { shouldValidate: true },
-                        )
-                      }
-                      disabled={recipients.length === 0}
-                    >
-                      {allSelected ? "Clear all" : "Select all"}
-                    </Button>
-                  </div>
-
-                  {recipients.length === 0 ? (
-                    <div className="rounded-xl border border-dashed py-10 text-center text-sm text-muted-foreground">
-                      No eligible clients — add active clients first.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {recipients.map((r) => {
-                        const checked = selectedIds.includes(r.id);
-                        return (
-                          <button
-                            type="button"
-                            key={r.id}
-                            onClick={() => toggleRecipient(r.id)}
-                            className={cn(
-                              "flex items-center gap-3 rounded-lg border p-3 text-left transition-colors",
-                              checked
-                                ? "border-primary/40 bg-brand-tint"
-                                : "hover:bg-muted/50",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "flex size-5 shrink-0 items-center justify-center rounded border",
-                                checked
-                                  ? "border-primary bg-primary text-white"
-                                  : "border-input bg-card",
-                              )}
-                            >
-                              {checked && <Check className="size-3.5" />}
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block truncate text-sm font-medium">
-                                {r.firstName} {r.lastName}
-                                {r.company ? ` — ${r.company}` : ""}
-                              </span>
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {r.email}
-                              </span>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+                  <AudiencePicker
+                    audience={audience}
+                    segments={segments}
+                    value={selectedIds}
+                    onChange={(next) =>
+                      form.setValue("recipientIds", next, { shouldValidate: true })
+                    }
+                  />
                   <FormMessage />
                 </FormItem>
               )}
@@ -435,7 +355,10 @@ export function CampaignComposer({
       <Dialog open={confirming} onOpenChange={(open) => !sending && setConfirming(open)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Send to {selectedRecipients.length} client{selectedRecipients.length === 1 ? "" : "s"}?</DialogTitle>
+            <DialogTitle>
+              Send to {selectedRecipients.length} recipient
+              {selectedRecipients.length === 1 ? "" : "s"}?
+            </DialogTitle>
             <DialogDescription>
               “{form.watch("subject")}” gets queued and sends in the background,
               so you can close this page. Each email includes an unsubscribe link.
@@ -443,8 +366,8 @@ export function CampaignComposer({
           </DialogHeader>
           <div className="max-h-40 overflow-y-auto rounded-lg border p-3 text-sm">
             {selectedRecipients.map((r) => (
-              <p key={r.id} className="truncate text-muted-foreground">
-                {r.firstName} {r.lastName} · {r.email}
+              <p key={r.key} className="truncate text-muted-foreground">
+                {r.name} · {r.email}
               </p>
             ))}
           </div>

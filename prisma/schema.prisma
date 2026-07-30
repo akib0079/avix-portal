@@ -531,11 +531,14 @@ model Lead {
   /// Required when the lead is moved to LOST — why we didn't win it.
   lostReason        String?
   tags              String[]   @default([])
+  /// Opted out of marketing email (set from the unsubscribe link).
+  marketingOptOut   Boolean    @default(false)
   convertedClientId String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
   proposals         Proposal[]
   entries           LeadEntry[]
+  campaignRecipients CampaignRecipient[]
 
   @@index([stage, nextFollowUp])
   @@index([ownerId])
@@ -781,16 +784,38 @@ model Campaign {
   @@map("campaigns")
 }
 
+/// One addressee of a campaign. Either a client (userId) or a lead (leadId) —
+/// the address and merge values are snapshotted here so a send is reproducible
+/// even if the source record changes or is deleted afterwards.
 model CampaignRecipient {
   id         String    @id @default(cuid())
   campaignId String
   campaign   Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  userId     String
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leadId     String?
+  lead       Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  /// The address actually mailed. Nullable only for legacy rows; always set now.
+  email      String?
+  firstName  String?
+  company    String?
   sentAt     DateTime?
   error      String?
 
-  @@unique([campaignId, userId])
+  @@unique([campaignId, email])
   @@index([userId])
+  @@index([leadId])
   @@map("campaign_recipients")
+}
+
+/// A saved audience filter, so a recurring send doesn't have to be rebuilt by hand.
+model AudienceSegment {
+  id        String   @id @default(cuid())
+  name      String
+  /// {audience, stages?, sources?, tags?, hasActiveProject?}
+  filter    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("audience_segments")
 }

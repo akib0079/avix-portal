@@ -10,12 +10,18 @@ export default async function UnsubscribePage({
   searchParams: Promise<{ token?: string }>;
 }) {
   const { token } = await searchParams;
-  const userId = token ? verifyUnsubscribeToken(token) : null;
+  const subject = token ? verifyUnsubscribeToken(token) : null;
 
   let ok = false;
-  if (userId) {
+  if (subject?.startsWith("lead:")) {
+    const result = await prisma.lead.updateMany({
+      where: { id: subject.slice(5) },
+      data: { marketingOptOut: true },
+    });
+    ok = result.count > 0;
+  } else if (subject) {
     const result = await prisma.user.updateMany({
-      where: { id: userId },
+      where: { id: subject },
       data: { marketingOptOut: true },
     });
     ok = result.count > 0;
