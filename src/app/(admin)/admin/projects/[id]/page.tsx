@@ -1,32 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProject } from "@/lib/dal/projects";
+import { getProject, getProjectWorkspace } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { listByProject } from "@/lib/dal/deliverables";
 import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
 import { MilestoneBoard } from "@/components/boards-lazy";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
-import { ProjectTimeSummary } from "@/components/projects/project-time-summary";
-import { ProjectStatusBadge, PriorityBadge, InvoiceStatusBadge } from "@/components/status-badges";
+import { ProjectRail } from "@/components/projects/project-rail";
+import { ProjectTabs } from "@/components/projects/project-tabs";
+import { ProjectAttention } from "@/components/projects/project-attention";
+import { ProjectMoney } from "@/components/projects/project-money";
+import { ProjectRequests } from "@/components/projects/project-requests";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  usd,
-  formatDate,
-  projectTypeLabels,
-  projectSourceLabels,
-} from "@/lib/format";
-import { ArrowLeft, Pencil, CalendarDays } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { projectHealth, pendingWork } from "@/lib/project-health";
+import { ArrowLeft } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
 
 export const metadata = { title: "Project" };
@@ -37,19 +27,124 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [viewer, project, messages, deliverables] = await Promise.all([
+  const [viewer, project, messages, deliverables, workspace] = await Promise.all([
     requireTeam(),
     getProject(id),
     getProjectMessages(id),
     listByProject(id),
+    getProjectWorkspace(id),
   ]);
   if (!project) notFound();
   // Staff are money-blind. getProject already strips prices server-side; this
   // just avoids rendering empty money shells and the billing editor for them.
   const isAdmin = viewer.role === "ADMIN";
 
-  const milestones = project.milestones.map(toMilestoneView);
-  const showDates = project.startDate || project.dueDate;
+  // The milestone include is capped at a recent page of time entries, so the
+  // true totals come from the workspace aggregate.
+  const milestones = project.milestones.map((m) => {
+    const view = toMilestoneView(m);
+    return {
+      ...view,
+      loggedHours: workspace.loggedHoursByMilestone[m.id] ?? view.loggedHours,
+    };
+  });
+
+  const health = projectHealth({
+    milestones,
+    status: project.status,
+    dueDate: project.dueDate,
+  });
+  const pending = pendingWork({
+    milestones,
+    deliverables,
+    requests: workspace.requests,
+    invoices: project.invoices,
+  });
+
+  const tabs = [
+    {
+      value: "milestones",
+      label: "Milestones",
+      count: milestones.length,
+      content: (
+        <Card>
+          <CardContent className="pt-6">
+            <MilestoneBoard
+              projectId={project.id}
+              milestones={milestones}
+              billingType={project.billingType}
+              canEditPricing={isAdmin}
+            />
+          </CardContent>
+        </Card>
+      ),
+    },
+    {
+      value: "deliverables",
+      label: "Deliverables",
+      count: deliverables.length,
+      alert: pending.deliverablesNeedingChanges > 0,
+      content: isAdmin ? (
+        <DeliverablesCard projectId={project.id} deliverables={deliverables} />
+      ) : (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            Deliverables are managed by an admin.
+          </CardContent>
+        </Card>
+      ),
+    },
+    {
+      value: "requests",
+      label: "Requests",
+      count: workspace.requests.length,
+      alert: pending.openRequests > 0,
+      content: (
+        <ProjectRequests requests={workspace.requests} meetings={workspace.meetings} />
+      ),
+    },
+    ...(isAdmin
+      ? [
+          {
+            value: "money",
+            label: "Money",
+            count: project.invoices.length,
+            alert: pending.unpaidInvoices > 0,
+            content: (
+              <ProjectMoney
+                milestones={milestones}
+                billingType={project.billingType}
+                contractPrice={
+                  project.contractPrice == null ? null : Number(project.contractPrice)
+                }
+                invoices={project.invoices.map((i) => ({
+                  id: i.id,
+                  invoiceNumber: i.invoiceNumber,
+                  issueDate: i.issueDate,
+                  amount: Number(i.amount),
+                  status: i.status,
+                }))}
+                retainers={workspace.retainers}
+              />
+            ),
+          },
+        ]
+      : []),
+    {
+      value: "activity",
+      label: "Activity",
+      content: (
+        <Card>
+          <CardContent className="pt-6">
+            <ActivityFeed
+              items={workspace.activity}
+              emptyLabel="Nothing recorded on this project yet."
+            />
+          </CardContent>
+        </Card>
+      ),
+    },
+  ];
 
   return (
     <div>
@@ -60,135 +155,55 @@ export default async function ProjectDetailPage({
         <ArrowLeft className="size-4" /> Back to Projects
       </Link>
 
-      <Card className="mb-6">
-        <CardContent className="pt-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="font-heading text-2xl font-bold">{project.projectName}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {project.client ? (
-                  <Link
-                    href={`/admin/clients/${project.client.id}`}
-                    className="hover:text-primary"
-                  >
-                    {project.client.firstName} {project.client.lastName}
-                    {project.client.company ? ` (${project.client.company})` : ""}
-                  </Link>
-                ) : (
-                  "No client"
-                )}{" "}
-                · {projectTypeLabels[project.type]} ·{" "}
-                {projectSourceLabels[project.source]}
-              </p>
-              {showDates && (
-                <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-                  <CalendarDays className="size-3.5" />
-                  {formatDate(project.startDate)} → {formatDate(project.dueDate)}
-                </p>
-              )}
-              {isAdmin && project.billingType === "CONTRACT" && (
-                <p className="mt-1 text-sm font-medium text-primary">
-                  {project.contractPrice != null
-                    ? `${usd.format(Number(project.contractPrice))} fixed contract`
-                    : "Fixed contract"}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <PriorityBadge priority={project.priority} />
-              <ProjectStatusBadge status={project.status} />
-              {isAdmin && (
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/admin/projects/${project.id}/edit`}>
-                    <Pencil /> Edit Project
-                  </Link>
-                </Button>
-              )}
-            </div>
-          </div>
-          {hasRichTextContent(project.description) && (
-            <div className="mt-4 border-t pt-4">
-              <RichTextViewer content={project.description} />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {isAdmin && (
-        <ProjectTimeSummary
-          milestones={milestones}
-          billingType={project.billingType}
-          contractPrice={
-            project.contractPrice == null ? null : Number(project.contractPrice)
-          }
-        />
-      )}
-
-      <Card className="mb-6">
-        <CardContent className="pt-6">
-          <MilestoneBoard
-            projectId={project.id}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px_1fr]">
+        {/* Context rail — sticks while you work in the tabs beside it. */}
+        <div className="xl:sticky xl:top-16 xl:self-start">
+          <ProjectRail
+            project={{
+              id: project.id,
+              projectName: project.projectName,
+              status: project.status,
+              priority: project.priority,
+              type: project.type,
+              source: project.source,
+              startDate: project.startDate?.toISOString() ?? null,
+              dueDate: project.dueDate?.toISOString() ?? null,
+              billingType: project.billingType,
+              contractPrice:
+                project.contractPrice == null ? null : Number(project.contractPrice),
+              client: project.client
+                ? {
+                    id: project.client.id,
+                    firstName: project.client.firstName,
+                    lastName: project.client.lastName,
+                    company: project.client.company,
+                  }
+                : null,
+            }}
             milestones={milestones}
-            billingType={project.billingType}
-            canEditPricing={isAdmin}
+            canEdit={isAdmin}
           />
-        </CardContent>
-      </Card>
 
-      {isAdmin && (
-        <DeliverablesCard projectId={project.id} deliverables={deliverables} />
-      )}
-
-      {isAdmin && (
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-heading text-lg">
-            Invoices ({project.invoices.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {project.invoices.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              No invoices linked to this project.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice</TableHead>
-                  <TableHead className="hidden sm:table-cell">Issued</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {project.invoices.map((invoice) => (
-                  <TableRow key={invoice.id}>
-                    <TableCell>
-                      <Link
-                        href={`/admin/invoices/${invoice.id}`}
-                        className="font-medium hover:text-primary"
-                      >
-                        {invoice.invoiceNumber}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                      {formatDate(invoice.issueDate)}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {usd.format(Number(invoice.amount))}
-                    </TableCell>
-                    <TableCell>
-                      <InvoiceStatusBadge status={invoice.status} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          {hasRichTextContent(project.description) && (
+            <Card className="mt-4">
+              <CardContent className="pt-6">
+                <h2 className="font-heading mb-2 text-sm font-semibold">Brief</h2>
+                <RichTextViewer content={project.description} />
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
-      )}
+        </div>
+
+        <div className="min-w-0">
+          <ProjectAttention
+            pending={pending}
+            projectId={project.id}
+            overdue={health.overdue}
+            className="mb-4"
+          />
+          <ProjectTabs tabs={tabs} defaultTab="milestones" />
+        </div>
+      </div>
 
       {project.client && (
         <ChatWidget

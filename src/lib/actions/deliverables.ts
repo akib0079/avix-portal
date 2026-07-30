@@ -133,6 +133,7 @@ export async function reviewDeliverable(
     summary: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"} “${deliverable.title}”`,
     actorId: user.id,
     clientId: user.id,
+    projectId: deliverable.project.id,
     entity: "project",
     entityId: deliverable.project.id,
     link: `/admin/projects/${deliverable.project.id}`,

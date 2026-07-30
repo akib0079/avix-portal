@@ -7,7 +7,7 @@ import { projectSchema, type ProjectInput } from "@/lib/validation/project";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { sendProjectCreatedEmail } from "@/lib/email/project-emails";
 import { projectTypeLabels } from "@/lib/format";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, Priority, ProjectStatus } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -123,6 +123,40 @@ export async function updateProject(
     },
   });
 
+  revalidatePath("/admin/projects");
+  revalidatePath(`/admin/projects/${id}`);
+  return { ok: true };
+}
+
+/**
+ * Inline status / priority changes from the project rail. Separate from
+ * updateProject so a one-field change doesn't have to round-trip the whole
+ * form (and can't accidentally blank a field the rail doesn't show).
+ */
+export async function setProjectStatus(
+  id: string,
+  status: ProjectStatus,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true } });
+  if (!project) return { ok: false, error: "Project not found." };
+
+  await prisma.project.update({ where: { id }, data: { status } });
+  revalidatePath("/admin/projects");
+  revalidatePath(`/admin/projects/${id}`);
+  revalidatePath(`/portal/projects/${id}`);
+  return { ok: true };
+}
+
+export async function setProjectPriority(
+  id: string,
+  priority: Priority,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true } });
+  if (!project) return { ok: false, error: "Project not found." };
+
+  await prisma.project.update({ where: { id }, data: { priority } });
   revalidatePath("/admin/projects");
   revalidatePath(`/admin/projects/${id}`);
   return { ok: true };

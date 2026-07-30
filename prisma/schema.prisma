@@ -474,6 +474,8 @@ model ActivityEvent {
   actorId   String?
   /// The client this event concerns, for the per-client timeline.
   clientId  String?
+  /// The project it concerns, when it has one — powers the project activity tab.
+  projectId String?
   /// Entity kind + id it points at, e.g. entity="invoice".
   entity    String?
   entityId  String?
@@ -483,6 +485,7 @@ model ActivityEvent {
 
   @@index([createdAt])
   @@index([clientId, createdAt])
+  @@index([projectId, createdAt])
   @@map("activity_events")
 }
 

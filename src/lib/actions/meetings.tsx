@@ -123,6 +123,7 @@ export async function createMeeting(
     type: "meeting.scheduled",
     summary: `Meeting scheduled: ${meeting.title}`,
     clientId: client.id,
+    projectId: meeting.projectId,
     entity: "meeting",
     entityId: meeting.id,
     link: "/admin/calendar",

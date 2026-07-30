@@ -6,6 +6,8 @@ export type ActivityInput = {
   summary: string;
   actorId?: string | null;
   clientId?: string | null;
+  /** Set whenever the event belongs to a project — feeds the project timeline. */
+  projectId?: string | null;
   entity?: string | null;
   entityId?: string | null;
   link?: string | null;
@@ -24,6 +26,7 @@ export async function logActivity(input: ActivityInput): Promise<void> {
         summary: input.summary,
         actorId: input.actorId ?? null,
         clientId: input.clientId ?? null,
+        projectId: input.projectId ?? null,
         entity: input.entity ?? null,
         entityId: input.entityId ?? null,
         link: input.link ?? null,
@@ -34,10 +37,20 @@ export async function logActivity(input: ActivityInput): Promise<void> {
   }
 }
 
-/** Recent activity, newest first. Scope to a client with clientId. Admin-only reads. */
-export async function listActivity(opts?: { clientId?: string; take?: number }) {
+/**
+ * Recent activity, newest first. Scope with clientId or projectId.
+ * Admin-only reads.
+ */
+export async function listActivity(opts?: {
+  clientId?: string;
+  projectId?: string;
+  take?: number;
+}) {
   const rows = await prisma.activityEvent.findMany({
-    where: opts?.clientId ? { clientId: opts.clientId } : undefined,
+    where: {
+      ...(opts?.clientId ? { clientId: opts.clientId } : {}),
+      ...(opts?.projectId ? { projectId: opts.projectId } : {}),
+    },
     orderBy: { createdAt: "desc" },
     take: opts?.take ?? 20,
     select: {

@@ -200,6 +200,7 @@ export async function setMilestoneStatus(
       type: "milestone.completed",
       summary: `Milestone completed: ${milestone.title} (${milestone.project.projectName})`,
       clientId: client.id,
+      projectId: milestone.projectId,
       entity: "project",
       entityId: milestone.projectId,
       link: `/admin/projects/${milestone.projectId}`,

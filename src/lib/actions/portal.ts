@@ -40,6 +40,7 @@ export async function approveMilestone(id: string): Promise<ActionResult> {
     summary: `${user.firstName || "Client"} approved milestone: ${milestone.title}`,
     actorId: user.id,
     clientId: user.id,
+    projectId: milestone.project.id,
     entity: "project",
     entityId: milestone.project.id,
     link: `/admin/projects/${milestone.project.id}`,

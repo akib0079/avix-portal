@@ -23,6 +23,9 @@ export async function listProjects() {
   return projects;
 }
 
+/** How many recent time entries each milestone carries into the page. */
+const RECENT_TIME_ENTRIES = 20;
+
 export async function getProject(id: string) {
   const viewer = await requireTeam();
   const project = await prisma.project.findUnique({
@@ -40,7 +43,15 @@ export async function getProject(id: string) {
       },
       milestones: {
         orderBy: { position: "asc" },
-        include: { timeEntries: { orderBy: [{ date: "desc" }, { createdAt: "desc" }] } },
+        include: {
+          // Bounded: a long-running milestone can accumulate hundreds of
+          // entries and the page only ever shows the recent ones. Totals come
+          // from the aggregate below, not from this list.
+          timeEntries: {
+            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+            take: RECENT_TIME_ENTRIES,
+          },
+        },
       },
       invoices: { orderBy: { createdAt: "desc" } },
     },
@@ -60,4 +71,103 @@ export async function getProject(id: string) {
     };
   }
   return project;
+}
+
+
+export type ProjectWorkspace = Awaited<ReturnType<typeof getProjectWorkspace>>;
+
+/**
+ * Everything the project page's tabs need beyond the project itself: true
+ * logged-hour totals (the milestone include is capped), open requests, the
+ * next meeting, linked retainers, and the project's audit trail.
+ *
+ * Money-bearing pieces are omitted for STAFF, matching getProject.
+ */
+export async function getProjectWorkspace(projectId: string) {
+  const viewer = await requireTeam();
+  const isAdmin = viewer.role === "ADMIN";
+  const now = new Date();
+
+  const [hourTotals, requests, meetings, retainers, activity] = await Promise.all([
+    prisma.timeEntry.groupBy({
+      by: ["milestoneId"],
+      where: { milestone: { projectId } },
+      _sum: { hours: true },
+    }),
+    prisma.taskRequest.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        adminNote: true,
+        createdAt: true,
+        resolvedAt: true,
+        milestone: { select: { id: true, title: true } },
+      },
+    }),
+    prisma.meeting.findMany({
+      where: { projectId, startsAt: { gte: now } },
+      orderBy: { startsAt: "asc" },
+      take: 5,
+      select: { id: true, title: true, startsAt: true, durationMins: true },
+    }),
+    isAdmin
+      ? prisma.retainer.findMany({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            title: true,
+            amount: true,
+            active: true,
+            dayOfMonth: true,
+          },
+        })
+      : Promise.resolve([]),
+    prisma.activityEvent.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { id: true, type: true, summary: true, link: true, createdAt: true },
+    }),
+  ]);
+
+  return {
+    /** milestoneId → total logged hours (all entries, not just the recent page). */
+    loggedHoursByMilestone: Object.fromEntries(
+      hourTotals.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
+    ) as Record<string, number>,
+    requests: requests.map((r) => ({
+      id: r.id,
+      title: r.title,
+      status: r.status,
+      adminNote: r.adminNote,
+      createdAt: r.createdAt.toISOString(),
+      resolvedAt: r.resolvedAt?.toISOString() ?? null,
+      milestone: r.milestone,
+    })),
+    meetings: meetings.map((m) => ({
+      id: m.id,
+      title: m.title,
+      startsAt: m.startsAt.toISOString(),
+      durationMins: m.durationMins,
+    })),
+    retainers: retainers.map((r) => ({
+      id: r.id,
+      title: r.title,
+      amount: Number(r.amount),
+      active: r.active,
+      dayOfMonth: r.dayOfMonth,
+    })),
+    activity: activity.map((a) => ({
+      id: a.id,
+      type: a.type,
+      summary: a.summary,
+      link: a.link,
+      createdAt: a.createdAt.toISOString(),
+    })),
+  };
 }
