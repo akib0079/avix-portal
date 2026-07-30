@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { getAdminDashboard, getTodayItems, getBusinessHealth } from "@/lib/dal/dashboard";
+import { parseRange, rangeLabels } from "@/lib/dashboard-ranges";
 import { listActivity } from "@/lib/dal/activity";
 import { getPipelineSummary } from "@/lib/dal/leads";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { BusinessHealthPanel } from "@/components/dashboard/business-health";
+import { RangeSwitcher } from "@/components/dashboard/range-switcher";
+import { CollapsibleSection } from "@/components/dashboard/collapsible-section";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { InvoiceStatusDonut } from "@/components/charts-lazy";
@@ -74,19 +77,29 @@ function AgingRow({
   );
 }
 
-export default async function AdminDashboardPage() {
+export default async function AdminDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
   await requireAdmin();
+  const range = parseRange((await searchParams).range);
   const [data, pipeline, today, activity, health] = await Promise.all([
-    getAdminDashboard(),
+    getAdminDashboard(range),
     getPipelineSummary(),
     getTodayItems(),
     listActivity({ take: 8 }),
-    getBusinessHealth(),
+    getBusinessHealth(range),
   ]);
+  const rangeLabel = rangeLabels[range].toLowerCase();
 
   return (
     <div>
-      <PageHeader title="Dashboard" description="Your agency overview at a glance." />
+      <PageHeader
+        title="Dashboard"
+        description="Your agency overview at a glance."
+        action={<RangeSwitcher active={range} />}
+      />
 
       {/* Today: the things that actually need you */}
       {today.length > 0 && (
@@ -124,7 +137,7 @@ export default async function AdminDashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Revenue this month"
+          label={`Revenue · ${rangeLabel}`}
           value={usd.format(data.revenueThisMonth)}
           icon={<TrendingUp className="size-5" />}
           iconClassName="bg-success-tint text-success"
@@ -142,15 +155,16 @@ export default async function AdminDashboardPage() {
           iconClassName="bg-brand-tint text-primary"
         />
         <StatCard
-          label="Hours this month"
+          label={`Hours · ${rangeLabel}`}
           value={fmtHours(data.hoursThisMonth)}
           icon={<Clock className="size-5" />}
           iconClassName="bg-info-tint text-info"
         />
       </div>
 
+      <CollapsibleSection id="money" title="Money">
       {/* Money: recurring revenue + what's owed, aged */}
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
             <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -192,6 +206,7 @@ export default async function AdminDashboardPage() {
       </div>
 
       <BusinessHealthPanel health={health} />
+      </CollapsibleSection>
 
       {/* Action strip: things needing attention */}
       {(pipeline.open > 0 || data.pendingRequests > 0) && (
@@ -229,7 +244,8 @@ export default async function AdminDashboardPage() {
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
+      <CollapsibleSection id="projects" title="Projects & invoices">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader>
             <CardTitle className="font-heading text-lg">Recent Projects</CardTitle>
@@ -288,7 +304,10 @@ export default async function AdminDashboardPage() {
         </Card>
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+      </CollapsibleSection>
+
+      <CollapsibleSection id="activity" title="Due soon & activity">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="font-heading flex items-center gap-2 text-lg">
@@ -343,6 +362,7 @@ export default async function AdminDashboardPage() {
           </CardContent>
         </Card>
       </div>
+      </CollapsibleSection>
     </div>
   );
 }

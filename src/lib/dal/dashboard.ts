@@ -1,12 +1,22 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
+import { rangeWindow, type DashboardRange } from "@/lib/dashboard-ranges";
 
-export async function getAdminDashboard() {
+export {
+  DASHBOARD_RANGES,
+  rangeLabels,
+  parseRange,
+  rangeWindow,
+  type DashboardRange,
+} from "@/lib/dashboard-ranges";
+
+export async function getAdminDashboard(range: DashboardRange = "month") {
   await requireAdmin();
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const win = rangeWindow(range, now);
+  const startOfMonth = win.start;
   const soon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const in30Days = new Date(now.getTime() + 30 * 86_400_000);
   const days30Ago = new Date(now.getTime() - 30 * 86_400_000);
@@ -35,7 +45,7 @@ export async function getAdminDashboard() {
     prisma.invoice.count(),
     prisma.invoice.aggregate({ where: { status: "PAID" }, _sum: { amount: true } }),
     prisma.invoice.aggregate({
-      where: { status: "PAID", issueDate: { gte: startOfMonth } },
+      where: { status: "PAID", issueDate: { gte: win.start, lt: win.end } },
       _sum: { amount: true },
     }),
     prisma.invoice.aggregate({
@@ -44,7 +54,7 @@ export async function getAdminDashboard() {
     }),
     prisma.taskRequest.count({ where: { status: "PENDING" } }),
     prisma.timeEntry.aggregate({
-      where: { date: { gte: startOfMonth } },
+      where: { date: { gte: win.start, lt: win.end } },
       _sum: { hours: true },
     }),
     prisma.project.findMany({
@@ -405,10 +415,13 @@ export type BusinessHealth = {
   hoursLastWeek: number;
 };
 
-export async function getBusinessHealth(): Promise<BusinessHealth> {
+export async function getBusinessHealth(
+  range: DashboardRange = "month",
+): Promise<BusinessHealth> {
   await requireAdmin();
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const win = rangeWindow(range, now);
+  const startOfMonth = win.start;
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
   const staleCutoff = new Date(now.getTime() - 14 * 86_400_000);
 
@@ -430,11 +443,11 @@ export async function getBusinessHealth(): Promise<BusinessHealth> {
   ] = await Promise.all([
     prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
     prisma.invoice.aggregate({
-      where: { status: "PAID", issueDate: { gte: startOfMonth } },
+      where: { status: "PAID", issueDate: { gte: win.start, lt: win.end } },
       _sum: { amount: true },
     }),
     prisma.invoice.aggregate({
-      where: { issueDate: { gte: startOfMonth } },
+      where: { issueDate: { gte: win.start, lt: win.end } },
       _sum: { amount: true },
     }),
     prisma.invoice.findMany({
