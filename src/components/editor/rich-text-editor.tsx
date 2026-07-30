@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
@@ -171,17 +171,28 @@ export function RichTextEditor({
   placeholder = "Write something…",
   allowImages = true,
   className,
+  onSubmit,
+  compact = false,
 }: {
   value?: JSONContent | null;
   onChange: (json: JSONContent) => void;
   placeholder?: string;
   allowImages?: boolean;
   className?: string;
+  /** When set, Enter submits and Shift+Enter makes a new line (chat composer). */
+  onSubmit?: () => void;
+  /** Shorter default height, for a message composer rather than a document. */
+  compact?: boolean;
 }) {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
+  // Held in a ref so the editor's key handler never calls a stale closure.
+  const submitRef = useRef(onSubmit);
+  useEffect(() => {
+    submitRef.current = onSubmit;
+  }, [onSubmit]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -204,7 +215,25 @@ export function RichTextEditor({
     onUpdate: ({ editor }) => onChange(JSON.parse(JSON.stringify(editor.getJSON()))),
     editorProps: {
       attributes: {
-        class: "rich-text px-3 py-2 min-h-32 max-h-96 overflow-y-auto",
+        class: compact
+          ? "rich-text px-3 py-2 min-h-20 max-h-56 overflow-y-auto"
+          : "rich-text px-3 py-2 min-h-32 max-h-96 overflow-y-auto",
+      },
+      // Enter sends, Shift+Enter (and the modifier combos) keep their meaning.
+      handleKeyDown: (_view, event) => {
+        if (
+          submitRef.current &&
+          event.key === "Enter" &&
+          !event.shiftKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
+          event.preventDefault();
+          submitRef.current();
+          return true;
+        }
+        return false;
       },
       // Pasting or dropping image FILES is not supported — pop the
       // Drive/Dropbox dialog instead of silently ignoring the file.

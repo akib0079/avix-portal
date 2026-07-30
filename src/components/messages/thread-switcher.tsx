@@ -5,7 +5,8 @@ import useSWR from "swr";
 import type { MessageView, ThreadPage } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
 import { cn } from "@/lib/utils";
-import { MessagesSquare, FolderKanban } from "lucide-react";
+import { MessagesSquare, FolderKanban, ArrowLeft, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const fetcher = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null));
 
@@ -30,6 +31,7 @@ export function ThreadSwitcher({
   initialProjectId?: string | null;
 }) {
   const [selected, setSelected] = useState<string | null>(initialProjectId);
+  const [mobilePane, setMobilePane] = useState<"list" | "thread">("list");
   // The starting thread is server-rendered; switching fetches that thread's
   // first page once, then MessageThread polls incrementally from there.
   const { data, isLoading } = useSWR<ThreadPage | null>(
@@ -69,9 +71,14 @@ export function ThreadSwitcher({
   const active = threads.find((t) => t.id === selected) ?? threads[0];
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
-      {/* Thread list */}
-      <div className="space-y-1.5">
+    <div className="grid h-[calc(100dvh-13rem)] min-h-[560px] grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+      {/* Thread list — scrolls on its own, so it stays put beside a long chat. */}
+      <aside
+        className={cn(
+          "flex min-h-0 flex-col gap-1.5 overflow-y-auto rounded-2xl border bg-card p-3",
+          mobilePane === "thread" && "hidden lg:flex",
+        )}
+      >
         <p className="px-1 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Conversations
         </p>
@@ -81,12 +88,15 @@ export function ThreadSwitcher({
             <button
               key={thread.id ?? "general"}
               type="button"
-              onClick={() => setSelected(thread.id)}
+              onClick={() => {
+                setSelected(thread.id);
+                setMobilePane("thread");
+              }}
               className={cn(
-                "flex w-full items-start gap-2.5 rounded-xl border p-3 text-left transition-colors",
+                "flex w-full shrink-0 items-start gap-2.5 rounded-xl border p-3 text-left transition-colors",
                 isActive
                   ? "border-primary/40 bg-brand-tint"
-                  : "bg-card hover:bg-muted/50",
+                  : "border-transparent bg-muted/40 hover:bg-muted",
               )}
             >
               <thread.icon
@@ -111,31 +121,50 @@ export function ThreadSwitcher({
             </button>
           );
         })}
-      </div>
+      </aside>
 
-      {/* Active thread */}
-      <div className="rounded-xl border bg-card p-5">
-        <div className="mb-4 border-b pb-3">
-          <h2 className="font-heading text-lg font-semibold">{active.label}</h2>
-          <p className="text-sm text-muted-foreground">
-            You&apos;re messaging the Avix Digital team directly — we usually reply
-            within one business day.
-          </p>
-        </div>
-        {isLoading ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">
-            Loading conversation…
-          </p>
-        ) : (
-          <MessageThread
-            key={selected ?? "general"}
-            projectId={selected}
-            viewerRole="CLIENT"
-            initialMessages={page.messages}
-            initialHasMore={page.hasMore}
-          />
+      {/* Active thread — header pinned, messages scroll, composer docked. */}
+      <section
+        className={cn(
+          "flex min-h-0 flex-col rounded-2xl border bg-card",
+          mobilePane === "list" && "hidden lg:flex",
         )}
-      </div>
+      >
+        <div className="flex items-start gap-3 border-b px-5 py-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden"
+            onClick={() => setMobilePane("list")}
+            aria-label="Back to conversations"
+          >
+            <ArrowLeft className="size-4" />
+          </Button>
+          <div className="min-w-0">
+            <h2 className="truncate font-heading text-lg font-semibold">{active.label}</h2>
+            <p className="text-sm text-muted-foreground">
+              You&apos;re messaging the Avix Digital team directly — we usually reply
+              within one business day.
+            </p>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 px-4 pt-2 pb-4">
+          {isLoading ? (
+            <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Loading conversation…
+            </p>
+          ) : (
+            <MessageThread
+              key={selected ?? "general"}
+              projectId={selected}
+              viewerRole="CLIENT"
+              initialMessages={page.messages}
+              initialHasMore={page.hasMore}
+              variant="fill"
+            />
+          )}
+        </div>
+      </section>
     </div>
   );
 }

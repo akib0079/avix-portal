@@ -21,6 +21,8 @@ type RichTextEditorProps = {
   placeholder?: string;
   allowImages?: boolean;
   className?: string;
+  onSubmit?: () => void;
+  compact?: boolean;
 };
 
 function EditorPlaceholder({ className }: { className?: string }) {
