@@ -12,10 +12,11 @@ import {
   updateCampaign,
   queueCampaign,
   scheduleCampaign,
+  sendTestCampaign,
 } from "@/lib/actions/marketing";
 import type { TemplateView } from "./template-manager";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
-import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
+import { hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,6 +45,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
+import { mergeTags } from "@/lib/merge-tags";
 import { AudiencePicker, type SegmentOption } from "@/components/marketing/audience-picker";
 import type { AudienceEntry } from "@/lib/dal/marketing";
 import {
@@ -54,6 +56,7 @@ import {
   TriangleAlert,
   Save,
   Clock,
+  MailCheck,
 } from "lucide-react";
 
 const TIMEOUT_WARN_COUNT = 40;
@@ -107,6 +110,35 @@ export function CampaignComposer({
       form.setValue("subject", template.subject, { shouldValidate: true });
       form.setValue("body", template.body, { shouldValidate: true });
     }
+  }
+
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+
+  /** Ask the server to render the real CampaignEmail for the preview pane. */
+  async function togglePreview() {
+    if (showPreview) return setShowPreview(false);
+    setShowPreview(true);
+    setPreviewHtml(null);
+    try {
+      const res = await fetch("/admin/marketing/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subject: form.getValues("subject"), body: form.getValues("body") }),
+      });
+      if (!res.ok) throw new Error("preview failed");
+      setPreviewHtml(await res.text());
+    } catch {
+      setShowPreview(false);
+      toast.error("Couldn't render the preview.");
+    }
+  }
+
+  async function doTestSend() {
+    setSending(true);
+    const res = await track(sendTestCampaign(form.getValues()), "Sending test…");
+    setSending(false);
+    if (!res.ok) return void toast.error(res.error);
+    toast.success("Test sent to your own inbox.");
   }
 
   const [scheduling, setScheduling] = useState(false);
@@ -244,17 +276,26 @@ export function CampaignComposer({
               name="body"
               render={({ field }) => (
                 <FormItem>
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
                     <FormLabel>Email content</FormLabel>
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setShowPreview((v) => !v)}
+                      onClick={togglePreview}
                       disabled={!hasRichTextContent(body)}
                     >
                       {showPreview ? <EyeOff /> : <Eye />}
                       {showPreview ? "Hide preview" : "Preview"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={doTestSend}
+                      disabled={sending || !hasRichTextContent(body)}
+                    >
+                      <MailCheck /> Send test to me
                     </Button>
                   </div>
                   <FormControl>
@@ -269,28 +310,34 @@ export function CampaignComposer({
               )}
             />
 
-            {showPreview && hasRichTextContent(body) && (
+            <p className="text-xs text-muted-foreground">
+              Personalise with{" "}
+              {mergeTags.map((t, i) => (
+                <span key={t.tag}>
+                  {i > 0 && ", "}
+                  <code className="rounded bg-muted px-1 py-0.5">{t.tag}</code>
+                </span>
+              ))}
+              . Missing values fall back (&ldquo;Hi there&rdquo;), never blank.
+            </p>
+
+            {showPreview && (
               <div className="rounded-xl border bg-muted p-4">
                 <p className="mb-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  Email preview
+                  Email preview — the real template, with sample merge values
                 </p>
-                <div className="mx-auto max-w-lg overflow-hidden rounded-xl border bg-card shadow-sm">
-                  <div className="bg-[#0F172A] px-6 py-4">
-                    <span className="font-heading text-sm font-bold text-white">
-                      Avix<span className="text-[#F65D0B]">.</span> Digital
-                    </span>
-                  </div>
-                  <div className="px-6 py-5">
-                    <p className="mb-3 text-sm font-semibold">
-                      {form.watch("subject") || "(no subject)"}
-                    </p>
-                    <RichTextViewer content={body} />
-                    <p className="mt-5 border-t pt-3 text-[11px] text-muted-foreground">
-                      Unsubscribe from marketing emails — project and invoice
-                      emails are unaffected.
-                    </p>
-                  </div>
-                </div>
+                {previewHtml === null ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    <Loader2 className="mr-2 inline size-4 animate-spin" />
+                    Rendering…
+                  </p>
+                ) : (
+                  <iframe
+                    title="Email preview"
+                    srcDoc={previewHtml}
+                    className="h-[520px] w-full rounded-xl border bg-white"
+                  />
+                )}
               </div>
             )}
           </CardContent>

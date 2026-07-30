@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import { drainCampaignBatch } from "@/lib/duties";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
+import { sendEmail } from "@/lib/email/resend";
+import { appUrl } from "@/lib/app-url";
+import { renderMergeTags, renderMergeTagsInDoc } from "@/lib/merge-tags";
+import CampaignEmail from "@/emails/campaign";
 import {
   emailTemplateSchema,
   campaignSchema,
@@ -74,6 +78,42 @@ export async function deleteTemplate(id: string): Promise<ActionResult> {
 }
 
 // ---------- Campaigns ----------
+
+/**
+ * Mail the signed-in admin a copy with sample merge values, so the real thing
+ * can be checked in a real inbox before anyone else gets it.
+ */
+export async function sendTestCampaign(input: CampaignInput): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  const parsed = campaignSchema.safeParse({ ...input, recipientIds: ["self"] });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const vars = {
+    firstName: admin.firstName || "Alex",
+    name: `${admin.firstName ?? ""} ${admin.lastName ?? ""}`.trim() || "Alex Morgan",
+    company: "Northwind Studio",
+    email: admin.email,
+  };
+  const subject = `[Test] ${renderMergeTags(parsed.data.subject, vars)}`;
+  const body = renderMergeTagsInDoc(parsed.data.body, vars);
+
+  const result = await sendEmail({
+    to: admin.email,
+    subject,
+    react: (
+      <CampaignEmail
+        subject={subject}
+        body={body}
+        unsubscribeUrl={`${appUrl()}/unsubscribe?token=test`}
+      />
+    ),
+    devHint: `campaign test → ${admin.email}`,
+  });
+  if (!result.ok) return { ok: false, error: "The email provider rejected the test send." };
+  return { ok: true };
+}
 
 // ---------- Audience segments ----------
 

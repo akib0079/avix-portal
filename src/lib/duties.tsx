@@ -12,6 +12,7 @@ import {
 } from "@/lib/marketing-token";
 import MeetingScheduledEmail from "@/emails/meeting-scheduled";
 import CampaignEmail from "@/emails/campaign";
+import { renderMergeTags, renderMergeTagsInDoc } from "@/lib/merge-tags";
 
 /**
  * "Lazy cron": Hostinger has no background jobs, so scheduled work runs
@@ -34,10 +35,28 @@ function sleep(ms: number) {
  */
 async function deliverCampaignEmail(
   campaign: { id: string; subject: string; body: unknown },
-  recipient: { id: string; email: string; userId: string | null; leadId: string | null },
+  recipient: {
+    id: string;
+    email: string;
+    userId: string | null;
+    leadId: string | null;
+    firstName?: string | null;
+    company?: string | null;
+    name?: string | null;
+  },
 ): Promise<void> {
   const recipientRowId = recipient.id;
   const email = recipient.email;
+  // Personalise per recipient — fallbacks in renderMergeTags keep "Hi there"
+  // rather than "Hi ," when a value is missing.
+  const vars = {
+    firstName: recipient.firstName,
+    name: recipient.name ?? recipient.firstName,
+    company: recipient.company,
+    email,
+  };
+  const subject = renderMergeTags(campaign.subject, vars);
+  const body = renderMergeTagsInDoc(campaign.body, vars);
   const token = recipient.userId
     ? createUnsubscribeToken(recipient.userId)
     : createLeadUnsubscribeToken(recipient.leadId ?? "");
@@ -45,14 +64,17 @@ async function deliverCampaignEmail(
   try {
     const result = await sendEmail({
       to: email,
-      subject: campaign.subject,
+      subject,
       react: (
-        <CampaignEmail
-          subject={campaign.subject}
-          body={campaign.body}
-          unsubscribeUrl={unsubscribeUrl}
-        />
+        <CampaignEmail subject={subject} body={body} unsubscribeUrl={unsubscribeUrl} />
       ),
+      // One-click unsubscribe for the recipient's mail client (RFC 8058). The
+      // header points at the POST endpoint; the visible link goes to the
+      // confirm page.
+      headers: {
+        "List-Unsubscribe": `<${appUrl()}/api/unsubscribe?token=${token}>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      },
       devHint: `campaign ${campaign.id} → ${email}`,
     });
     await prisma.campaignRecipient.update({
@@ -230,7 +252,7 @@ async function runCampaignBatch(
     take: CAMPAIGN_BATCH,
     include: {
       user: { select: { id: true, email: true, status: true, marketingOptOut: true } },
-      lead: { select: { id: true, email: true, marketingOptOut: true } },
+      lead: { select: { id: true, name: true, email: true, marketingOptOut: true } },
     },
   });
 
@@ -282,6 +304,9 @@ async function runCampaignBatch(
       email,
       userId: row.userId,
       leadId: row.leadId,
+      firstName: row.firstName,
+      company: row.company,
+      name: row.lead?.name ?? row.firstName,
     });
   }
 

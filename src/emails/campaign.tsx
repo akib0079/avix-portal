@@ -31,8 +31,8 @@ export default function CampaignEmail({
           paddingTop: "14px",
         }}
       >
-        You&apos;re receiving this because you&apos;re a client of Avix Digital.{" "}
-        {footerAddress}
+        You&apos;re receiving this because you&apos;re a client of, or have been
+        in touch with, Avix Digital. {footerAddress}
         <br />
         <Link href={unsubscribeUrl} style={{ color: brand.slate, textDecoration: "underline" }}>
           Unsubscribe from marketing emails

@@ -18,6 +18,8 @@ export async function sendEmail(options: {
   react: ReactElement;
   /** Optional file attachments (e.g. a generated invoice PDF). */
   attachments?: { filename: string; content: Buffer }[];
+  /** Extra SMTP headers, e.g. List-Unsubscribe on marketing sends. */
+  headers?: Record<string, string>;
   /** Logged in dev when no API key is configured (e.g. an invite link). */
   devHint?: string;
 }) {
@@ -37,6 +39,7 @@ export async function sendEmail(options: {
     ...(options.attachments?.length
       ? { attachments: options.attachments.map((a) => ({ filename: a.filename, content: a.content })) }
       : {}),
+    ...(options.headers ? { headers: options.headers } : {}),
   });
   if (error) {
     console.error("[email] send failed:", error);
