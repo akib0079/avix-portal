@@ -9,6 +9,7 @@ import { PaymentAccountManager } from "@/components/settings/payment-account-man
 import { WhatsappSetting } from "@/components/settings/whatsapp-setting";
 import { BrandingSetting } from "@/components/settings/branding-setting";
 import { InvoiceFooterSetting } from "@/components/settings/invoice-footer-setting";
+import { RevenueTargetSetting } from "@/components/settings/revenue-target-setting";
 import { TeamManager } from "@/components/settings/team-manager";
 import { AvailabilityManager } from "@/components/settings/availability-manager";
 import { GoogleCalendarSetting } from "@/components/settings/google-calendar-setting";
@@ -17,6 +18,7 @@ import { listAvailabilityWindows, getBookingConfig } from "@/lib/dal/availabilit
 import { calendarStatus } from "@/lib/google-calendar";
 import { Card, CardContent } from "@/components/ui/card";
 import { requireAdmin } from "@/lib/dal/session";
+import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "Settings" };
 
@@ -40,6 +42,10 @@ export default async function SettingsPage({
       ]),
     ]);
   const gcal = await calendarStatus();
+  const targetRow = await prisma.appSetting.findUnique({
+    where: { key: "monthlyRevenueTarget" },
+  });
+  const revenueTarget = Number(targetRow?.value ?? 0) || 0;
 
   const gcalBanner =
     gcalResult === "connected"
@@ -75,6 +81,12 @@ export default async function SettingsPage({
             faviconUrl={branding.faviconFile ? `/api/branding/${branding.faviconFile}` : null}
             invoiceLogoUrl={branding.invoiceLogoFile ? `/api/branding/${branding.invoiceLogoFile}` : null}
           />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardContent className="pt-6">
+          <RevenueTargetSetting initial={revenueTarget} />
         </CardContent>
       </Card>
 

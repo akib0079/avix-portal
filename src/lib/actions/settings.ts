@@ -132,6 +132,19 @@ export async function updateInvoiceFooter(text: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/** Monthly revenue goal shown on the dashboard. 0/empty clears it. */
+export async function updateRevenueTarget(value: string): Promise<ActionResult> {
+  await requireAdmin();
+  const n = Math.round(Number(value));
+  if (value.trim() !== "" && (!Number.isFinite(n) || n < 0 || n > 100_000_000)) {
+    return { ok: false, error: "Enter a whole amount like 10000 (or empty to clear)." };
+  }
+  await setSetting("monthlyRevenueTarget", value.trim() === "" ? "" : String(n));
+  revalidatePath("/admin");
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
 /** Upload a new logo or favicon; replaces + deletes the previous file. */
 export async function uploadBrandingFile(
   which: "logo" | "favicon" | "signature" | "invoiceLogo",

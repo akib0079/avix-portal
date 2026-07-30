@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { getAdminDashboard, getTodayItems } from "@/lib/dal/dashboard";
+import { getAdminDashboard, getTodayItems, getBusinessHealth } from "@/lib/dal/dashboard";
 import { listActivity } from "@/lib/dal/activity";
 import { getPipelineSummary } from "@/lib/dal/leads";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
+import { BusinessHealthPanel } from "@/components/dashboard/business-health";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { InvoiceStatusDonut } from "@/components/charts-lazy";
@@ -31,6 +32,19 @@ import {
 } from "lucide-react";
 
 export const metadata = { title: "Dashboard" };
+
+/** Dot colour per action-queue item kind (most urgent read as red/amber). */
+const TODAY_DOT: Record<string, string> = {
+  message: "bg-red-500",
+  invoice: "bg-red-500",
+  changes: "bg-amber-500",
+  request: "bg-amber-500",
+  proposal: "bg-amber-500",
+  lead: "bg-amber-500",
+  meeting: "bg-sky-500",
+  approval: "bg-sky-500",
+  retainer: "bg-emerald-500",
+};
 
 function fmtHours(hours: number): string {
   return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
@@ -62,11 +76,12 @@ function AgingRow({
 
 export default async function AdminDashboardPage() {
   await requireAdmin();
-  const [data, pipeline, today, activity] = await Promise.all([
+  const [data, pipeline, today, activity, health] = await Promise.all([
     getAdminDashboard(),
     getPipelineSummary(),
     getTodayItems(),
     listActivity({ take: 8 }),
+    getBusinessHealth(),
   ]);
 
   return (
@@ -89,13 +104,7 @@ export default async function AdminDashboardPage() {
                 >
                   <span
                     className={`mt-1.5 size-2 shrink-0 rounded-full ${
-                      item.kind === "invoice"
-                        ? "bg-red-500"
-                        : item.kind === "lead"
-                          ? "bg-amber-500"
-                          : item.kind === "meeting"
-                            ? "bg-sky-500"
-                            : "bg-emerald-500"
+                      TODAY_DOT[item.kind] ?? "bg-emerald-500"
                     }`}
                   />
                   <span className="min-w-0">
@@ -181,6 +190,8 @@ export default async function AdminDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <BusinessHealthPanel health={health} />
 
       {/* Action strip: things needing attention */}
       {(pipeline.open > 0 || data.pendingRequests > 0) && (
