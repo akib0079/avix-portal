@@ -20,7 +20,9 @@ import { requireAdmin } from "@/lib/dal/session";
 export const metadata = { title: "Marketing" };
 
 const statusStyles: Record<CampaignStatus, string> = {
-  DRAFT: "bg-slate-100 text-muted-foreground",
+  DRAFT: "bg-muted text-muted-foreground",
+  SCHEDULED: "bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-300",
+  QUEUED: "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-300",
   SENDING: "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300",
   SENT: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-300",
   FAILED: "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-300",
@@ -28,6 +30,8 @@ const statusStyles: Record<CampaignStatus, string> = {
 
 const statusLabels: Record<CampaignStatus, string> = {
   DRAFT: "Draft",
+  SCHEDULED: "Scheduled",
+  QUEUED: "Queued",
   SENDING: "Sending",
   SENT: "Sent",
   FAILED: "Needs retry",

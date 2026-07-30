@@ -6,7 +6,13 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { JSONContent } from "@tiptap/react";
 import { campaignSchema, type CampaignInput } from "@/lib/validation/marketing";
-import { sendCampaign } from "@/lib/actions/marketing";
+import {
+  sendCampaign,
+  saveCampaignDraft,
+  updateCampaign,
+  queueCampaign,
+  scheduleCampaign,
+} from "@/lib/actions/marketing";
 import type { TemplateView } from "./template-manager";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
@@ -39,7 +45,16 @@ import {
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
 import { cn } from "@/lib/utils";
-import { Loader2, Send, Eye, EyeOff, TriangleAlert, Check } from "lucide-react";
+import {
+  Loader2,
+  Send,
+  Eye,
+  EyeOff,
+  TriangleAlert,
+  Check,
+  Save,
+  Clock,
+} from "lucide-react";
 
 export type RecipientOption = {
   id: string;
@@ -51,14 +66,25 @@ export type RecipientOption = {
 
 const TIMEOUT_WARN_COUNT = 40;
 
+/** Existing DRAFT / SCHEDULED campaign being edited, if any. */
+export type CampaignDraft = {
+  id: string;
+  subject: string;
+  body: JSONContent | null;
+  templateId: string | null;
+  recipientIds: string[];
+};
+
 export function CampaignComposer({
   templates,
   recipients,
   initialTemplateId,
+  draft,
 }: {
   templates: TemplateView[];
   recipients: RecipientOption[];
   initialTemplateId?: string;
+  draft?: CampaignDraft;
 }) {
   const router = useRouter();
   const { track } = useActivity();
@@ -70,10 +96,10 @@ export function CampaignComposer({
   const form = useForm<CampaignInput>({
     resolver: zodResolver(campaignSchema),
     defaultValues: {
-      subject: initialTemplate?.subject ?? "",
-      body: initialTemplate?.body ?? undefined,
-      templateId: initialTemplate?.id ?? "",
-      recipientIds: [],
+      subject: draft?.subject ?? initialTemplate?.subject ?? "",
+      body: draft?.body ?? initialTemplate?.body ?? undefined,
+      templateId: draft?.templateId ?? initialTemplate?.id ?? "",
+      recipientIds: draft?.recipientIds ?? [],
     },
   });
 
@@ -98,19 +124,89 @@ export function CampaignComposer({
     form.setValue("recipientIds", next, { shouldValidate: true });
   }
 
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState("");
+
   const selectedRecipients = useMemo(
     () => recipients.filter((r) => selectedIds.includes(r.id)),
     [recipients, selectedIds],
   );
 
+  /**
+   * Save whatever is in the form — updating the draft being edited, or creating
+   * a new one — and hand back the campaign id for the caller to act on.
+   */
+  async function persistDraft(label: string): Promise<string | null> {
+    const values = form.getValues();
+    if (draft) {
+      const res = await track(updateCampaign(draft.id, values), label);
+      if (!res.ok) {
+        toast.error(res.error);
+        return null;
+      }
+      return draft.id;
+    }
+    const res = await track(saveCampaignDraft(values), label);
+    if (!res.ok || !res.data) {
+      toast.error(res.ok ? "Couldn't save the campaign." : res.error);
+      return null;
+    }
+    return res.data.id;
+  }
+
   async function doSend() {
     setSending(true);
-    const result = await track(sendCampaign(form.getValues()), "Sending campaign…");
+    // Editing an existing draft: save it, then queue. New campaign: one call.
+    if (draft) {
+      const id = await persistDraft("Queueing campaign…");
+      if (!id) {
+        setSending(false);
+        return;
+      }
+      const queued = await queueCampaign(id);
+      setSending(false);
+      setConfirming(false);
+      if (!queued.ok) return void toast.error(queued.error);
+      toast.success("Campaign queued — it starts sending in the background.");
+      router.push(`/admin/marketing/${id}`);
+      router.refresh();
+      return;
+    }
+    const result = await track(sendCampaign(form.getValues()), "Queueing campaign…");
     setSending(false);
     setConfirming(false);
     if (!result.ok) return void toast.error(result.error);
-    toast.success("Campaign sent.");
+    toast.success("Campaign queued — it starts sending in the background.");
     router.push(result.data ? `/admin/marketing/${result.data.id}` : "/admin/marketing");
+    router.refresh();
+  }
+
+  async function doSaveDraft() {
+    if (!form.getValues().subject?.trim()) return void toast.error("Add a subject first.");
+    setSending(true);
+    const id = await persistDraft("Saving draft…");
+    setSending(false);
+    if (!id) return;
+    toast.success("Draft saved.");
+    router.push(`/admin/marketing/${id}`);
+    router.refresh();
+  }
+
+  async function doSchedule() {
+    if (!form.getValues().subject?.trim()) return void toast.error("Add a subject first.");
+    if (!scheduleAt) return void toast.error("Pick a date and time.");
+    setSending(true);
+    const id = await persistDraft("Scheduling…");
+    if (!id) {
+      setSending(false);
+      return;
+    }
+    const result = await scheduleCampaign(id, new Date(scheduleAt).toISOString());
+    setSending(false);
+    setScheduling(false);
+    if (!result.ok) return void toast.error(result.error);
+    toast.success("Scheduled.");
+    router.push(`/admin/marketing/${id}`);
     router.refresh();
   }
 
@@ -301,19 +397,29 @@ export function CampaignComposer({
             />
 
             {selectedIds.length > TIMEOUT_WARN_COUNT && (
-              <p className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-700 dark:text-amber-300">
+              <p className="mt-3 flex items-start gap-2 rounded-lg bg-muted p-3 text-xs text-muted-foreground">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-                Large send — emails go out one by one, so this may take a while.
-                If it stops partway, open the campaign afterwards and use
-                “Retry failed”.
+                Large send — it runs in the background in batches, so you can
+                close this page. Progress shows on the campaign afterwards.
               </p>
             )}
           </CardContent>
         </Card>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={sending}>
             <Send /> Review &amp; send
+          </Button>
+          <Button type="button" variant="outline" onClick={doSaveDraft} disabled={sending}>
+            <Save /> Save draft
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setScheduling(true)}
+            disabled={sending}
+          >
+            <Clock /> Schedule
           </Button>
           <Button
             type="button"
@@ -331,8 +437,8 @@ export function CampaignComposer({
           <DialogHeader>
             <DialogTitle>Send to {selectedRecipients.length} client{selectedRecipients.length === 1 ? "" : "s"}?</DialogTitle>
             <DialogDescription>
-              “{form.watch("subject")}” will be emailed immediately. Each email
-              includes an unsubscribe link.
+              “{form.watch("subject")}” gets queued and sends in the background,
+              so you can close this page. Each email includes an unsubscribe link.
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-40 overflow-y-auto rounded-lg border p-3 text-sm">
@@ -348,7 +454,36 @@ export function CampaignComposer({
             </Button>
             <Button onClick={doSend} disabled={sending}>
               {sending ? <Loader2 className="animate-spin" /> : <Send />}
-              {sending ? "Sending…" : "Send campaign"}
+              {sending ? "Queueing…" : "Send campaign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule for later — drained by the duties engine when due */}
+      <Dialog open={scheduling} onOpenChange={setScheduling}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schedule this campaign</DialogTitle>
+            <DialogDescription>
+              It sends automatically once this time passes.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="datetime-local"
+            value={scheduleAt}
+            onChange={(e) => setScheduleAt(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Scheduled sends run from the background job. If no admin has the app
+            open, set up the cron ping so they fire on time.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduling(false)} disabled={sending}>
+              Cancel
+            </Button>
+            <Button onClick={doSchedule} disabled={sending || !scheduleAt}>
+              {sending ? <Loader2 className="animate-spin" /> : <Clock />} Schedule
             </Button>
           </DialogFooter>
         </DialogContent>

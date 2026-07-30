@@ -156,6 +156,10 @@ enum ProjectBillingType {
 
 enum CampaignStatus {
   DRAFT
+  /// Waiting for its scheduledAt to arrive.
+  SCHEDULED
+  /// Recipients exist and are waiting to be drained by the duties engine.
+  QUEUED
   SENDING
   SENT
   FAILED
@@ -758,15 +762,22 @@ model Campaign {
   id         String         @id @default(cuid())
   subject    String
   body       Json
+  /// Internal label so drafts are findable before they have a real subject.
+  name       String?
   templateId String?
   template   EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   status     CampaignStatus @default(DRAFT)
+  /// When a scheduled campaign should start sending.
+  scheduledAt DateTime?
+  /// Stamped when the drain actually began.
+  startedAt   DateTime?
   sentAt     DateTime?
   createdAt  DateTime       @default(now())
 
   recipients CampaignRecipient[]
 
   @@index([createdAt])
+  @@index([status, scheduledAt])
   @@map("campaigns")
 }
 

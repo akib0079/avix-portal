@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { drainCampaignBatch } from "@/lib/duties";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { sendEmail } from "@/lib/email/resend";
@@ -124,6 +125,200 @@ async function finalizeCampaignStatus(campaignId: string): Promise<void> {
   });
 }
 
+/**
+ * Resolve the eligible audience for a campaign. Never trusts the client list —
+ * re-filters to ACTIVE clients who haven't opted out, which also covers races
+ * with /unsubscribe between composing and sending.
+ */
+async function eligibleRecipients(recipientIds: string[]) {
+  return prisma.user.findMany({
+    where: {
+      id: { in: recipientIds },
+      role: "CLIENT",
+      status: "ACTIVE",
+      marketingOptOut: false,
+    },
+    select: { id: true, email: true },
+  });
+}
+
+/** Save a campaign without sending it. Editable until it is queued. */
+export async function saveCampaignDraft(
+  input: CampaignInput,
+): Promise<ActionResult<{ id: string }>> {
+  await requireAdmin();
+  const parsed = campaignSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const data = parsed.data;
+  const eligible = await eligibleRecipients(data.recipientIds);
+
+  const campaign = await prisma.campaign.create({
+    data: {
+      subject: data.subject,
+      body: data.body as Prisma.InputJsonValue,
+      templateId: data.templateId || null,
+      status: "DRAFT",
+      recipients: { create: eligible.map((u) => ({ userId: u.id })) },
+    },
+  });
+
+  revalidatePath("/admin/marketing");
+  return { ok: true, data: { id: campaign.id } };
+}
+
+/** Edit a campaign that hasn't started sending yet. */
+export async function updateCampaign(
+  id: string,
+  input: CampaignInput,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const parsed = campaignSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const existing = await prisma.campaign.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+  if (!existing) return { ok: false, error: "Campaign not found." };
+  if (existing.status !== "DRAFT" && existing.status !== "SCHEDULED") {
+    return { ok: false, error: "Only drafts and scheduled campaigns can be edited." };
+  }
+
+  const data = parsed.data;
+  const eligible = await eligibleRecipients(data.recipientIds);
+
+  await prisma.$transaction([
+    prisma.campaignRecipient.deleteMany({ where: { campaignId: id, sentAt: null } }),
+    prisma.campaign.update({
+      where: { id },
+      data: {
+        subject: data.subject,
+        body: data.body as Prisma.InputJsonValue,
+        templateId: data.templateId || null,
+        recipients: { create: eligible.map((u) => ({ userId: u.id })) },
+      },
+    }),
+  ]);
+
+  revalidatePath("/admin/marketing");
+  revalidatePath(`/admin/marketing/${id}`);
+  return { ok: true };
+}
+
+/**
+ * Hand a campaign to the duties engine. Sending deliberately does NOT happen
+ * here — a sequential send inside the request times out on large lists.
+ */
+export async function queueCampaign(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  const campaign = await prisma.campaign.findUnique({
+    where: { id },
+    select: { id: true, status: true, _count: { select: { recipients: true } } },
+  });
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+  if (campaign.status === "SENT" || campaign.status === "SENDING") {
+    return { ok: false, error: "This campaign is already on its way." };
+  }
+  if (campaign._count.recipients === 0) {
+    return { ok: false, error: "Add at least one recipient first." };
+  }
+
+  await prisma.campaign.update({
+    where: { id },
+    data: { status: "QUEUED", scheduledAt: null },
+  });
+  revalidatePath("/admin/marketing");
+  revalidatePath(`/admin/marketing/${id}`);
+  return { ok: true };
+}
+
+/** Schedule a campaign for later; the duties engine promotes it when due. */
+export async function scheduleCampaign(
+  id: string,
+  whenIso: string,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const when = new Date(whenIso);
+  if (Number.isNaN(when.getTime())) return { ok: false, error: "Pick a valid date and time." };
+  if (when.getTime() < Date.now()) return { ok: false, error: "Pick a time in the future." };
+
+  const campaign = await prisma.campaign.findUnique({
+    where: { id },
+    select: { status: true, _count: { select: { recipients: true } } },
+  });
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+  if (campaign.status !== "DRAFT" && campaign.status !== "SCHEDULED") {
+    return { ok: false, error: "Only drafts can be scheduled." };
+  }
+  if (campaign._count.recipients === 0) {
+    return { ok: false, error: "Add at least one recipient first." };
+  }
+
+  await prisma.campaign.update({
+    where: { id },
+    data: { status: "SCHEDULED", scheduledAt: when },
+  });
+  revalidatePath("/admin/marketing");
+  revalidatePath(`/admin/marketing/${id}`);
+  return { ok: true };
+}
+
+/**
+ * Push one bounded batch for a campaign that is already queued. The detail page
+ * calls this in a loop so "Send now" shows live progress instead of waiting for
+ * the throttled duty run (which only fires on admin page loads).
+ */
+export async function pushCampaignBatch(
+  id: string,
+): Promise<ActionResult<{ remaining: number }>> {
+  await requireAdmin();
+  const campaign = await prisma.campaign.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+  if (campaign.status === "DRAFT" || campaign.status === "SCHEDULED") {
+    return { ok: false, error: "Queue this campaign before sending." };
+  }
+
+  const remaining = await drainCampaignBatch(id);
+  revalidatePath("/admin/marketing");
+  revalidatePath(`/admin/marketing/${id}`);
+  return { ok: true, data: { remaining } };
+}
+
+/** Copy a campaign back into an editable draft. */
+export async function duplicateCampaign(
+  id: string,
+): Promise<ActionResult<{ id: string }>> {
+  await requireAdmin();
+  const source = await prisma.campaign.findUnique({
+    where: { id },
+    include: { recipients: { select: { userId: true } } },
+  });
+  if (!source) return { ok: false, error: "Campaign not found." };
+
+  const copy = await prisma.campaign.create({
+    data: {
+      subject: `${source.subject} (copy)`,
+      body: source.body as Prisma.InputJsonValue,
+      templateId: source.templateId,
+      status: "DRAFT",
+      recipients: {
+        create: source.recipients
+          .filter((r) => r.userId)
+          .map((r) => ({ userId: r.userId })),
+      },
+    },
+  });
+
+  revalidatePath("/admin/marketing");
+  return { ok: true, data: { id: copy.id } };
+}
+
 export async function sendCampaign(
   input: CampaignInput,
 ): Promise<ActionResult<{ id: string }>> {
@@ -136,36 +331,22 @@ export async function sendCampaign(
 
   // Never trust the client-side list: re-filter against eligible recipients
   // (ACTIVE clients who haven't opted out — covers races with /unsubscribe).
-  const eligible = await prisma.user.findMany({
-    where: {
-      id: { in: data.recipientIds },
-      role: "CLIENT",
-      status: "ACTIVE",
-      marketingOptOut: false,
-    },
-    select: { id: true, email: true },
-  });
+  const eligible = await eligibleRecipients(data.recipientIds);
   if (eligible.length === 0) {
     return { ok: false, error: "None of the selected clients can receive marketing email." };
   }
 
+  // Queued, not sent inline: the duties engine drains it in bounded batches so
+  // a big list can't blow the request timeout.
   const campaign = await prisma.campaign.create({
     data: {
       subject: data.subject,
       body: data.body as Prisma.InputJsonValue,
       templateId: data.templateId || null,
-      status: "SENDING",
+      status: "QUEUED",
       recipients: { create: eligible.map((u) => ({ userId: u.id })) },
     },
   });
-
-  // Sequential with pacing; per-recipient rows persist progress so a timeout
-  // mid-send is recoverable from the campaign page via "Retry failed".
-  for (const [index, recipient] of eligible.entries()) {
-    if (index > 0) await sleep(SEND_DELAY_MS);
-    await deliverTo(recipient, campaign);
-  }
-  await finalizeCampaignStatus(campaign.id);
 
   revalidatePath("/admin/marketing");
   revalidatePath(`/admin/marketing/${campaign.id}`);

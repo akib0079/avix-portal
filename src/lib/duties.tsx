@@ -5,8 +5,9 @@ import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
 import { googleCalendarUrl, formatInTimezone } from "@/lib/calendar-links";
-import { createMeetingIcsToken } from "@/lib/marketing-token";
+import { createMeetingIcsToken, createUnsubscribeToken } from "@/lib/marketing-token";
 import MeetingScheduledEmail from "@/emails/meeting-scheduled";
+import CampaignEmail from "@/emails/campaign";
 
 /**
  * "Lazy cron": Hostinger has no background jobs, so scheduled work runs
@@ -18,6 +19,48 @@ import MeetingScheduledEmail from "@/emails/meeting-scheduled";
 
 const THROTTLE_KEY = "dutiesLastRunAt";
 const THROTTLE_MS = 15 * 60 * 1000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Deliver one campaign email and stamp the result on its recipient row, so a
+ * crashed or timed-out run simply resumes from the rows that are still blank.
+ */
+async function deliverCampaignEmail(
+  campaign: { id: string; subject: string; body: unknown },
+  recipientRowId: string,
+  userId: string,
+  email: string,
+): Promise<void> {
+  const unsubscribeUrl = `${appUrl()}/unsubscribe?token=${createUnsubscribeToken(userId)}`;
+  try {
+    const result = await sendEmail({
+      to: email,
+      subject: campaign.subject,
+      react: (
+        <CampaignEmail
+          subject={campaign.subject}
+          body={campaign.body}
+          unsubscribeUrl={unsubscribeUrl}
+        />
+      ),
+      devHint: `campaign ${campaign.id} → ${email}`,
+    });
+    await prisma.campaignRecipient.update({
+      where: { id: recipientRowId },
+      data: result.ok
+        ? { sentAt: new Date(), error: null }
+        : { error: "Email provider rejected the send" },
+    });
+  } catch (err) {
+    await prisma.campaignRecipient.update({
+      where: { id: recipientRowId },
+      data: { error: String(err instanceof Error ? err.message : err).slice(0, 500) },
+    });
+  }
+}
 
 function currentPeriod(now: Date): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -154,6 +197,104 @@ async function generateRetainerInvoices(now: Date) {
   return generated;
 }
 
+/**
+ * Campaigns: promote scheduled sends that are due, then drain a bounded batch
+ * of pending recipients. Sending lives here rather than in the server action so
+ * a large list can't blow the request timeout. Stamp-first (sentAt / error)
+ * makes re-runs no-ops, exactly like reminderSentAt above.
+ */
+const CAMPAIGN_BATCH = 25;
+const CAMPAIGN_SEND_DELAY_MS = 600; // Resend free tier allows 2 req/s
+
+type DrainableCampaign = {
+  id: string;
+  subject: string;
+  body: unknown;
+  status: string;
+};
+
+/** One bounded batch for a single campaign. Returns rows still owing a send. */
+async function runCampaignBatch(
+  campaign: DrainableCampaign,
+  now: Date,
+): Promise<number> {
+  const pending = await prisma.campaignRecipient.findMany({
+    where: { campaignId: campaign.id, sentAt: null, error: null },
+    take: CAMPAIGN_BATCH,
+    include: { user: { select: { id: true, email: true, status: true, marketingOptOut: true } } },
+  });
+
+  if (pending.length === 0) {
+    // Nothing left to try — settle the final status.
+    const failed = await prisma.campaignRecipient.count({
+      where: { campaignId: campaign.id, sentAt: null },
+    });
+    if (campaign.status !== "DRAFT" && campaign.status !== "SCHEDULED") {
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: failed === 0 ? { status: "SENT", sentAt: now } : { status: "FAILED" },
+      });
+    }
+    return 0;
+  }
+
+  if (campaign.status !== "SENDING") {
+    await prisma.campaign.update({
+      where: { id: campaign.id },
+      data: { status: "SENDING", startedAt: now },
+    });
+  }
+
+  for (const [index, row] of pending.entries()) {
+    if (index > 0) await sleep(CAMPAIGN_SEND_DELAY_MS);
+    const user = row.user;
+    // Someone may have opted out between composing and sending.
+    if (!user || user.status !== "ACTIVE" || user.marketingOptOut) {
+      await prisma.campaignRecipient.update({
+        where: { id: row.id },
+        data: { error: "Skipped — recipient opted out or is inactive" },
+      });
+      continue;
+    }
+    await deliverCampaignEmail(campaign, row.id, user.id, user.email);
+  }
+
+  return prisma.campaignRecipient.count({
+    where: { campaignId: campaign.id, sentAt: null, error: null },
+  });
+}
+
+/**
+ * Drive one campaign's batch on demand (the "Send now" button polls this) so an
+ * admin doesn't have to wait for the throttled duty run.
+ */
+export async function drainCampaignBatch(campaignId: string): Promise<number> {
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { id: true, subject: true, body: true, status: true },
+  });
+  if (!campaign) return 0;
+  return runCampaignBatch(campaign, new Date());
+}
+
+async function drainCampaigns(now: Date): Promise<void> {
+  // 1. Scheduled → queued once their moment arrives.
+  await prisma.campaign.updateMany({
+    where: { status: "SCHEDULED", scheduledAt: { not: null, lte: now } },
+    data: { status: "QUEUED" },
+  });
+
+  // 2. Take the oldest campaign still owing emails.
+  const campaign = await prisma.campaign.findFirst({
+    where: { status: { in: ["QUEUED", "SENDING"] } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, subject: true, body: true, status: true },
+  });
+  if (!campaign) return;
+
+  await runCampaignBatch(campaign, now);
+}
+
 /** Entry point — throttled, never throws (a duty failure must not 500 a page). */
 export async function runDueDuties(): Promise<void> {
   try {
@@ -169,6 +310,7 @@ export async function runDueDuties(): Promise<void> {
 
     await sendMeetingReminders(now);
     await generateRetainerInvoices(now);
+    await drainCampaigns(now);
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
   }
