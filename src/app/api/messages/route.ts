@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
-import { getThreadMessages } from "@/lib/dal/messages";
+import { getThreadMessages, getThreadMessagesSince } from "@/lib/dal/messages";
 
 /**
- * Polls one thread. A thread is (clientId, projectId); no projectId means the
+ * Reads one thread. A thread is (clientId, projectId); no projectId means the
  * client's general thread. Clients may only ever read their own threads —
  * their clientId comes from the session, never the query string.
+ *
+ * Read-only on purpose: marking messages read is a separate mutation
+ * (markThreadRead) so a poll — or a link prefetch — can't write.
+ *
+ * Query: `since` returns only newer messages (what the poll uses); `before`
+ * pages backwards through history; neither returns the newest page.
  */
 export async function GET(request: Request) {
   const session = await getSession();
@@ -16,6 +22,8 @@ export async function GET(request: Request) {
   const user = session.user;
   const params = new URL(request.url).searchParams;
   const projectId = params.get("projectId");
+  const since = params.get("since");
+  const before = params.get("before");
 
   const isTeam = user.role === "ADMIN" || user.role === "STAFF";
   const clientId = isTeam ? params.get("clientId") : user.id;
@@ -33,14 +41,12 @@ export async function GET(request: Request) {
   }
 
   const key = { clientId, projectId: projectId ?? null };
-  const messages = await getThreadMessages(key);
 
-  // Mark the other side's messages as read for this viewer.
-  const field = isTeam ? "readByAdminAt" : "readByClientAt";
-  await prisma.message.updateMany({
-    where: { ...key, [field]: null },
-    data: { [field]: new Date() },
-  });
+  if (since) {
+    const messages = await getThreadMessagesSince(key, since);
+    return NextResponse.json({ messages, hasMore: false, incremental: true });
+  }
 
-  return NextResponse.json({ messages });
+  const page = await getThreadMessages(key, { before });
+  return NextResponse.json({ ...page, incremental: false });
 }

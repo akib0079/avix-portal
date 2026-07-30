@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import type { MessageView } from "@/lib/dal/messages";
+import type { MessageView, ThreadPage } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
 import { cn } from "@/lib/utils";
 import { MessagesSquare, FolderKanban } from "lucide-react";
@@ -19,29 +19,35 @@ export function ThreadSwitcher({
   generalUnread,
   projects,
   initialMessages,
+  initialHasMore = false,
   initialProjectId = null,
 }: {
   generalUnread: number;
   projects: ThreadOption[];
   /** Messages of the initially selected thread (server-rendered). */
   initialMessages: MessageView[];
+  initialHasMore?: boolean;
   initialProjectId?: string | null;
 }) {
   const [selected, setSelected] = useState<string | null>(initialProjectId);
-
-  // The thread the user has switched to (initial one comes pre-rendered).
-  const query = selected ? `?projectId=${selected}` : "";
-  const { data } = useSWR<{ messages: MessageView[] } | null>(
-    `/api/messages${query}`,
+  // The starting thread is server-rendered; switching fetches that thread's
+  // first page once, then MessageThread polls incrementally from there.
+  const { data, isLoading } = useSWR<ThreadPage | null>(
+    `/api/messages?${selected ? `projectId=${selected}` : ""}`,
     fetcher,
     {
-      // Reuse the server-rendered messages for the thread we started on.
+      revalidateOnFocus: false,
+      // Reuse the server-rendered page for the thread we started on.
       fallbackData:
-        selected === initialProjectId ? { messages: initialMessages } : undefined,
-      revalidateOnMount: selected !== initialProjectId,
+        selected === initialProjectId
+          ? { messages: initialMessages, hasMore: initialHasMore }
+          : undefined,
     },
   );
-  const messages = data?.messages ?? [];
+  const page: ThreadPage = {
+    messages: data?.messages ?? [],
+    hasMore: data?.hasMore ?? false,
+  };
 
   const threads = [
     {
@@ -116,12 +122,19 @@ export function ThreadSwitcher({
             within one business day.
           </p>
         </div>
-        <MessageThread
-          key={selected ?? "general"}
-          projectId={selected}
-          viewerRole="CLIENT"
-          initialMessages={messages}
-        />
+        {isLoading ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            Loading conversation…
+          </p>
+        ) : (
+          <MessageThread
+            key={selected ?? "general"}
+            projectId={selected}
+            viewerRole="CLIENT"
+            initialMessages={page.messages}
+            initialHasMore={page.hasMore}
+          />
+        )}
       </div>
     </div>
   );

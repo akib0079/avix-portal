@@ -7,7 +7,7 @@ export const metadata = { title: "Messages" };
 
 export default async function PortalMessagesPage() {
   const user = await requireClient();
-  const [threads, generalMessages] = await Promise.all([
+  const [threads, generalPage] = await Promise.all([
     listMyThreads(user.id),
     getThreadMessages({ clientId: user.id, projectId: null }),
   ]);
@@ -21,7 +21,8 @@ export default async function PortalMessagesPage() {
       <ThreadSwitcher
         generalUnread={threads.generalUnread}
         projects={threads.projects}
-        initialMessages={generalMessages}
+        initialMessages={generalPage.messages}
+        initialHasMore={generalPage.hasMore}
         initialProjectId={null}
       />
     </div>

@@ -737,6 +737,9 @@ model Message {
   sender         User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
   senderRole     MessageSenderRole
   body           Json
+  /// Plain-text flattening of `body`, written on send. Keeps previews and
+  /// search off the JSON walker, which used to run over every row.
+  bodyText       String?
   readByAdminAt  DateTime?
   readByClientAt DateTime?
   createdAt      DateTime          @default(now())

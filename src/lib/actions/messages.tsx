@@ -8,21 +8,50 @@ import { hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { sendEmail } from "@/lib/email/resend";
 import MessageReceivedEmail from "@/emails/message-received";
 import { appUrl } from "@/lib/app-url";
+import { clipPreview, richTextToPlain } from "@/lib/rich-text";
+import type { MessageView } from "@/lib/dal/messages";
 import type { Prisma } from "@prisma/client";
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult<T = undefined> =
+  | { ok: true; data?: T }
+  | { ok: false; error: string };
 
-/** Flattens Tiptap JSON to a short plain-text preview. */
-function toPreview(doc: unknown, max = 140): string {
-  const parts: string[] = [];
-  const walk = (node: { text?: string; content?: unknown[] }) => {
-    if (node.text) parts.push(node.text);
-    if (Array.isArray(node.content))
-      node.content.forEach((c) => walk(c as { text?: string; content?: unknown[] }));
-  };
-  walk((doc as { content?: unknown[] }) ?? {});
-  const text = parts.join(" ").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, max)}…` : text || "(no text)";
+/**
+ * Marks the other side's messages in a thread as read for the caller. Split
+ * out of the polling GET so reading the thread stays side-effect free — the
+ * client calls this when the thread is actually on screen.
+ */
+export async function markThreadRead(input: {
+  clientId?: string;
+  projectId?: string | null;
+}): Promise<ActionResult> {
+  const user = await requireUser();
+  const isTeam = user.role === "ADMIN" || user.role === "STAFF";
+  const clientId = isTeam ? input.clientId : user.id;
+  if (!clientId) return { ok: false, error: "Missing client." };
+  const projectId = input.projectId ?? null;
+
+  // A project thread must belong to that client (blocks cross-client writes).
+  if (projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, clientId },
+      select: { id: true },
+    });
+    if (!project) return { ok: false, error: "Thread not found." };
+  }
+
+  const field = isTeam ? "readByAdminAt" : "readByClientAt";
+  await prisma.message.updateMany({
+    where: {
+      clientId,
+      projectId,
+      [field]: null,
+      // Only the other side's messages need marking.
+      senderRole: isTeam ? "CLIENT" : "ADMIN",
+    },
+    data: { [field]: new Date() },
+  });
+  return { ok: true };
 }
 
 /**
@@ -30,7 +59,9 @@ function toPreview(doc: unknown, max = 140): string {
  * client's general thread. Clients may only post to their own threads; admins
  * must name the client (and, for a project thread, a project that client owns).
  */
-export async function sendMessage(input: MessageInput): Promise<ActionResult> {
+export async function sendMessage(
+  input: MessageInput,
+): Promise<ActionResult<{ message: MessageView }>> {
   const user = await requireUser();
   const parsed = messageSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid message." };
@@ -66,20 +97,23 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
   const senderRole = isTeam ? "ADMIN" : "CLIENT";
   const now = new Date();
 
-  await prisma.message.create({
+  const bodyText = richTextToPlain(parsed.data.body);
+
+  const created = await prisma.message.create({
     data: {
       clientId: client.id,
       projectId,
       senderId: user.id,
       senderRole,
       body: parsed.data.body as Prisma.InputJsonValue,
+      bodyText,
       // The sender has implicitly read their own message.
       readByAdminAt: senderRole === "ADMIN" ? now : null,
       readByClientAt: senderRole === "CLIENT" ? now : null,
     },
   });
 
-  const preview = toPreview(parsed.data.body);
+  const preview = clipPreview(bodyText, 140);
   const where = projectName ?? "General chat";
   const adminLink = projectId
     ? `/admin/projects/${projectId}`
@@ -153,5 +187,23 @@ export async function sendMessage(input: MessageInput): Promise<ActionResult> {
   }
   revalidatePath("/admin/messages");
   revalidatePath("/portal/messages");
-  return { ok: true };
+
+  // Handing the saved row back lets the composer swap its optimistic entry for
+  // the real one, instead of waiting for the next poll.
+  return {
+    ok: true,
+    data: {
+      message: {
+        id: created.id,
+        senderId: user.id,
+        senderRole,
+        senderName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.name,
+        senderIsStaff: user.role === "STAFF",
+        body: parsed.data.body as MessageView["body"],
+        createdAt: created.createdAt.toISOString(),
+        readByAdminAt: created.readByAdminAt?.toISOString() ?? null,
+        readByClientAt: created.readByClientAt?.toISOString() ?? null,
+      },
+    },
+  };
 }

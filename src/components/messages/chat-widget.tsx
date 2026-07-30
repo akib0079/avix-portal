@@ -3,7 +3,6 @@
 import { useState } from "react";
 import type { MessageView } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
-import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,

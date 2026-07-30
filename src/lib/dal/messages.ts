@@ -1,7 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { JSONContent } from "@tiptap/react";
-import type { MessageSenderRole, Role } from "@prisma/client";
+import type { MessageSenderRole, Prisma, Role } from "@prisma/client";
+import { clipPreview, richTextPreview } from "@/lib/rich-text";
 
 export type MessageView = {
   id: string;
@@ -12,6 +13,9 @@ export type MessageView = {
   senderIsStaff: boolean;
   body: JSONContent | null;
   createdAt: string;
+  /** When the other side read it — drives the "Seen" receipt. */
+  readByAdminAt: string | null;
+  readByClientAt: string | null;
 };
 
 /**
@@ -20,12 +24,25 @@ export type MessageView = {
  */
 export type ThreadKey = { clientId: string; projectId: string | null };
 
+/** One page of a thread, newest-last, plus whether older messages exist. */
+export type ThreadPage = {
+  messages: MessageView[];
+  hasMore: boolean;
+};
+
+/** How many messages one page of a thread holds. */
+export const THREAD_PAGE_SIZE = 50;
+/** How many conversations the admin inbox lists at once. */
+export const INBOX_PAGE_SIZE = 50;
+
 function toView(m: {
   id: string;
   senderId: string;
   senderRole: MessageSenderRole;
   body: unknown;
   createdAt: Date;
+  readByAdminAt: Date | null;
+  readByClientAt: Date | null;
   sender: { firstName: string; lastName: string; name: string; role: Role };
 }): MessageView {
   return {
@@ -36,6 +53,8 @@ function toView(m: {
     senderIsStaff: m.sender.role === "STAFF",
     body: (m.body as JSONContent) ?? null,
     createdAt: m.createdAt.toISOString(),
+    readByAdminAt: m.readByAdminAt?.toISOString() ?? null,
+    readByClientAt: m.readByClientAt?.toISOString() ?? null,
   };
 }
 
@@ -44,13 +63,49 @@ const senderSelect = {
 } as const;
 
 /**
- * Loads one thread's messages. Callers MUST authorize the thread first
+ * Loads one page of a thread. Callers MUST authorize the thread first
  * (admin: any client; client: only their own id).
+ *
+ * Bounded on purpose: the newest {@link THREAD_PAGE_SIZE} messages, oldest
+ * first for rendering. Pass `before` (an ISO timestamp) to page backwards.
  */
-export async function getThreadMessages(key: ThreadKey): Promise<MessageView[]> {
+export async function getThreadMessages(
+  key: ThreadKey,
+  options: { before?: string | null } = {},
+): Promise<ThreadPage> {
+  const before = options.before ? new Date(options.before) : null;
   const rows = await prisma.message.findMany({
-    where: { clientId: key.clientId, projectId: key.projectId },
+    where: {
+      clientId: key.clientId,
+      projectId: key.projectId,
+      ...(before && !Number.isNaN(before.getTime()) ? { createdAt: { lt: before } } : {}),
+    },
+    // Newest first so `take` keeps the recent end of the thread…
+    orderBy: { createdAt: "desc" },
+    take: THREAD_PAGE_SIZE + 1,
+    include: senderSelect,
+  });
+
+  const hasMore = rows.length > THREAD_PAGE_SIZE;
+  const page = hasMore ? rows.slice(0, THREAD_PAGE_SIZE) : rows;
+  // …then flip back to chronological for the UI.
+  return { messages: page.reverse().map(toView), hasMore };
+}
+
+/**
+ * Only what arrived after `since`. The poll uses this so a long thread isn't
+ * re-serialised every 20 seconds.
+ */
+export async function getThreadMessagesSince(
+  key: ThreadKey,
+  since: string,
+): Promise<MessageView[]> {
+  const after = new Date(since);
+  if (Number.isNaN(after.getTime())) return [];
+  const rows = await prisma.message.findMany({
+    where: { ...key, createdAt: { gt: after } },
     orderBy: { createdAt: "asc" },
+    take: THREAD_PAGE_SIZE,
     include: senderSelect,
   });
   return rows.map(toView);
@@ -60,10 +115,11 @@ export async function getThreadMessages(key: ThreadKey): Promise<MessageView[]> 
 export async function getProjectMessages(projectId: string): Promise<MessageView[]> {
   const rows = await prisma.message.findMany({
     where: { projectId },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
+    take: THREAD_PAGE_SIZE,
     include: senderSelect,
   });
-  return rows.map(toView);
+  return rows.reverse().map(toView);
 }
 
 export type ConversationSummary = {
@@ -78,82 +134,104 @@ export type ConversationSummary = {
   unread: number;
 };
 
-/** Flattens Tiptap JSON to a short plain-text preview. */
-function preview(doc: unknown, max = 90): string {
-  const parts: string[] = [];
-  const walk = (node: { text?: string; content?: unknown[] }) => {
-    if (node.text) parts.push(node.text);
-    if (Array.isArray(node.content))
-      node.content.forEach((c) => walk(c as { text?: string; content?: unknown[] }));
-  };
-  walk((doc as { content?: unknown[] }) ?? {});
-  const text = parts.join(" ").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, max)}…` : text || "(no text)";
-}
-
 /**
  * Admin inbox: one row per thread (client × project|general), newest first,
  * with a count of client messages the admin hasn't read yet.
+ *
+ * Three bounded queries rather than one unbounded scan: group to find the
+ * latest activity per thread, fetch only those latest rows, then group the
+ * unread counts. The old version pulled every message in the database and
+ * folded it in JS.
  */
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const rows = await prisma.message.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      client: {
-        select: { id: true, firstName: true, lastName: true, company: true, timezone: true },
-      },
-      project: { select: { id: true, projectName: true } },
-    },
+  const groups = await prisma.message.groupBy({
+    by: ["clientId", "projectId"],
+    _max: { createdAt: true },
+    orderBy: { _max: { createdAt: "desc" } },
+    take: INBOX_PAGE_SIZE,
   });
+  if (groups.length === 0) return [];
 
-  const threads = new Map<string, ConversationSummary>();
-  for (const m of rows) {
-    const key = `${m.clientId}::${m.projectId ?? "general"}`;
-    const isUnread = m.senderRole === "CLIENT" && m.readByAdminAt === null;
-    const existing = threads.get(key);
+  // One OR-clause per thread, each hitting (clientId, projectId, createdAt).
+  const latestFilters: Prisma.MessageWhereInput[] = groups.flatMap((g) =>
+    g._max.createdAt
+      ? [{ clientId: g.clientId, projectId: g.projectId, createdAt: g._max.createdAt }]
+      : [],
+  );
 
-    if (!existing) {
-      // Rows are newest-first, so the first one seen is the latest message.
-      threads.set(key, {
-        clientId: m.clientId,
-        clientName: `${m.client.firstName} ${m.client.lastName}`.trim() || "Client",
-        company: m.client.company,
-        timezone: m.client.timezone,
-        projectId: m.projectId,
-        projectName: m.project?.projectName ?? null,
-        lastMessageAt: m.createdAt.toISOString(),
-        preview: `${m.senderRole === "ADMIN" ? "You: " : ""}${preview(m.body)}`,
-        unread: isUnread ? 1 : 0,
-      });
-    } else if (isUnread) {
-      existing.unread += 1;
-    }
+  const [latest, unreadGroups] = await Promise.all([
+    prisma.message.findMany({
+      where: { OR: latestFilters },
+      select: {
+        clientId: true,
+        projectId: true,
+        senderRole: true,
+        body: true,
+        bodyText: true,
+        createdAt: true,
+        client: {
+          select: { id: true, firstName: true, lastName: true, company: true, timezone: true },
+        },
+        project: { select: { id: true, projectName: true } },
+      },
+    }),
+    prisma.message.groupBy({
+      by: ["clientId", "projectId"],
+      where: { senderRole: "CLIENT", readByAdminAt: null },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const threadKey = (clientId: string, projectId: string | null) =>
+    `${clientId}::${projectId ?? "general"}`;
+
+  const unreadByThread = new Map(
+    unreadGroups.map((g) => [threadKey(g.clientId, g.projectId), g._count._all]),
+  );
+
+  const summaries = new Map<string, ConversationSummary>();
+  for (const m of latest) {
+    const key = threadKey(m.clientId, m.projectId);
+    // Two messages can share the exact latest timestamp; first one wins.
+    if (summaries.has(key)) continue;
+    summaries.set(key, {
+      clientId: m.clientId,
+      clientName: `${m.client.firstName} ${m.client.lastName}`.trim() || "Client",
+      company: m.client.company,
+      timezone: m.client.timezone,
+      projectId: m.projectId,
+      projectName: m.project?.projectName ?? null,
+      lastMessageAt: m.createdAt.toISOString(),
+      preview: `${m.senderRole === "ADMIN" ? "You: " : ""}${
+        m.bodyText ? clipPreview(m.bodyText) : richTextPreview(m.body)
+      }`,
+      unread: unreadByThread.get(key) ?? 0,
+    });
   }
 
-  return [...threads.values()].sort(
+  return [...summaries.values()].sort(
     (a, b) => Date.parse(b.lastMessageAt) - Date.parse(a.lastMessageAt),
   );
 }
 
 /** Client's thread list: General + one per project, each with unread counts. */
 export async function listMyThreads(clientId: string) {
-  const [projects, unreadRows] = await Promise.all([
+  const [projects, unreadGroups] = await Promise.all([
     prisma.project.findMany({
       where: { clientId },
       orderBy: { updatedAt: "desc" },
       select: { id: true, projectName: true },
     }),
-    prisma.message.findMany({
+    prisma.message.groupBy({
+      by: ["projectId"],
       where: { clientId, senderRole: "ADMIN", readByClientAt: null },
-      select: { projectId: true },
+      _count: { _all: true },
     }),
   ]);
 
-  const unreadByThread = new Map<string, number>();
-  for (const row of unreadRows) {
-    const key = row.projectId ?? "general";
-    unreadByThread.set(key, (unreadByThread.get(key) ?? 0) + 1);
-  }
+  const unreadByThread = new Map(
+    unreadGroups.map((g) => [g.projectId ?? "general", g._count._all]),
+  );
 
   return {
     generalUnread: unreadByThread.get("general") ?? 0,

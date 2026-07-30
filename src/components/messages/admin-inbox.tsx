@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import type { ConversationSummary, MessageView } from "@/lib/dal/messages";
+import type { ConversationSummary, ThreadPage } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
 import { cn, } from "@/lib/utils";
 import { initials } from "@/lib/format";
@@ -27,15 +27,18 @@ export function AdminInbox({
   );
   const active = conversations.find((c) => threadKey(c) === selectedKey) ?? null;
 
-  const query = active
-    ? `?clientId=${active.clientId}${active.projectId ? `&projectId=${active.projectId}` : ""}`
+  // Fetch the selected thread's first page; MessageThread polls onwards from
+  // there, so the thread is never fetched twice on a timer.
+  const threadQuery = active
+    ? `/api/messages?clientId=${active.clientId}${active.projectId ? `&projectId=${active.projectId}` : ""}`
     : null;
-  const { data } = useSWR<{ messages: MessageView[] } | null>(
-    query ? `/api/messages${query}` : null,
-    fetcher,
-    { refreshInterval: 20_000 },
-  );
-  const messages = data?.messages ?? [];
+  const { data, isLoading } = useSWR<ThreadPage | null>(threadQuery, fetcher, {
+    revalidateOnFocus: false,
+  });
+  const page: ThreadPage = {
+    messages: data?.messages ?? [],
+    hasMore: data?.hasMore ?? false,
+  };
 
   if (conversations.length === 0) {
     return (
@@ -122,13 +125,20 @@ export function AdminInbox({
               </p>
               <LocalTime timezone={active.timezone} className="mt-1" />
             </div>
-            <MessageThread
-              key={selectedKey ?? ""}
-              projectId={active.projectId}
-              clientId={active.clientId}
-              viewerRole="ADMIN"
-              initialMessages={messages}
-            />
+            {isLoading ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                Loading conversation…
+              </p>
+            ) : (
+              <MessageThread
+                key={selectedKey ?? ""}
+                projectId={active.projectId}
+                clientId={active.clientId}
+                viewerRole="ADMIN"
+                initialMessages={page.messages}
+                initialHasMore={page.hasMore}
+              />
+            )}
           </>
         )}
       </div>
