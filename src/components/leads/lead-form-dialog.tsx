@@ -11,7 +11,7 @@ import {
   type LeadInput,
 } from "@/lib/validation/lead";
 import { createLead, updateLead } from "@/lib/actions/leads";
-import type { LeadView } from "@/lib/dal/leads";
+import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,11 +43,13 @@ import { Loader2 } from "lucide-react";
 
 export function LeadFormDialog({
   lead,
+  owners = [],
   open,
   onOpenChange,
 }: {
   /** present = edit mode */
   lead?: LeadView | null;
+  owners?: LeadOwnerOption[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -67,6 +69,11 @@ export function LeadFormDialog({
       brandInfo: "",
       responseMessage: "",
       nextFollowUp: "",
+      phone: "",
+      ownerId: "none",
+      priority: "MEDIUM",
+      expectedCloseDate: "",
+      tags: "",
     },
   });
 
@@ -83,6 +90,11 @@ export function LeadFormDialog({
         brandInfo: lead?.brandInfo ?? "",
         responseMessage: lead?.responseMessage ?? "",
         nextFollowUp: lead?.nextFollowUp ?? "",
+        phone: lead?.phone ?? "",
+        ownerId: lead?.ownerId ?? "none",
+        priority: lead?.priority ?? "MEDIUM",
+        expectedCloseDate: lead?.expectedCloseDate ?? "",
+        tags: (lead?.tags ?? []).join(", "),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -225,14 +237,106 @@ export function LeadFormDialog({
                 )}
               />
             </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="nextFollowUp"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Next follow-up (optional)</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="expectedCloseDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Expected close (optional)</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <FormField
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Phone (optional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="+1 555 123 4567" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="priority"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Priority</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="HIGH">High</SelectItem>
+                        <SelectItem value="MEDIUM">Medium</SelectItem>
+                        <SelectItem value="LOW">Low</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ownerId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Owner</FormLabel>
+                    <Select value={field.value || "none"} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">Unassigned</SelectItem>
+                        {owners.map((o) => (
+                          <SelectItem key={o.id} value={o.id}>
+                            {o.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <FormField
               control={form.control}
-              name="nextFollowUp"
+              name="tags"
               render={({ field }) => (
-                <FormItem className="sm:max-w-xs">
-                  <FormLabel>Next follow-up (optional)</FormLabel>
+                <FormItem>
+                  <FormLabel>Tags (optional)</FormLabel>
                   <FormControl>
-                    <Input type="date" {...field} />
+                    <Input placeholder="ecommerce, urgent, referral" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { ProjectBillingType } from "@prisma/client";
-import type { LeadView } from "@/lib/dal/leads";
+import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
 import type { MilestoneView } from "@/components/milestones/milestone-types";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -31,7 +31,7 @@ function BoardPlaceholder({ columns = 1 }: { columns?: number }) {
   );
 }
 
-export const LeadBoard = dynamic<{ leads: LeadView[] }>(
+export const LeadBoard = dynamic<{ leads: LeadView[]; owners?: LeadOwnerOption[] }>(
   () => import("./leads/lead-board").then((m) => m.LeadBoard),
   { ssr: false, loading: () => <BoardPlaceholder columns={5} /> },
 );

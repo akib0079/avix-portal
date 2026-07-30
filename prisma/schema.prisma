@@ -121,6 +121,15 @@ enum ProposalStatus {
   EXPIRED
 }
 
+enum LeadEntryKind {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  /// Auto-written when the stage changes ("NEW → CONTACTED").
+  STAGE
+}
+
 enum LeadSource {
   FIVERR
   UPWORK
@@ -187,6 +196,8 @@ model User {
   campaignRecipients CampaignRecipient[]
   meetings           Meeting[]           @relation("ClientMeetings")
   retainers          Retainer[]          @relation("ClientRetainers")
+  leadsOwned         Lead[]              @relation("LeadOwner")
+  leadEntries        LeadEntry[]         @relation("LeadEntryAuthor")
 
   @@index([role, status])
   @@map("users")
@@ -507,13 +518,42 @@ model Lead {
   /// The reply we sent (or plan to send) — copyable for Fiverr/Upwork/email.
   responseMessage   String?
   nextFollowUp      DateTime?
+  phone             String?
+  /// Team member responsible for this lead (admin or staff).
+  ownerId           String?
+  owner             User?      @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  priority          Priority   @default(MEDIUM)
+  expectedCloseDate DateTime?
+  /// Required when the lead is moved to LOST — why we didn't win it.
+  lostReason        String?
+  tags              String[]   @default([])
   convertedClientId String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
   proposals         Proposal[]
+  entries           LeadEntry[]
 
   @@index([stage, nextFollowUp])
+  @@index([ownerId])
   @@map("leads")
+}
+
+/// The human contact log on a lead: notes, calls, emails, meetings, plus
+/// auto-written stage changes. Deliberately separate from ActivityEvent (the
+/// system audit feed) because these are author-owned entries the team writes,
+/// reads in full, and deletes.
+model LeadEntry {
+  id        String        @id @default(cuid())
+  leadId    String
+  lead      Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  kind      LeadEntryKind @default(NOTE)
+  body      String
+  authorId  String?
+  author    User?         @relation("LeadEntryAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime      @default(now())
+
+  @@index([leadId, createdAt])
+  @@map("lead_entries")
 }
 
 /// A branded proposal: intro + line-item scope + total + timeline + deposit %.

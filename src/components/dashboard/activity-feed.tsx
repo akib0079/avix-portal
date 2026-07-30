@@ -9,6 +9,8 @@ import {
   CalendarDays,
   ThumbsUp,
   Activity as ActivityIcon,
+  Target,
+  ArrowRightLeft,
 } from "lucide-react";
 
 const META: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
@@ -19,6 +21,13 @@ const META: Record<string, { icon: React.ComponentType<{ className?: string }>; 
   "milestone.completed": { icon: Flag, tone: "text-primary" },
   "milestone.approved": { icon: ThumbsUp, tone: "text-emerald-600" },
   "meeting.scheduled": { icon: CalendarDays, tone: "text-sky-600" },
+  "lead.created": { icon: Target, tone: "text-sky-600" },
+  "lead.stage": { icon: ArrowRightLeft, tone: "text-amber-600" },
+  "lead.won": { icon: BadgeCheck, tone: "text-emerald-600" },
+  "invoice.drafted": { icon: Receipt, tone: "text-muted-foreground" },
+  "deliverable.approved": { icon: BadgeCheck, tone: "text-emerald-600" },
+  "deliverable.changes": { icon: Flag, tone: "text-amber-600" },
+  "proposal.created": { icon: FileSignature, tone: "text-muted-foreground" },
 };
 
 /** Read-only audit timeline. Used on the dashboard and per-client tab. */

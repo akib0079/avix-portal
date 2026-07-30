@@ -5,8 +5,15 @@ import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { createUserWithPassword, sendPasswordLink } from "@/lib/auth-utils";
-import { leadSchema, type LeadInput } from "@/lib/validation/lead";
-import type { LeadStage } from "@prisma/client";
+import {
+  leadSchema,
+  leadEntrySchema,
+  leadStageLabels,
+  type LeadInput,
+  type LeadEntryInput,
+} from "@/lib/validation/lead";
+import { logActivity } from "@/lib/dal/activity";
+import type { LeadStage, Prisma } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -30,7 +37,44 @@ function normalize(data: LeadInput) {
     brandInfo: data.brandInfo || null,
     responseMessage: data.responseMessage || null,
     nextFollowUp: parseDate(data.nextFollowUp),
+    phone: data.phone || null,
+    ownerId: data.ownerId && data.ownerId !== "none" ? data.ownerId : null,
+    priority: data.priority,
+    expectedCloseDate: parseDate(data.expectedCloseDate),
+    tags: (data.tags ?? "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 12),
   };
+}
+
+/** Appends one entry to a lead's contact log. Best-effort inside transactions. */
+async function appendEntry(
+  leadId: string,
+  kind: "NOTE" | "CALL" | "EMAIL" | "MEETING" | "STAGE",
+  body: string,
+  authorId?: string | null,
+) {
+  await prisma.leadEntry.create({ data: { leadId, kind, body, authorId: authorId ?? null } });
+}
+
+/**
+ * The shared tail of BOTH convert paths (convertLead here and runHandoff in
+ * proposals): mark the lead won, remember the client, and record it once.
+ */
+export async function markLeadWon(
+  tx: Prisma.TransactionClient,
+  leadId: string,
+  clientId: string,
+) {
+  await tx.lead.update({
+    where: { id: leadId },
+    data: { stage: "WON", convertedClientId: clientId },
+  });
+  await tx.leadEntry.create({
+    data: { leadId, kind: "STAGE", body: "Converted to client — stage set to Won" },
+  });
 }
 
 export async function createLead(input: LeadInput): Promise<ActionResult> {
@@ -39,7 +83,14 @@ export async function createLead(input: LeadInput): Promise<ActionResult> {
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
-  await prisma.lead.create({ data: normalize(parsed.data) });
+  const lead = await prisma.lead.create({ data: normalize(parsed.data) });
+  await logActivity({
+    type: "lead.created",
+    summary: `Lead added: ${lead.name}${lead.company ? ` (${lead.company})` : ""}`,
+    entity: "lead",
+    entityId: lead.id,
+    link: `/admin/leads/${lead.id}`,
+  });
   revalidatePath("/admin/leads");
   revalidatePath("/admin");
   return { ok: true };
@@ -60,14 +111,76 @@ export async function updateLead(id: string, input: LeadInput): Promise<ActionRe
   return { ok: true };
 }
 
-export async function setLeadStage(id: string, stage: LeadStage): Promise<ActionResult> {
-  await requireAdmin();
+export async function setLeadStage(
+  id: string,
+  stage: LeadStage,
+  lostReason?: string,
+): Promise<ActionResult> {
+  const session = await requireAdmin();
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return { ok: false, error: "Lead not found." };
+  if (lead.stage === stage) return { ok: true };
 
-  await prisma.lead.update({ where: { id }, data: { stage } });
+  // Losing a lead without saying why makes the pipeline unlearnable.
+  const reason = lostReason?.trim().slice(0, 1000) || null;
+  if (stage === "LOST" && !reason) {
+    return { ok: false, error: "Add a reason so we know why this one was lost." };
+  }
+
+  await prisma.lead.update({
+    where: { id },
+    data: { stage, ...(stage === "LOST" ? { lostReason: reason } : {}) },
+  });
+  await appendEntry(
+    id,
+    "STAGE",
+    `${leadStageLabels[lead.stage]} → ${leadStageLabels[stage]}` +
+      (stage === "LOST" && reason ? ` · ${reason}` : ""),
+    session.id,
+  );
+  await logActivity({
+    type: stage === "WON" ? "lead.won" : "lead.stage",
+    summary: `${lead.name}: ${leadStageLabels[lead.stage]} → ${leadStageLabels[stage]}`,
+    actorId: session.id,
+    entity: "lead",
+    entityId: id,
+    link: `/admin/leads/${id}`,
+  });
+
   revalidatePath("/admin/leads");
+  revalidatePath(`/admin/leads/${id}`);
   revalidatePath("/admin");
+  return { ok: true };
+}
+
+/** Adds a note/call/email/meeting to the contact log. */
+export async function addLeadEntry(
+  leadId: string,
+  input: LeadEntryInput,
+): Promise<ActionResult> {
+  const session = await requireAdmin();
+  const parsed = leadEntrySchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true } });
+  if (!lead) return { ok: false, error: "Lead not found." };
+
+  await appendEntry(leadId, parsed.data.kind, parsed.data.body, session.id);
+  revalidatePath(`/admin/leads/${leadId}`);
+  return { ok: true };
+}
+
+export async function deleteLeadEntry(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  const entry = await prisma.leadEntry.findUnique({
+    where: { id },
+    select: { id: true, leadId: true },
+  });
+  if (!entry) return { ok: false, error: "Entry not found." };
+
+  await prisma.leadEntry.delete({ where: { id } });
+  revalidatePath(`/admin/leads/${entry.leadId}`);
   return { ok: true };
 }
 
@@ -256,16 +369,22 @@ export async function convertLead(
     lastName: rest.join(" "),
     role: "CLIENT",
     company: lead.company,
-    phone: null,
+    phone: lead.phone,
   });
   await sendPasswordLink(lead.email);
 
-  await prisma.lead.update({
-    where: { id },
-    data: { stage: "WON", convertedClientId: user.id },
+  await prisma.$transaction((tx) => markLeadWon(tx, id, user.id));
+  await logActivity({
+    type: "lead.won",
+    summary: `${lead.name} converted to a client`,
+    clientId: user.id,
+    entity: "lead",
+    entityId: id,
+    link: `/admin/leads/${id}`,
   });
 
   revalidatePath("/admin/leads");
+  revalidatePath(`/admin/leads/${id}`);
   revalidatePath("/admin/clients");
   revalidatePath("/admin");
   return { ok: true, data: { clientId: user.id } };

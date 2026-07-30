@@ -11,6 +11,7 @@ import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { logActivity } from "@/lib/dal/activity";
+import { markLeadWon } from "@/lib/actions/leads";
 import { proposalContact } from "@/lib/dal/proposals";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
@@ -571,10 +572,7 @@ async function runHandoff(
           });
         }
         if (proposal.lead) {
-          await tx.lead.update({
-            where: { id: proposal.lead.id },
-            data: { stage: "WON", convertedClientId: client.id },
-          });
+          await markLeadWon(tx, proposal.lead.id, client.id);
         }
         await tx.proposal.update({
           where: { id },
@@ -710,10 +708,7 @@ async function runHandoff(
     });
 
     if (proposal.lead) {
-      await tx.lead.update({
-        where: { id: proposal.lead.id },
-        data: { stage: "WON", convertedClientId: user.id },
-      });
+      await markLeadWon(tx, proposal.lead.id, user.id);
     }
 
     await tx.proposal.update({

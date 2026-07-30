@@ -89,7 +89,7 @@ export async function GET(request: Request) {
       group: "Leads" as const,
       label: l.name,
       detail: [l.company, l.stage.toLowerCase()].filter(Boolean).join(" · "),
-      href: "/admin/leads",
+      href: `/admin/leads/${l.id}`,
     })),
   ];
 

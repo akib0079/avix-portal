@@ -1,4 +1,4 @@
-import { listLeads } from "@/lib/dal/leads";
+import { listLeads, listLeadOwners } from "@/lib/dal/leads";
 import { PageHeader } from "@/components/page-header";
 import { LeadBoard } from "@/components/boards-lazy";
 import { requireAdmin } from "@/lib/dal/session";
@@ -7,7 +7,7 @@ export const metadata = { title: "Leads" };
 
 export default async function LeadsPage() {
   await requireAdmin();
-  const leads = await listLeads();
+  const [leads, owners] = await Promise.all([listLeads(), listLeadOwners()]);
 
   return (
     <div>
@@ -15,7 +15,7 @@ export default async function LeadsPage() {
         title="Leads"
         description="Your sales pipeline — from first contact to signed client."
       />
-      <LeadBoard leads={leads} />
+      <LeadBoard leads={leads} owners={owners} />
     </div>
   );
 }

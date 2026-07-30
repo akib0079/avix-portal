@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -14,13 +15,14 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import type { LeadStage } from "@prisma/client";
-import type { LeadView } from "@/lib/dal/leads";
+import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
 import { leadStageLabels, leadSourceLabels } from "@/lib/validation/lead";
 import { setLeadStage, deleteLead, convertLead } from "@/lib/actions/leads";
 import { LeadFormDialog } from "./lead-form-dialog";
 import { LeadImportDialog } from "./lead-import-dialog";
 import { ProposalFormDialog } from "@/components/proposals/proposal-form-dialog";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -45,9 +47,6 @@ import {
   CheckCircle2,
   FileUp,
   GripVertical,
-  Building2,
-  Reply,
-  Copy,
   Mail,
   Tag,
 } from "lucide-react";
@@ -172,47 +171,33 @@ function LeadCard({
         )}
       </div>
 
-      {lead.notes && (
-        <p className="mt-2 line-clamp-2 rounded-md bg-muted/50 px-2.5 py-1.5 pl-2.5 text-xs text-muted-foreground">
-          {lead.notes}
-        </p>
-      )}
-
-      {/* Brand info & response message */}
-      {(lead.brandInfo || lead.responseMessage) && !dragging && (
-        <div className="mt-2 space-y-2 rounded-md border bg-card px-2.5 py-2">
-          {lead.brandInfo && (
-            <div>
-              <p className="flex items-center gap-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-                <Building2 className="size-3" /> Brand info
-              </p>
-              <p className="mt-0.5 line-clamp-3 text-xs whitespace-pre-wrap">
-                {lead.brandInfo}
-              </p>
-            </div>
+      {/* Compact meta — the full record lives on the detail page */}
+      {!dragging && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {lead.priority === "HIGH" && (
+            <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">
+              High
+            </span>
           )}
-          {lead.responseMessage && (
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <p className="flex items-center gap-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-                  <Reply className="size-3" /> Response
-                </p>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-primary hover:bg-brand-tint"
-                  onClick={() => {
-                    navigator.clipboard.writeText(lead.responseMessage ?? "");
-                    toast.success("Response copied.");
-                  }}
-                >
-                  <Copy className="size-3" /> Copy
-                </button>
-              </div>
-              <p className="mt-0.5 line-clamp-3 text-xs whitespace-pre-wrap text-muted-foreground">
-                {lead.responseMessage}
-              </p>
-            </div>
+          {lead.ownerName && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {lead.ownerName}
+            </span>
           )}
+          {lead.tags.slice(0, 2).map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
+            >
+              {t}
+            </span>
+          ))}
+          <Link
+            href={`/admin/leads/${lead.id}`}
+            className="ml-auto text-[10px] font-medium text-primary hover:underline"
+          >
+            Open →
+          </Link>
         </div>
       )}
 
@@ -309,7 +294,13 @@ function StageColumn({
   );
 }
 
-export function LeadBoard({ leads }: { leads: LeadView[] }) {
+export function LeadBoard({
+  leads,
+  owners = [],
+}: {
+  leads: LeadView[];
+  owners?: LeadOwnerOption[];
+}) {
   const router = useRouter();
   const { track } = useActivity();
   const [items, setItems] = useState(leads);
@@ -319,6 +310,8 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
   const [editing, setEditing] = useState<LeadView | null>(null);
   const [deleting, setDeleting] = useState<LeadView | null>(null);
   const [converting, setConverting] = useState<LeadView | null>(null);
+  const [losing, setLosing] = useState<LeadView | null>(null);
+  const [lostReason, setLostReason] = useState("");
   const [proposingLeadId, setProposingLeadId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -346,6 +339,12 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
     const target = over.id as LeadStage;
     if (!lead || lead.stage === target || !STAGES.includes(target)) return;
 
+    // Losing a lead needs a reason — ask before moving the card.
+    if (target === "LOST") {
+      setLosing(lead);
+      return;
+    }
+
     const previous = items;
     setItems(items.map((l) => (l.id === lead.id ? { ...l, stage: target } : l)));
     const result = await setLeadStage(lead.id, target);
@@ -354,6 +353,19 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
       toast.error(result.error);
       return;
     }
+    router.refresh();
+  }
+
+  async function confirmLost() {
+    if (!losing) return;
+    setBusy(true);
+    const result = await setLeadStage(losing.id, "LOST", lostReason);
+    setBusy(false);
+    if (!result.ok) return void toast.error(result.error);
+    setItems(items.map((l) => (l.id === losing.id ? { ...l, stage: "LOST" as const } : l)));
+    setLosing(null);
+    setLostReason("");
+    toast.success("Marked as lost.");
     router.refresh();
   }
 
@@ -434,7 +446,33 @@ export function LeadBoard({ leads }: { leads: LeadView[] }) {
         </DragOverlay>
       </DndContext>
 
-      <LeadFormDialog lead={editing} open={formOpen} onOpenChange={setFormOpen} />
+      <LeadFormDialog lead={editing} owners={owners} open={formOpen} onOpenChange={setFormOpen} />
+
+      {/* Why was it lost? — required before a card can land in LOST */}
+      <Dialog open={!!losing} onOpenChange={(open) => !open && setLosing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Why was “{losing?.name}” lost?</DialogTitle>
+            <DialogDescription>
+              A short reason makes the pipeline worth learning from later.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={lostReason}
+            onChange={(e) => setLostReason(e.target.value)}
+            rows={3}
+            placeholder="Budget too low, went with an in-house team…"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLosing(null)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmLost} disabled={busy || !lostReason.trim()}>
+              {busy && <Loader2 className="animate-spin" />} Mark lost
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <LeadImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
       <ProposalFormDialog
