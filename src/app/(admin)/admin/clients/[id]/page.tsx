@@ -32,10 +32,10 @@ export default async function ClientDetailPage({
 }) {
   await requireAdmin();
   const { id } = await params;
-  const client = await getClient(id);
-  if (!client) notFound();
-
-  const [snapshot, activity, requests] = await Promise.all([
+  // All four in parallel — the snapshot and lists only need the id, so waiting
+  // for getClient first was a wasted round trip.
+  const [client, snapshot, activity, requests] = await Promise.all([
+    getClient(id),
     getClientSnapshot(id),
     listActivity({ clientId: id, take: 20 }),
     prisma.taskRequest.findMany({
@@ -51,6 +51,7 @@ export default async function ClientDetailPage({
       },
     }),
   ]);
+  if (!client) notFound();
 
   const openRequests = requests.filter((r) => r.status === "PENDING").length;
   const unpaidInvoices = client.invoices.filter(

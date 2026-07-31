@@ -22,6 +22,8 @@ export async function listClients() {
       prisma.user.findMany({
         where: { role: "CLIENT" },
         orderBy: { createdAt: "desc" },
+        // Bounded — the table is client-side filtered, so this is the ceiling.
+        take: 300,
         include: { _count: { select: { projects: true, invoices: true } } },
       }),
       prisma.invoice.findMany({

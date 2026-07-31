@@ -13,6 +13,8 @@ export async function listCampaigns() {
   await requireAdmin();
   const campaigns = await prisma.campaign.findMany({
     orderBy: { createdAt: "desc" },
+    // Bounded — campaigns are read newest-first and rarely revisited past this.
+    take: 100,
     include: { _count: { select: { recipients: true } } },
   });
   const sentCounts = await prisma.campaignRecipient.groupBy({

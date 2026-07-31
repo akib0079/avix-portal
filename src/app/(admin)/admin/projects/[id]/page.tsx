@@ -29,20 +29,24 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [viewer, project, messages, deliverables, workspace, team] = await Promise.all([
-    requireTeam(),
-    getProject(id),
-    getProjectMessages(id, { includeInternal: true }),
-    listByProject(id),
-    getProjectWorkspace(id),
-    listTeamOptions(),
-  ]);
+  // One round trip for everything the page needs — getBillableWork used to run
+  // after this block, adding a serial query to every load.
+  const [viewer, project, messages, deliverables, workspace, team, billableOrNull] =
+    await Promise.all([
+      requireTeam(),
+      getProject(id),
+      getProjectMessages(id, { includeInternal: true }),
+      listByProject(id),
+      getProjectWorkspace(id),
+      listTeamOptions(),
+      // Money-bearing: getBillableWork requires admin, so staff skip it.
+      getBillableWork(id).catch(() => null),
+    ]);
   if (!project) notFound();
   // Staff are money-blind. getProject already strips prices server-side; this
   // just avoids rendering empty money shells and the billing editor for them.
   const isAdmin = viewer.role === "ADMIN";
-  // Money-bearing: staff never see what could be billed.
-  const billable = isAdmin ? await getBillableWork(id) : null;
+  const billable = isAdmin ? billableOrNull : null;
 
   // The milestone include is capped at a recent page of time entries, so the
   // true totals come from the workspace aggregate.

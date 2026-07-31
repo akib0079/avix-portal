@@ -78,6 +78,8 @@ export async function listLeads(): Promise<LeadView[]> {
   await requireAdmin();
   const rows = await prisma.lead.findMany({
     orderBy: [{ nextFollowUp: "asc" }, { createdAt: "desc" }],
+    // Bounded — the kanban holds this comfortably; WON/LOST age out of view.
+    take: 300,
     include: { owner: { select: { firstName: true, lastName: true } } },
   });
   return rows.map(toLeadView);

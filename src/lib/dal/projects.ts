@@ -12,6 +12,8 @@ export async function listProjects() {
   const viewer = await requireTeam();
   const projects = await prisma.project.findMany({
     orderBy: { createdAt: "desc" },
+    // Bounded: the board renders them all, and an agency past 200 live projects needs filters, not a longer page.
+    take: 200,
     include: {
       client: { select: { id: true, firstName: true, lastName: true, company: true } },
       _count: { select: { milestones: true } },
