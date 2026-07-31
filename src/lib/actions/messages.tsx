@@ -54,6 +54,46 @@ export async function markThreadRead(input: {
   return { ok: true };
 }
 
+/** How long a thread stays "already notified" before we email again. */
+const NOTIFY_QUIET_MINUTES = 30;
+
+/**
+ * True when we already told this recipient about this thread recently, or when
+ * they were reading it moments ago. Five messages in a row used to mean five
+ * emails and five notification rows.
+ */
+async function alreadyNotified(input: {
+  recipientId: string;
+  clientId: string;
+  projectId: string | null;
+  /** Which read-stamp proves the recipient is currently looking. */
+  readField: "readByAdminAt" | "readByClientAt";
+}): Promise<boolean> {
+  const since = new Date(Date.now() - NOTIFY_QUIET_MINUTES * 60_000);
+
+  const [recent, activeReader] = await Promise.all([
+    prisma.notification.findFirst({
+      where: {
+        userId: input.recipientId,
+        type: "MESSAGE_RECEIVED",
+        createdAt: { gte: since },
+      },
+      select: { id: true },
+    }),
+    // Someone who read this thread in the last few minutes is looking at it.
+    prisma.message.findFirst({
+      where: {
+        clientId: input.clientId,
+        projectId: input.projectId,
+        [input.readField]: { gte: new Date(Date.now() - 5 * 60_000) },
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  return !!recent || !!activeReader;
+}
+
 /**
  * Posts into a thread. A thread is (clientId, projectId); projectId null is the
  * client's general thread. Clients may only post to their own threads; admins
@@ -137,8 +177,16 @@ export async function sendMessage(
         })),
       });
     }
+    const quiet = admins[0]
+      ? await alreadyNotified({
+          recipientId: admins[0].id,
+          clientId: client.id,
+          projectId,
+          readField: "readByAdminAt",
+        })
+      : false;
     const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
-    if (adminEmail) {
+    if (adminEmail && !quiet) {
       await sendEmail({
         to: adminEmail,
         subject: `New message — ${where}`,
@@ -155,7 +203,14 @@ export async function sendMessage(
       });
     }
   } else if (client.status === "ACTIVE") {
-    // Admin → notify the client.
+    const quiet = await alreadyNotified({
+      recipientId: client.id,
+      clientId: client.id,
+      projectId,
+      readField: "readByClientAt",
+    });
+
+    // Admin → notify the client. The in-app row is cheap; the email is not.
     await prisma.notification.create({
       data: {
         userId: client.id,
@@ -165,7 +220,7 @@ export async function sendMessage(
         link: clientLink,
       },
     });
-    await sendEmail({
+    if (!quiet) await sendEmail({
       to: client.email,
       subject: `New message — ${where}`,
       react: (
