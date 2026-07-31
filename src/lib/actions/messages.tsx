@@ -147,6 +147,8 @@ export async function sendMessage(
       senderRole,
       body: parsed.data.body as Prisma.InputJsonValue,
       bodyText,
+      // Only the team can write internal notes; a client payload can't set it.
+      visibility: isTeam && parsed.data.internal ? "INTERNAL" : "PUBLIC",
       // The sender has implicitly read their own message.
       readByAdminAt: senderRole === "ADMIN" ? now : null,
       readByClientAt: senderRole === "CLIENT" ? now : null,
@@ -159,6 +161,31 @@ export async function sendMessage(
     ? `/admin/projects/${projectId}`
     : `/admin/messages?client=${client.id}`;
   const clientLink = projectId ? `/portal/projects/${projectId}` : `/portal/messages`;
+
+  // An internal note is a team memo — nobody outside the team hears about it.
+  if (created.visibility === "INTERNAL") {
+    if (projectId) {
+      revalidatePath(`/admin/projects/${projectId}`);
+    }
+    revalidatePath("/admin/messages");
+    return {
+      ok: true,
+      data: {
+        message: {
+          id: created.id,
+          senderId: user.id,
+          senderRole,
+          senderName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.name,
+          senderIsStaff: user.role === "STAFF",
+          body: parsed.data.body as MessageView["body"],
+          createdAt: created.createdAt.toISOString(),
+          visibility: created.visibility,
+          readByAdminAt: created.readByAdminAt?.toISOString() ?? null,
+          readByClientAt: created.readByClientAt?.toISOString() ?? null,
+        },
+      },
+    };
+  }
 
   if (senderRole === "CLIENT") {
     // Client replies ping the whole team (admins + staff).
@@ -256,6 +283,7 @@ export async function sendMessage(
         senderIsStaff: user.role === "STAFF",
         body: parsed.data.body as MessageView["body"],
         createdAt: created.createdAt.toISOString(),
+        visibility: created.visibility,
         readByAdminAt: created.readByAdminAt?.toISOString() ?? null,
         readByClientAt: created.readByClientAt?.toISOString() ?? null,
       },

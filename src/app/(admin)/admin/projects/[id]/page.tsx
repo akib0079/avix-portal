@@ -32,7 +32,7 @@ export default async function ProjectDetailPage({
   const [viewer, project, messages, deliverables, workspace, team] = await Promise.all([
     requireTeam(),
     getProject(id),
-    getProjectMessages(id),
+    getProjectMessages(id, { includeInternal: true }),
     listByProject(id),
     getProjectWorkspace(id),
     listTeamOptions(),
@@ -227,6 +227,7 @@ export default async function ProjectDetailPage({
           clientTimezone={project.client.timezone}
           viewerRole="ADMIN"
           initialMessages={messages}
+          canWriteInternal
           title={`Chat with ${project.client.firstName} ${project.client.lastName}`}
         />
       )}

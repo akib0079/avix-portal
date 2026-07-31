@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
-import { Loader2, Send, ChevronUp, Check, CheckCheck } from "lucide-react";
+import { Loader2, Send, ChevronUp, Check, CheckCheck, Lock } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
 
 const fetcher = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null));
@@ -37,6 +37,7 @@ export function MessageThread({
   initialMessages,
   initialHasMore = false,
   variant = "inline",
+  canWriteInternal = false,
 }: {
   /** null = the client's general thread (no project) */
   projectId?: string | null;
@@ -52,12 +53,16 @@ export function MessageThread({
    * page, for the project chat widget.
    */
   variant?: "fill" | "inline";
+  /** Team viewers can write internal notes; clients never see the control. */
+  canWriteInternal?: boolean;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState<JSONContent | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const [sending, setSending] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  /** Team-only note mode — admins and staff only. */
+  const [internal, setInternal] = useState(false);
   const [messages, setMessages] = useState<MessageView[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
 
@@ -162,6 +167,7 @@ export function MessageThread({
       senderIsStaff: false,
       body,
       createdAt: new Date().toISOString(),
+      visibility: internal ? "INTERNAL" : "PUBLIC",
       readByAdminAt: null,
       readByClientAt: null,
     };
@@ -171,7 +177,7 @@ export function MessageThread({
     stickToBottom.current = true;
     setMessages((current) => [...current, optimistic]);
 
-    const result = await sendMessage({ projectId, clientId, body });
+    const result = await sendMessage({ projectId, clientId, body, internal });
     setSending(false);
 
     if (!result.ok) {
@@ -291,13 +297,20 @@ export function MessageThread({
                   <div
                     className={cn(
                       "inline-block rounded-2xl px-4 py-2.5 text-left transition-opacity",
-                      mine
-                        ? "rounded-tr-sm bg-brand-tint"
-                        : "rounded-tl-sm bg-muted",
+                      m.visibility === "INTERNAL"
+                        ? "border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-950/40"
+                        : mine
+                          ? "rounded-tr-sm bg-brand-tint"
+                          : "rounded-tl-sm bg-muted",
                       pending && "opacity-60",
                     )}
                     title={format(new Date(m.createdAt), "PPp")}
                   >
+                    {m.visibility === "INTERNAL" && (
+                      <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-300">
+                        <Lock className="size-2.5" /> Internal note · client can&apos;t see this
+                      </p>
+                    )}
                     <RichTextViewer content={m.body} />
                   </div>
 
@@ -328,7 +341,35 @@ export function MessageThread({
   );
 
   const composer = (
-    <div className={cn("rounded-xl border bg-background p-3", fill && "shadow-sm")}>
+    <div
+      className={cn(
+        "rounded-xl border bg-background p-3",
+        fill && "shadow-sm",
+        internal && "border-amber-400 bg-amber-50/60 dark:bg-amber-950/20",
+      )}
+    >
+      {canWriteInternal && (
+        <div className="mb-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setInternal((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+              internal
+                ? "border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Lock className="size-3" />
+            {internal ? "Internal note" : "Reply to client"}
+          </button>
+          {internal && (
+            <span className="text-xs text-amber-700 dark:text-amber-300">
+              Only the team sees this.
+            </span>
+          )}
+        </div>
+      )}
       <RichTextEditor
         key={resetKey}
         value={draft}
@@ -345,8 +386,8 @@ export function MessageThread({
           <kbd className="rounded border px-1">Enter</kbd> for a new line
         </p>
         <Button onClick={onSend} disabled={sending || !draft} className="ml-auto">
-          {sending ? <Loader2 className="animate-spin" /> : <Send />}
-          Send
+          {sending ? <Loader2 className="animate-spin" /> : internal ? <Lock /> : <Send />}
+          {internal ? "Save note" : "Send"}
         </Button>
       </div>
     </div>

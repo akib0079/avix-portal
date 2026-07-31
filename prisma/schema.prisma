@@ -148,6 +148,12 @@ enum PaymentRegion {
   EU_SEPA
 }
 
+/// PUBLIC = the client sees it. INTERNAL = team-only note inside the thread.
+enum MessageVisibility {
+  PUBLIC
+  INTERNAL
+}
+
 enum MessageSenderRole {
   ADMIN
   CLIENT
@@ -797,6 +803,8 @@ model Message {
   senderId       String
   sender         User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
   senderRole     MessageSenderRole
+  /// INTERNAL notes are filtered out of every client-facing read path.
+  visibility     MessageVisibility @default(PUBLIC)
   body           Json
   /// Plain-text flattening of `body`, written on send. Keeps previews and
   /// search off the JSON walker, which used to run over every row.

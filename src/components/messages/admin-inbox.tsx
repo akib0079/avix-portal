@@ -245,6 +245,7 @@ export function AdminInbox({
                   initialMessages={page.messages}
                   initialHasMore={page.hasMore}
                   variant="fill"
+                  canWriteInternal
                 />
               )}
             </div>

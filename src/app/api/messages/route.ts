@@ -43,10 +43,12 @@ export async function GET(request: Request) {
   const key = { clientId, projectId: projectId ?? null };
 
   if (since) {
-    const messages = await getThreadMessagesSince(key, since);
+    const messages = await getThreadMessagesSince(key, since, {
+      includeInternal: isTeam,
+    });
     return NextResponse.json({ messages, hasMore: false, incremental: true });
   }
 
-  const page = await getThreadMessages(key, { before });
+  const page = await getThreadMessages(key, { before, includeInternal: isTeam });
   return NextResponse.json({ ...page, incremental: false });
 }

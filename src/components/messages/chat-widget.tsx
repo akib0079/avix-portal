@@ -33,6 +33,7 @@ export function ChatWidget({
   initialMessages,
   title,
   whatsappUrl,
+  canWriteInternal = false,
 }: {
   projectId: string;
   /** Required for ADMIN viewers — whose thread this is. */
@@ -43,6 +44,8 @@ export function ChatWidget({
   initialMessages: MessageView[];
   title: string;
   whatsappUrl?: string | null;
+  /** Team viewers can leave notes the client never sees. */
+  canWriteInternal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -113,6 +116,7 @@ export function ChatWidget({
             clientId={clientId}
             viewerRole={viewerRole}
             initialMessages={initialMessages}
+            canWriteInternal={canWriteInternal}
           />
         </div>
       </SheetContent>

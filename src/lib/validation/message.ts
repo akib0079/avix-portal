@@ -6,6 +6,8 @@ export const messageSchema = z.object({
   /** Required when an ADMIN posts into a thread; clients always use their own id. */
   clientId: z.string().min(1).optional(),
   body: z.unknown(),
+  /** Team-only note: stays inside the thread, never reaches the client. */
+  internal: z.boolean().optional(),
 });
 
 export type MessageInput = z.infer<typeof messageSchema>;

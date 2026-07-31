@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { JSONContent } from "@tiptap/react";
-import type { MessageSenderRole, Prisma, Role } from "@prisma/client";
+import type { MessageSenderRole, MessageVisibility, Prisma, Role } from "@prisma/client";
 import { clipPreview, richTextPreview } from "@/lib/rich-text";
 
 export type MessageView = {
@@ -13,6 +13,8 @@ export type MessageView = {
   senderIsStaff: boolean;
   body: JSONContent | null;
   createdAt: string;
+  /** INTERNAL notes are team-only and never reach a client payload. */
+  visibility: MessageVisibility;
   /** When the other side read it — drives the "Seen" receipt. */
   readByAdminAt: string | null;
   readByClientAt: string | null;
@@ -41,6 +43,7 @@ function toView(m: {
   senderRole: MessageSenderRole;
   body: unknown;
   createdAt: Date;
+  visibility: MessageVisibility;
   readByAdminAt: Date | null;
   readByClientAt: Date | null;
   sender: { firstName: string; lastName: string; name: string; role: Role };
@@ -53,6 +56,7 @@ function toView(m: {
     senderIsStaff: m.sender.role === "STAFF",
     body: (m.body as JSONContent) ?? null,
     createdAt: m.createdAt.toISOString(),
+    visibility: m.visibility,
     readByAdminAt: m.readByAdminAt?.toISOString() ?? null,
     readByClientAt: m.readByClientAt?.toISOString() ?? null,
   };
@@ -71,13 +75,16 @@ const senderSelect = {
  */
 export async function getThreadMessages(
   key: ThreadKey,
-  options: { before?: string | null } = {},
+  options: { before?: string | null; includeInternal?: boolean } = {},
 ): Promise<ThreadPage> {
   const before = options.before ? new Date(options.before) : null;
   const rows = await prisma.message.findMany({
     where: {
       clientId: key.clientId,
       projectId: key.projectId,
+      // Fail closed: internal notes are opt-in, so a caller that forgets the
+      // flag shows a client the public thread, never the notes.
+      ...(options.includeInternal ? {} : { visibility: "PUBLIC" as const }),
       ...(before && !Number.isNaN(before.getTime()) ? { createdAt: { lt: before } } : {}),
     },
     // Newest first so `take` keeps the recent end of the thread…
@@ -99,11 +106,16 @@ export async function getThreadMessages(
 export async function getThreadMessagesSince(
   key: ThreadKey,
   since: string,
+  options: { includeInternal?: boolean } = {},
 ): Promise<MessageView[]> {
   const after = new Date(since);
   if (Number.isNaN(after.getTime())) return [];
   const rows = await prisma.message.findMany({
-    where: { ...key, createdAt: { gt: after } },
+    where: {
+      ...key,
+      createdAt: { gt: after },
+      ...(options.includeInternal ? {} : { visibility: "PUBLIC" as const }),
+    },
     orderBy: { createdAt: "asc" },
     take: THREAD_PAGE_SIZE,
     include: senderSelect,
@@ -112,9 +124,15 @@ export async function getThreadMessagesSince(
 }
 
 /** Project thread (used by the admin + portal project pages). */
-export async function getProjectMessages(projectId: string): Promise<MessageView[]> {
+export async function getProjectMessages(
+  projectId: string,
+  options: { includeInternal?: boolean } = {},
+): Promise<MessageView[]> {
   const rows = await prisma.message.findMany({
-    where: { projectId },
+    where: {
+      projectId,
+      ...(options.includeInternal ? {} : { visibility: "PUBLIC" as const }),
+    },
     orderBy: { createdAt: "desc" },
     take: THREAD_PAGE_SIZE,
     include: senderSelect,
