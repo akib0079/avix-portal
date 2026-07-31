@@ -57,6 +57,22 @@ function pricingData(data: MilestoneInput) {
   };
 }
 
+/** "none"/empty clears the field; anything else must be a real team member. */
+async function resolveAssignee(value: string | undefined): Promise<string | null> {
+  if (!value || value === "none") return null;
+  const user = await prisma.user.findFirst({
+    where: { id: value, role: { in: ["ADMIN", "STAFF"] } },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
+
+function parseDueDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export async function createMilestone(
   projectId: string,
   input: MilestoneInput,
@@ -82,6 +98,8 @@ export async function createMilestone(
       title: data.title,
       description: (data.description as Prisma.InputJsonValue) ?? undefined,
       position: (last._max.position ?? -1) + 1,
+      assigneeId: await resolveAssignee(data.assigneeId),
+      dueDate: parseDueDate(data.dueDate),
       // Staff are money-blind: any pricing they submit is discarded.
       ...(viewer.role === "ADMIN"
         ? pricingData(data)
@@ -125,6 +143,8 @@ export async function updateMilestone(
     data: {
       title: data.title,
       description: (data.description as Prisma.InputJsonValue) ?? undefined,
+      assigneeId: await resolveAssignee(data.assigneeId),
+      dueDate: parseDueDate(data.dueDate),
       ...pricing,
     },
   });
@@ -209,6 +229,27 @@ export async function setMilestoneStatus(
 
   revalidatePath(`/admin/projects/${milestone.projectId}`);
   revalidatePath(`/portal/projects/${milestone.projectId}`);
+  return { ok: true };
+}
+
+/** Reassign from the milestone row without opening the edit dialog. */
+export async function setMilestoneAssignee(
+  id: string,
+  assigneeId: string | null,
+): Promise<ActionResult> {
+  await requireTeam();
+  const milestone = await prisma.milestone.findUnique({
+    where: { id },
+    select: { id: true, projectId: true },
+  });
+  if (!milestone) return { ok: false, error: "Milestone not found." };
+
+  await prisma.milestone.update({
+    where: { id },
+    data: { assigneeId: await resolveAssignee(assigneeId ?? undefined) },
+  });
+  revalidatePath(`/admin/projects/${milestone.projectId}`);
+  revalidatePath("/admin/my-work");
   return { ok: true };
 }
 

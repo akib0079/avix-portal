@@ -23,7 +23,7 @@ export async function createTimeEntry(
   milestoneId: string,
   input: TimeEntryInput,
 ): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
   const parsed = timeEntrySchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -39,6 +39,8 @@ export async function createTimeEntry(
   await prisma.timeEntry.create({
     data: {
       milestoneId,
+      // Attribution powers "my hours this week" and utilisation reporting.
+      userId: viewer.id,
       date: parseDate(data.date),
       hours: data.hours,
       note: data.note || null,

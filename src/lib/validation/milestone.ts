@@ -11,6 +11,9 @@ export const milestoneSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required").max(160),
     description: z.unknown().optional(),
+    /** "none" clears the assignment — Selects can't hold an empty value. */
+    assigneeId: z.string().optional(),
+    dueDate: z.string().optional(),
     ...pricingFields,
   })
   .superRefine((val, ctx) => {

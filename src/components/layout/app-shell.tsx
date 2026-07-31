@@ -55,6 +55,7 @@ type NavItem = {
 
 const adminNav: NavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutGrid },
+  { href: "/admin/my-work", label: "My Work", icon: CircleCheckBig },
   { href: "/admin/reports", label: "Reports", icon: ChartNoAxesCombined },
   { href: "/admin/leads", label: "Leads", icon: Target },
   { href: "/admin/proposals", label: "Proposals", icon: FileSignature },
@@ -74,6 +75,7 @@ const adminNav: NavItem[] = [
  * requireAdmin in each page/DAL, which 404s staff on everything else.
  */
 const staffNav: NavItem[] = [
+  { href: "/admin/my-work", label: "My Work", icon: CircleCheckBig },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
 ];

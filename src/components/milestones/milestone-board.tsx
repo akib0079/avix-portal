@@ -27,11 +27,12 @@ import {
 } from "@/lib/actions/milestones";
 import type { MilestoneView } from "./milestone-types";
 import { MilestoneFormDialog } from "./milestone-form-dialog";
+import type { TeamOption } from "@/lib/dal/users";
 import { TimeLogDialog, formatHours } from "./time-log-dialog";
 import type { ProjectBillingType } from "@prisma/client";
 import { MilestoneStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
-import { formatPricing, milestoneStatusLabels } from "@/lib/format";
+import { formatPricing, milestoneStatusLabels, formatDate, initials } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -59,8 +60,16 @@ import {
   ChevronUp,
   BadgeDollarSign,
   Clock,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/** Past its due date and not finished. */
+function isOverdue(milestone: MilestoneView): boolean {
+  if (!milestone.dueDate || milestone.status === "COMPLETED") return false;
+  const due = new Date(`${milestone.dueDate}T23:59:59`);
+  return due.getTime() < Date.now();
+}
 
 function SortableRow({
   milestone,
@@ -138,6 +147,31 @@ function SortableRow({
               </span>
             )}
           </div>
+          {(milestone.assigneeName || milestone.dueDate) && (
+            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              {milestone.assigneeName && (
+                <span className="inline-flex items-center gap-1 text-muted-foreground">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-slate-200 text-[9px] font-semibold text-foreground dark:bg-slate-700 dark:text-white">
+                    {initials(milestone.assigneeName)}
+                  </span>
+                  {milestone.assigneeName}
+                </span>
+              )}
+              {milestone.dueDate && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1",
+                    isOverdue(milestone)
+                      ? "font-medium text-red-600 dark:text-red-400"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  <CalendarClock className="size-3" />
+                  {formatDate(milestone.dueDate)}
+                </span>
+              )}
+            </p>
+          )}
           {pricing && (
             <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-primary">
               <BadgeDollarSign className="size-3.5" /> {pricing}
@@ -226,12 +260,15 @@ export function MilestoneBoard({
   milestones,
   billingType = "MILESTONE",
   canEditPricing = true,
+  team = [],
 }: {
   projectId: string;
   milestones: MilestoneView[];
   billingType?: ProjectBillingType;
   /** false for STAFF — hides the pricing inputs in the milestone dialog. */
   canEditPricing?: boolean;
+  /** Assignable team members for the milestone dialog. */
+  team?: TeamOption[];
 }) {
   const router = useRouter();
   const [items, setItems] = useState(milestones);
@@ -346,6 +383,7 @@ export function MilestoneBoard({
         onOpenChange={setFormOpen}
         billingType={billingType}
         canEditPricing={canEditPricing}
+        team={team}
       />
 
       <TimeLogDialog

@@ -13,6 +13,14 @@ import { PricingFields } from "./pricing-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { TeamOption } from "@/lib/dal/users";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -38,6 +46,7 @@ export function MilestoneFormDialog({
   onOpenChange,
   billingType = "MILESTONE",
   canEditPricing = true,
+  team = [],
 }: {
   projectId: string;
   /** present = edit mode */
@@ -48,6 +57,8 @@ export function MilestoneFormDialog({
   billingType?: "MILESTONE" | "CONTRACT";
   /** false for STAFF — money-blind; the server discards any pricing they send. */
   canEditPricing?: boolean;
+  /** Admins and staff who can be assigned this milestone. */
+  team?: TeamOption[];
 }) {
   const router = useRouter();
   const isEdit = !!milestone;
@@ -57,6 +68,8 @@ export function MilestoneFormDialog({
     defaultValues: {
       title: "",
       description: undefined,
+      assigneeId: "none",
+      dueDate: "",
       pricingType: "NONE",
       hourlyRate: null,
       estimatedHours: null,
@@ -70,6 +83,8 @@ export function MilestoneFormDialog({
       form.reset({
         title: milestone?.title ?? "",
         description: milestone?.description ?? undefined,
+        assigneeId: milestone?.assigneeId ?? "none",
+        dueDate: milestone?.dueDate ?? "",
         pricingType: milestone?.pricingType ?? "NONE",
         hourlyRate: milestone?.hourlyRate ?? null,
         estimatedHours: milestone?.estimatedHours ?? null,
@@ -136,6 +151,53 @@ export function MilestoneFormDialog({
                 </FormItem>
               )}
             />
+
+            {/* Who does it, and by when — the two questions the board could
+                never answer before. */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="assigneeId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Assigned to</FormLabel>
+                    <Select
+                      value={field.value || "none"}
+                      onValueChange={field.onChange}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Unassigned" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">Unassigned</SelectItem>
+                        {team.map((member) => (
+                          <SelectItem key={member.id} value={member.id}>
+                            {member.name}
+                            {member.role === "STAFF" ? " · staff" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="dueDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Due date</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} value={field.value ?? ""} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             {billingType !== "CONTRACT" && canEditPricing && (
               <PricingFields

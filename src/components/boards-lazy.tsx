@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import type { ProjectBillingType } from "@prisma/client";
 import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
 import type { MilestoneView } from "@/components/milestones/milestone-types";
+import type { TeamOption } from "@/lib/dal/users";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -41,6 +42,7 @@ export const MilestoneBoard = dynamic<{
   milestones: MilestoneView[];
   billingType?: ProjectBillingType;
   canEditPricing?: boolean;
+  team?: TeamOption[];
 }>(() => import("./milestones/milestone-board").then((m) => m.MilestoneBoard), {
   ssr: false,
   loading: () => <BoardPlaceholder />,

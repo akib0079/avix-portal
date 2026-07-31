@@ -18,6 +18,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { projectHealth, pendingWork } from "@/lib/project-health";
 import { ArrowLeft } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
+import { listTeamOptions } from "@/lib/dal/users";
 
 export const metadata = { title: "Project" };
 
@@ -27,12 +28,13 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [viewer, project, messages, deliverables, workspace] = await Promise.all([
+  const [viewer, project, messages, deliverables, workspace, team] = await Promise.all([
     requireTeam(),
     getProject(id),
     getProjectMessages(id),
     listByProject(id),
     getProjectWorkspace(id),
+    listTeamOptions(),
   ]);
   if (!project) notFound();
   // Staff are money-blind. getProject already strips prices server-side; this
@@ -74,6 +76,7 @@ export default async function ProjectDetailPage({
               milestones={milestones}
               billingType={project.billingType}
               canEditPricing={isAdmin}
+              team={team}
             />
           </CardContent>
         </Card>
@@ -168,6 +171,7 @@ export default async function ProjectDetailPage({
               source: project.source,
               startDate: project.startDate?.toISOString() ?? null,
               dueDate: project.dueDate?.toISOString() ?? null,
+              ownerId: project.ownerId,
               billingType: project.billingType,
               contractPrice:
                 project.contractPrice == null ? null : Number(project.contractPrice),
@@ -181,6 +185,7 @@ export default async function ProjectDetailPage({
                 : null,
             }}
             milestones={milestones}
+            team={team}
             canEdit={isAdmin}
           />
 

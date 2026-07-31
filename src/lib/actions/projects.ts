@@ -162,6 +162,32 @@ export async function setProjectPriority(
   return { ok: true };
 }
 
+/** Who on the team is accountable for this project. */
+export async function setProjectOwner(
+  id: string,
+  ownerId: string | null,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true } });
+  if (!project) return { ok: false, error: "Project not found." };
+
+  let resolved: string | null = null;
+  if (ownerId && ownerId !== "none") {
+    const user = await prisma.user.findFirst({
+      where: { id: ownerId, role: { in: ["ADMIN", "STAFF"] } },
+      select: { id: true },
+    });
+    if (!user) return { ok: false, error: "That team member no longer exists." };
+    resolved = user.id;
+  }
+
+  await prisma.project.update({ where: { id }, data: { ownerId: resolved } });
+  revalidatePath("/admin/projects");
+  revalidatePath(`/admin/projects/${id}`);
+  revalidatePath("/admin/my-work");
+  return { ok: true };
+}
+
 export async function deleteProject(id: string): Promise<ActionResult> {
   await requireAdmin();
   const project = await prisma.project.findUnique({

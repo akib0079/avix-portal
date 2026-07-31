@@ -4,7 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Priority, ProjectStatus } from "@prisma/client";
-import { setProjectStatus, setProjectPriority } from "@/lib/actions/projects";
+import { setProjectStatus, setProjectPriority, setProjectOwner } from "@/lib/actions/projects";
+import type { TeamOption } from "@/lib/dal/users";
 import { projectHealth } from "@/lib/project-health";
 import {
   Select,
@@ -81,6 +82,7 @@ function ProgressRing({ percent }: { percent: number }) {
 export function ProjectRail({
   project,
   milestones,
+  team = [],
   canEdit,
   className,
 }: {
@@ -95,6 +97,7 @@ export function ProjectRail({
     dueDate: string | null;
     billingType: "MILESTONE" | "CONTRACT";
     contractPrice: number | null;
+    ownerId: string | null;
     client: {
       id: string;
       firstName: string;
@@ -103,6 +106,8 @@ export function ProjectRail({
     } | null;
   };
   milestones: { id: string; title: string; status: string; position: number }[];
+  /** Assignable team members (admins + staff). */
+  team?: TeamOption[];
   /** ADMIN only — staff see the rail read-only and money-free. */
   canEdit: boolean;
   className?: string;
@@ -111,6 +116,7 @@ export function ProjectRail({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ProjectStatus>(project.status);
   const [priority, setPriority] = useState<Priority>(project.priority);
+  const [owner, setOwner] = useState<string>(project.ownerId ?? "none");
 
   const health = projectHealth({
     milestones,
@@ -140,6 +146,19 @@ export function ProjectRail({
     setBusy(false);
     if (!res.ok) {
       setPriority(previous);
+      return void toast.error(res.error);
+    }
+    router.refresh();
+  }
+
+  async function changeOwner(next: string) {
+    const previous = owner;
+    setOwner(next);
+    setBusy(true);
+    const res = await setProjectOwner(project.id, next === "none" ? null : next);
+    setBusy(false);
+    if (!res.ok) {
+      setOwner(previous);
       return void toast.error(res.error);
     }
     router.refresh();
@@ -247,6 +266,28 @@ export function ProjectRail({
           </Select>
         </label>
       </div>
+
+      {canEdit && (
+        <label className="mt-2 block">
+          <span className="mb-1 block text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            Owner
+          </span>
+          <Select value={owner} onValueChange={changeOwner} disabled={busy}>
+            <SelectTrigger size="sm" className="w-full">
+              <SelectValue placeholder="Unassigned" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Unassigned</SelectItem>
+              {team.map((member) => (
+                <SelectItem key={member.id} value={member.id}>
+                  {member.name}
+                  {member.role === "STAFF" ? " · staff" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+      )}
 
       {(project.startDate || project.dueDate) && (
         <p className="mt-4 flex items-center gap-1.5 text-sm text-muted-foreground">

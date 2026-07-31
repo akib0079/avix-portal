@@ -201,6 +201,9 @@ model User {
   meetings           Meeting[]           @relation("ClientMeetings")
   retainers          Retainer[]          @relation("ClientRetainers")
   leadsOwned         Lead[]              @relation("LeadOwner")
+  projectsOwned      Project[]           @relation("ProjectOwner")
+  milestonesAssigned Milestone[]         @relation("MilestoneAssignee")
+  timeEntries        TimeEntry[]         @relation("TimeEntryUser")
   leadEntries        LeadEntry[]         @relation("LeadEntryAuthor")
 
   @@index([role, status])
@@ -268,6 +271,9 @@ model Project {
   billingType   ProjectBillingType @default(MILESTONE)
   contractPrice Decimal?           @db.Decimal(10, 2)
   description Json?
+  /// Team member accountable for this project (admin or staff).
+  ownerId     String?
+  owner       User?         @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   startDate   DateTime?
   dueDate     DateTime?
   createdAt   DateTime      @default(now())
@@ -283,6 +289,7 @@ model Project {
 
   @@index([clientId])
   @@index([status])
+  @@index([ownerId])
   @@map("projects")
 }
 
@@ -298,6 +305,11 @@ model Milestone {
   hourlyRate          Decimal?        @db.Decimal(10, 2)
   estimatedHours      Decimal?        @db.Decimal(6, 2)
   fixedPrice          Decimal?        @db.Decimal(10, 2)
+  /// Who is doing this piece of work.
+  assigneeId          String?
+  assignee            User?           @relation("MilestoneAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  /// When this milestone is meant to be finished.
+  dueDate             DateTime?
   sourceTaskRequestId String?         @unique
   sourceTaskRequest   TaskRequest?    @relation(fields: [sourceTaskRequestId], references: [id], onDelete: SetNull)
   /// Set when the client approves this milestone after completion.
@@ -313,6 +325,7 @@ model Milestone {
   timeEntries TimeEntry[]
 
   @@index([projectId, position])
+  @@index([assigneeId, dueDate])
   @@map("milestones")
 }
 
@@ -323,12 +336,16 @@ model TimeEntry {
   id          String    @id @default(cuid())
   milestoneId String
   milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  /// Who logged it. Nullable for rows written before attribution existed.
+  userId      String?
+  user        User?     @relation("TimeEntryUser", fields: [userId], references: [id], onDelete: SetNull)
   date        DateTime  @db.Date
   hours       Decimal   @db.Decimal(6, 2)
   note        String?
   createdAt   DateTime  @default(now())
 
   @@index([milestoneId, date])
+  @@index([userId, date])
   @@map("time_entries")
 }
 

@@ -41,9 +41,11 @@ export async function getProject(id: string) {
           timezone: true,
         },
       },
+      owner: { select: { id: true, firstName: true, lastName: true } },
       milestones: {
         orderBy: { position: "asc" },
         include: {
+          assignee: { select: { firstName: true, lastName: true } },
           // Bounded: a long-running milestone can accumulate hundreds of
           // entries and the page only ever shows the recent ones. Totals come
           // from the aggregate below, not from this list.

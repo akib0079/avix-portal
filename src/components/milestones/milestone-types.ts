@@ -22,6 +22,9 @@ export type MilestoneView = {
   fixedPrice: number | null;
   loggedHours: number;
   timeEntries: TimeEntryView[];
+  assigneeId: string | null;
+  assigneeName: string | null;
+  dueDate: string | null; // "YYYY-MM-DD"
   clientApprovedAt: string | null; // ISO date
   clientRating: number | null; // 1 = 👍, -1 = 👎, null = not rated
   clientRatingNote: string | null;
@@ -37,6 +40,9 @@ export function toMilestoneView(m: {
   hourlyRate: unknown;
   estimatedHours: unknown;
   fixedPrice: unknown;
+  assigneeId?: string | null;
+  assignee?: { firstName: string; lastName: string } | null;
+  dueDate?: Date | null;
   clientApprovedAt?: Date | null;
   clientRating?: number | null;
   clientRatingNote?: string | null;
@@ -60,6 +66,11 @@ export function toMilestoneView(m: {
     fixedPrice: m.fixedPrice == null ? null : Number(m.fixedPrice),
     loggedHours: entries.reduce((sum, e) => sum + e.hours, 0),
     timeEntries: entries,
+    assigneeId: m.assigneeId ?? null,
+    assigneeName: m.assignee
+      ? `${m.assignee.firstName} ${m.assignee.lastName}`.trim() || null
+      : null,
+    dueDate: m.dueDate ? m.dueDate.toISOString().slice(0, 10) : null,
     clientApprovedAt: m.clientApprovedAt?.toISOString() ?? null,
     clientRating: m.clientRating ?? null,
     clientRatingNote: m.clientRatingNote ?? null,

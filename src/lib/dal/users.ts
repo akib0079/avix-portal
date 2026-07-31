@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/dal/session";
+import { requireAdmin, requireTeam } from "@/lib/dal/session";
 
 export type ClientHealth = "green" | "amber" | "red";
 
@@ -102,5 +102,25 @@ export async function listStaff() {
     status: u.status,
     emailVerified: u.emailVerified,
     messageCount: u._count.messages,
+  }));
+}
+
+export type TeamOption = { id: string; name: string; role: "ADMIN" | "STAFF" };
+
+/**
+ * Everyone who can be assigned work — admins and staff, active only.
+ * requireTeam (not requireAdmin) so staff can reassign their own milestones.
+ */
+export async function listTeamOptions(): Promise<TeamOption[]> {
+  await requireTeam();
+  const rows = await prisma.user.findMany({
+    where: { role: { in: ["ADMIN", "STAFF"] }, status: "ACTIVE" },
+    orderBy: [{ role: "asc" }, { firstName: "asc" }],
+    select: { id: true, firstName: true, lastName: true, email: true, role: true },
+  });
+  return rows.map((u) => ({
+    id: u.id,
+    name: `${u.firstName} ${u.lastName}`.trim() || u.email,
+    role: u.role as "ADMIN" | "STAFF",
   }));
 }
