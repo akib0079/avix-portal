@@ -10,6 +10,8 @@ import { UpcomingMeetings } from "@/components/portal/upcoming-meetings";
 import { listMyUpcomingMeetings } from "@/lib/dal/meetings";
 import { countClientActionItems } from "@/lib/dal/portal-actions";
 import { usd, formatDate, projectTypeLabels } from "@/lib/format";
+import { projectHealth } from "@/lib/project-health";
+import { cn } from "@/lib/utils";
 import { ArrowRight, Bell, FileText } from "lucide-react";
 
 export const metadata = { title: "Overview" };
@@ -18,7 +20,14 @@ export default async function PortalOverviewPage() {
   const [{ user, onboardedAt, projects, openInvoices, notifications, checklist }, meetings] =
     await Promise.all([getPortalOverview(), listMyUpcomingMeetings()]);
   const pendingActions = await countClientActionItems(user.id);
-  const openTotal = openInvoices.reduce((sum, inv) => sum + Number(inv.amount), 0);
+  // Balance owed, not headline totals — a part-paid invoice isn't fully open.
+  const openTotal = openInvoices.reduce(
+    (sum, inv) => sum + Math.max(Number(inv.amount) - Number(inv.amountPaid), 0),
+    0,
+  );
+  const overdueCount = openInvoices.filter(
+    (inv) => inv.dueDate && new Date(inv.dueDate) < new Date(),
+  ).length;
 
   return (
     <div>
@@ -86,6 +95,33 @@ export default async function PortalOverviewPage() {
                       </div>
                     </div>
                     <ProjectProgress milestones={project.milestones} className="mt-4" />
+                    {(() => {
+                      const health = projectHealth({
+                        milestones: project.milestones.map((m, i) => ({
+                          id: String(i),
+                          title: "",
+                          status: m.status,
+                          position: i,
+                        })),
+                        status: project.status,
+                        dueDate: project.dueDate,
+                      });
+                      if (!health.dueLabel) return null;
+                      return (
+                        <p
+                          className={cn(
+                            "mt-3 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                            health.tone === "bad"
+                              ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+                              : health.tone === "warn"
+                                ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+                          )}
+                        >
+                          {health.dueLabel}
+                        </p>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
               </Link>
@@ -114,6 +150,11 @@ export default async function PortalOverviewPage() {
                     across {openInvoices.length} invoice
                     {openInvoices.length === 1 ? "" : "s"}
                   </p>
+                  {overdueCount > 0 && (
+                    <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
+                      {overdueCount} past its due date
+                    </p>
+                  )}
                   <Link
                     href="/portal/invoices"
                     className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"

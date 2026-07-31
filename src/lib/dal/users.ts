@@ -124,3 +124,73 @@ export async function listTeamOptions(): Promise<TeamOption[]> {
     role: u.role as "ADMIN" | "STAFF",
   }));
 }
+
+export type ClientSnapshot = Awaited<ReturnType<typeof getClientSnapshot>>;
+
+/**
+ * The numbers a client hub leads with: money in and owed, how the work is
+ * going, how happy they are, and when we last spoke. All bounded queries —
+ * this is a header, not a report.
+ */
+export async function getClientSnapshot(clientId: string) {
+  await requireAdmin();
+  const now = new Date();
+
+  const [invoices, projects, ratings, lastMessage, openRequests, nextMeeting] =
+    await Promise.all([
+      prisma.invoice.findMany({
+        where: { clientId, status: { not: "CANCELLED" }, creditNoteForId: null },
+        select: { amount: true, amountPaid: true, dueDate: true, status: true },
+      }),
+      prisma.project.findMany({
+        where: { clientId },
+        select: { id: true, status: true },
+      }),
+      prisma.milestone.findMany({
+        where: { project: { clientId }, clientRating: { not: null } },
+        select: { clientRating: true },
+      }),
+      prisma.message.findFirst({
+        where: { clientId },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true, senderRole: true },
+      }),
+      prisma.taskRequest.count({ where: { clientId, status: "PENDING" } }),
+      prisma.meeting.findFirst({
+        where: { clientId, startsAt: { gte: now } },
+        orderBy: { startsAt: "asc" },
+        select: { id: true, title: true, startsAt: true },
+      }),
+    ]);
+
+  const billed = invoices.reduce((sum, i) => sum + Number(i.amount), 0);
+  const collected = invoices.reduce((sum, i) => sum + Number(i.amountPaid), 0);
+  const outstanding = Math.max(billed - collected, 0);
+  const overdue = invoices
+    .filter((i) => i.dueDate && i.dueDate < now && Number(i.amountPaid) < Number(i.amount))
+    .reduce((sum, i) => sum + (Number(i.amount) - Number(i.amountPaid)), 0);
+
+  const thumbsUp = ratings.filter((r) => r.clientRating === 1).length;
+
+  return {
+    billed: Math.round(billed * 100) / 100,
+    collected: Math.round(collected * 100) / 100,
+    outstanding: Math.round(outstanding * 100) / 100,
+    overdue: Math.round(overdue * 100) / 100,
+    activeProjects: projects.filter((p) => p.status !== "COMPLETED").length,
+    totalProjects: projects.length,
+    /** Share of rated milestones that got a 👍, or null when nothing is rated. */
+    satisfaction: ratings.length === 0 ? null : Math.round((thumbsUp / ratings.length) * 100),
+    ratedCount: ratings.length,
+    lastContactAt: lastMessage?.createdAt.toISOString() ?? null,
+    lastContactFromClient: lastMessage?.senderRole === "CLIENT",
+    openRequests,
+    nextMeeting: nextMeeting
+      ? {
+          id: nextMeeting.id,
+          title: nextMeeting.title,
+          startsAt: nextMeeting.startsAt.toISOString(),
+        }
+      : null,
+  };
+}
