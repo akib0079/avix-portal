@@ -19,10 +19,12 @@ import {
   Target,
   Loader2,
   CornerDownLeft,
+  MessagesSquare,
+  Package,
 } from "lucide-react";
 
 type Hit = {
-  group: "Clients" | "Projects" | "Invoices" | "Leads";
+  group: "Clients" | "Projects" | "Invoices" | "Leads" | "Messages" | "Deliverables";
   label: string;
   detail: string;
   href: string;
@@ -33,6 +35,8 @@ const groupIcon = {
   Projects: FolderKanban,
   Invoices: FileText,
   Leads: Target,
+  Messages: MessagesSquare,
+  Deliverables: Package,
 } as const;
 
 const SearchContext = createContext<{ open: () => void } | null>(null);

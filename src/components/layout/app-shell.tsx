@@ -48,7 +48,7 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   /** which live count to show as a badge on this item, if any */
-  badge?: "tasks" | "actions";
+  badge?: "tasks" | "actions" | "messages";
   /** Group heading rendered above this item (first item of the group only). */
   section?: string;
 };
@@ -63,7 +63,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
   { href: "/admin/retainers", label: "Retainers", icon: Repeat },
-  { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
+  { href: "/admin/messages", label: "Messages", icon: MessagesSquare, badge: "messages" },
   { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: "tasks" },
   { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
@@ -77,7 +77,7 @@ const adminNav: NavItem[] = [
 const staffNav: NavItem[] = [
   { href: "/admin/my-work", label: "My Work", icon: CircleCheckBig },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
-  { href: "/admin/messages", label: "Messages", icon: MessagesSquare },
+  { href: "/admin/messages", label: "Messages", icon: MessagesSquare, badge: "messages" },
 ];
 
 const clientNav: NavItem[] = [
@@ -87,7 +87,13 @@ const clientNav: NavItem[] = [
   { href: "/portal/requests", label: "Task Requests", icon: MessageSquarePlus },
   { href: "/portal/invoices", label: "Invoices", icon: FileText, section: "Billing" },
   { href: "/portal/payment", label: "How to Pay", icon: CreditCard },
-  { href: "/portal/messages", label: "Chat with us", icon: MessagesSquare, section: "Contact" },
+  {
+    href: "/portal/messages",
+    label: "Chat with us",
+    icon: MessagesSquare,
+    badge: "messages",
+    section: "Contact",
+  },
   { href: "/portal/book", label: "Book a Meeting", icon: CalendarPlus },
   { href: "/portal/settings", label: "Settings", icon: Settings, section: "Account" },
 ];
@@ -106,13 +112,17 @@ function NavLinks({
   const { data } = useSWR<{
     pendingTaskRequests: number;
     pendingActions: number;
+    unreadMessages: number;
   } | null>(
     items.some((i) => i.badge) ? "/api/notifications" : null,
     fetcher,
     { refreshInterval: 30_000 },
   );
-  const badgeCount = (kind: "tasks" | "actions") =>
-    kind === "tasks" ? (data?.pendingTaskRequests ?? 0) : (data?.pendingActions ?? 0);
+  const badgeCount = (kind: "tasks" | "actions" | "messages") => {
+    if (kind === "tasks") return data?.pendingTaskRequests ?? 0;
+    if (kind === "messages") return data?.unreadMessages ?? 0;
+    return data?.pendingActions ?? 0;
+  };
 
   return (
     <nav className="flex flex-col gap-1">

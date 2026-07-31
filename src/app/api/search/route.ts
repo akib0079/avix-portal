@@ -3,13 +3,16 @@ import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
 
 export type SearchHit = {
-  group: "Clients" | "Projects" | "Invoices" | "Leads";
+  group: "Clients" | "Projects" | "Invoices" | "Leads" | "Messages" | "Deliverables";
   label: string;
   detail: string;
   href: string;
 };
 
-/** Admin-only global search across clients, projects, invoices, and leads. */
+/**
+ * Admin-only global search. Messages search the denormalised bodyText column
+ * (v28) rather than walking Tiptap JSON, so it can actually be indexed.
+ */
 export async function GET(request: Request) {
   const session = await getSession();
   if (!session || session.user.role !== "ADMIN" || session.user.status === "INACTIVE") {
@@ -20,7 +23,7 @@ export async function GET(request: Request) {
   if (q.length < 2) return NextResponse.json({ hits: [] });
   const contains = { contains: q, mode: "insensitive" as const };
 
-  const [clients, projects, invoices, leads] = await Promise.all([
+  const [clients, projects, invoices, leads, messages, deliverables] = await Promise.all([
     prisma.user.findMany({
       where: {
         role: "CLIENT",
@@ -64,6 +67,31 @@ export async function GET(request: Request) {
       take: 5,
       select: { id: true, name: true, company: true, stage: true },
     }),
+    prisma.message.findMany({
+      where: { bodyText: contains },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        bodyText: true,
+        clientId: true,
+        projectId: true,
+        createdAt: true,
+        client: { select: { firstName: true, lastName: true } },
+      },
+    }),
+    prisma.deliverable.findMany({
+      where: { title: contains },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        title: true,
+        projectId: true,
+        reviewStatus: true,
+        project: { select: { projectName: true } },
+      },
+    }),
   ]);
 
   const hits: SearchHit[] = [
@@ -90,6 +118,25 @@ export async function GET(request: Request) {
       label: l.name,
       detail: [l.company, l.stage.toLowerCase()].filter(Boolean).join(" · "),
       href: `/admin/leads/${l.id}`,
+    })),
+    ...messages.map((m) => ({
+      group: "Messages" as const,
+      label: (m.bodyText ?? "").slice(0, 70) || "(no text)",
+      detail: `${m.client.firstName} ${m.client.lastName} · ${m.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+      href: m.projectId
+        ? `/admin/projects/${m.projectId}`
+        : `/admin/messages?client=${m.clientId}`,
+    })),
+    ...deliverables.map((d) => ({
+      group: "Deliverables" as const,
+      label: d.title,
+      detail: [
+        d.project.projectName,
+        d.reviewStatus ? d.reviewStatus.replaceAll("_", " ").toLowerCase() : "awaiting review",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      href: `/admin/projects/${d.projectId}?tab=deliverables`,
     })),
   ];
 
