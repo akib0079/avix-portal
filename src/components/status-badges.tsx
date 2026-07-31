@@ -58,7 +58,9 @@ const invoiceStatusStyles: Record<InvoiceStatus, string> = {
   ASSIGNED: "bg-muted text-foreground",
   SENT: "bg-info-tint text-info",
   IN_REVIEW: "bg-warning-tint text-warning",
+  PARTIALLY_PAID: "bg-info-tint text-info",
   PAID: "bg-success-tint text-success",
+  CANCELLED: "bg-muted text-muted-foreground line-through",
 };
 
 export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {

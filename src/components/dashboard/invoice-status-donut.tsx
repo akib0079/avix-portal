@@ -8,7 +8,9 @@ const statusColors: Record<InvoiceStatus, string> = {
   PAID: "var(--success)",
   SENT: "var(--info)",
   IN_REVIEW: "var(--warning)",
+  PARTIALLY_PAID: "var(--info)",
   ASSIGNED: "#94a3b8",
+  CANCELLED: "#cbd5e1",
 };
 
 export function InvoiceStatusDonut({

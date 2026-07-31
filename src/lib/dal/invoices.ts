@@ -21,6 +21,9 @@ export async function getInvoice(id: string) {
       client: { select: { id: true, firstName: true, lastName: true, email: true, company: true } },
       project: { select: { id: true, projectName: true } },
       items: { orderBy: { sortOrder: "asc" } },
+      payments: { orderBy: { paidAt: "desc" } },
+      creditNotes: { select: { id: true, invoiceNumber: true, amount: true } },
+      creditNoteFor: { select: { id: true, invoiceNumber: true } },
     },
   });
 }

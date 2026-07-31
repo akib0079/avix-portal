@@ -13,12 +13,15 @@ import {
 import { usd, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Clock, BadgeDollarSign, ReceiptText, Repeat } from "lucide-react";
+import { BillWorkButton, type BillableLineView } from "@/components/invoices/bill-work-button";
 
 type InvoiceRow = {
   id: string;
   invoiceNumber: string;
   issueDate: Date | string;
   amount: number;
+  /** Money actually received — partial payments count toward "collected". */
+  amountPaid: number;
   status: string;
 };
 
@@ -74,17 +77,22 @@ function Stat({
  * ADMIN only; STAFF never reaches this (getProject strips prices server-side).
  */
 export function ProjectMoney({
+  projectId,
   milestones,
   billingType,
   contractPrice,
   invoices,
   retainers,
+  billable,
 }: {
+  projectId: string;
   milestones: MilestoneView[];
   billingType: "MILESTONE" | "CONTRACT";
   contractPrice: number | null;
   invoices: InvoiceRow[];
   retainers: RetainerRow[];
+  /** Work that could be billed right now, from getBillableWork. */
+  billable: { lines: BillableLineView[]; total: number; unbilled: number };
 }) {
   const totalLogged = milestones.reduce((sum, m) => sum + m.loggedHours, 0);
   const hourly = milestones.filter((m) => m.pricingType === "HOURLY");
@@ -101,16 +109,38 @@ export function ProjectMoney({
   const earned =
     billingType === "CONTRACT" ? (contractPrice ?? 0) : earnedHourly + earnedFixed;
 
-  const billable = invoices.filter((i) => i.status !== "CANCELLED");
-  const invoiced = billable.reduce((sum, i) => sum + i.amount, 0);
-  const paid = billable
-    .filter((i) => i.status === "PAID")
-    .reduce((sum, i) => sum + i.amount, 0);
+  // Cancelled documents and credit notes never count as receivables.
+  const liveInvoices = invoices.filter((i) => i.status !== "CANCELLED");
+  const invoiced = liveInvoices.reduce((sum, i) => sum + i.amount, 0);
+  const paid = liveInvoices.reduce((sum, i) => sum + i.amountPaid, 0);
   const outstanding = invoiced - paid;
   const unbilled = Math.max(earned - invoiced, 0);
 
   return (
     <div className="space-y-6">
+      {billable.lines.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-brand-tint p-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              {billable.unbilled > 0
+                ? `${usd.format(billable.unbilled)} of completed work isn't invoiced yet`
+                : "All completed work has been invoiced"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {billable.lines.length} line
+              {billable.lines.length === 1 ? "" : "s"} ready — completed fixed
+              milestones and logged hours.
+            </p>
+          </div>
+          <BillWorkButton
+            projectId={projectId}
+            lines={billable.lines}
+            total={billable.total}
+            unbilled={billable.unbilled}
+          />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label="Hours logged"
@@ -132,7 +162,7 @@ export function ProjectMoney({
         <Stat
           label="Invoiced"
           value={usd.format(invoiced)}
-          hint={`${billable.length} invoice${billable.length === 1 ? "" : "s"}`}
+          hint={`${liveInvoices.length} invoice${liveInvoices.length === 1 ? "" : "s"}`}
           icon={ReceiptText}
         />
         <Stat

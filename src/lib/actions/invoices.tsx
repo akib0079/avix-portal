@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { invoiceSchema } from "@/lib/validation/invoice";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
+import { getBillableWork } from "@/lib/dal/billable";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { sendEmail } from "@/lib/email/resend";
 import InvoiceSentEmail from "@/emails/invoice-sent";
@@ -70,10 +72,22 @@ async function resolvePaymentAccountId(value: string | undefined): Promise<strin
   return account?.id ?? null;
 }
 
-/** Items win over the manual amount: the document IS the total. */
-function resolveAmount(data: { amount: number; items?: { qty: number; rate: number }[] }) {
-  if (!data.items || data.items.length === 0) return data.amount;
-  return Math.round(data.items.reduce((sum, i) => sum + i.qty * i.rate, 0) * 100) / 100;
+/**
+ * Items win over the manual amount, then discount and tax are applied — the
+ * stored `amount` is always the grand total the client owes.
+ */
+function totalsFor(data: {
+  amount: number;
+  items?: { qty: number; rate: number }[];
+  discount?: number;
+  taxRate?: number | null;
+}) {
+  return invoiceTotals({
+    items: data.items,
+    amount: data.amount,
+    discount: data.discount,
+    taxRate: data.taxRate,
+  });
 }
 
 function itemRows(items: { description: string; qty: number; rate: number }[] | undefined) {
@@ -145,15 +159,23 @@ export async function createInvoice(
 
   const invoice = await prisma.$transaction(async (tx) => {
     const invoiceNumber = custom || (await nextInvoiceNumber(tx));
+    const totals = totalsFor(data);
     return tx.invoice.create({
       data: {
         invoiceNumber,
         clientId: data.clientId,
         projectId: relations.resolvedProjectId,
-        amount: resolveAmount(data),
+        amount: totals.total,
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        taxRate: data.taxRate ?? null,
+        taxLabel: data.taxLabel || null,
+        paymentTermsDays: data.paymentTermsDays ?? null,
         status: data.status,
         issueDate: parseDate(data.issueDate)!,
-        dueDate: parseDate(data.dueDate),
+        dueDate: parseDate(
+          data.dueDate || dueDateFromTerms(data.issueDate, data.paymentTermsDays) || "",
+        ),
         notes: data.notes || null,
         title: data.title || null,
         currency: data.currency ?? "USD",
@@ -211,6 +233,7 @@ export async function updateInvoice(
     if (clash) return { ok: false, error: `Invoice number "${nextNumber}" is already used.` };
   }
 
+  const totals = totalsFor(data);
   await prisma.$transaction(async (tx) => {
     await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
     await tx.invoice.update({
@@ -219,10 +242,17 @@ export async function updateInvoice(
         invoiceNumber: nextNumber,
         clientId: data.clientId,
         projectId: relations.resolvedProjectId,
-        amount: resolveAmount(data),
+        amount: totals.total,
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        taxRate: data.taxRate ?? null,
+        taxLabel: data.taxLabel || null,
+        paymentTermsDays: data.paymentTermsDays ?? null,
         status: data.status,
         issueDate: parseDate(data.issueDate)!,
-        dueDate: parseDate(data.dueDate),
+        dueDate: parseDate(
+          data.dueDate || dueDateFromTerms(data.issueDate, data.paymentTermsDays) || "",
+        ),
         notes: data.notes || null,
         title: data.title || null,
         currency: data.currency ?? "USD",
@@ -356,6 +386,237 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${id}`);
   return { ok: true };
+}
+
+/**
+ * Draft an invoice straight from work that has happened: completed fixed-price
+ * milestones and logged hourly time. Creates it as ASSIGNED so it can be
+ * reviewed and edited before anything is sent.
+ */
+export async function createInvoiceFromWork(
+  projectId: string,
+  options?: { taxRate?: number | null; taxLabel?: string; paymentTermsDays?: number | null },
+): Promise<ActionResult<{ id: string }>> {
+  await requireAdmin();
+  const work = await getBillableWork(projectId);
+  if (!work) return { ok: false, error: "Project not found." };
+  if (!work.clientId) return { ok: false, error: "Attach a client to this project first." };
+  if (work.lines.length === 0) {
+    return {
+      ok: false,
+      error: "Nothing to bill yet — complete a priced milestone or log some hours.",
+    };
+  }
+
+  const totals = invoiceTotals({
+    items: work.lines.map((l) => ({ qty: l.qty, rate: l.rate })),
+    taxRate: options?.taxRate ?? null,
+  });
+  const issueDate = new Date();
+  const termsDays = options?.paymentTermsDays ?? null;
+  const dueDate =
+    termsDays == null
+      ? null
+      : new Date(issueDate.getTime() + termsDays * 24 * 60 * 60 * 1000);
+
+  const invoice = await prisma.$transaction(async (tx) => {
+    const invoiceNumber = await nextInvoiceNumber(tx);
+    return tx.invoice.create({
+      data: {
+        invoiceNumber,
+        title: `${work.projectName} — work to date`,
+        clientId: work.clientId!,
+        projectId: work.projectId,
+        amount: totals.total,
+        subtotal: totals.subtotal,
+        discount: 0,
+        taxRate: options?.taxRate ?? null,
+        taxLabel: options?.taxLabel || null,
+        paymentTermsDays: termsDays,
+        status: "ASSIGNED",
+        issueDate,
+        dueDate,
+        items: {
+          create: work.lines.map((line, index) => ({
+            description: line.description,
+            qty: line.qty,
+            rate: line.rate,
+            sortOrder: index,
+          })),
+        },
+      },
+    });
+  });
+
+  await logActivity({
+    type: "invoice.drafted",
+    summary: `Invoice ${invoice.invoiceNumber} drafted from work on ${work.projectName}`,
+    clientId: work.clientId,
+    projectId: work.projectId,
+    entity: "invoice",
+    entityId: invoice.id,
+    link: `/admin/invoices/${invoice.id}`,
+  });
+
+  revalidatePath("/admin/invoices");
+  revalidatePath(`/admin/projects/${projectId}`);
+  return { ok: true, data: { id: invoice.id } };
+}
+
+/**
+ * Record money received. Several payments can land against one invoice, so a
+ * deposit no longer forces a choice between "unpaid" and "paid".
+ */
+export async function recordPayment(
+  invoiceId: string,
+  input: { amount: number; paidAt: string; method?: string; note?: string },
+): Promise<ActionResult> {
+  await requireAdmin();
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true, amount: true, invoiceNumber: true, clientId: true, projectId: true },
+  });
+  if (!invoice) return { ok: false, error: "Invoice not found." };
+  if (!(input.amount > 0)) return { ok: false, error: "Enter an amount above zero." };
+
+  const paidAt = parseDate(input.paidAt) ?? new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.invoicePayment.create({
+      data: {
+        invoiceId,
+        amount: input.amount,
+        paidAt,
+        method: input.method?.trim() || null,
+        note: input.note?.trim() || null,
+      },
+    });
+    const agg = await tx.invoicePayment.aggregate({
+      where: { invoiceId },
+      _sum: { amount: true },
+    });
+    const paid = Number(agg._sum.amount ?? 0);
+    const total = Number(invoice.amount);
+    await tx.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        amountPaid: paid,
+        // Status follows the money: nothing owing means paid, part means part.
+        status: paid >= total ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : undefined,
+      },
+    });
+  });
+
+  await logActivity({
+    type: "invoice.payment",
+    summary: `Payment recorded on ${invoice.invoiceNumber} · ${usd.format(input.amount)}`,
+    clientId: invoice.clientId,
+    projectId: invoice.projectId,
+    entity: "invoice",
+    entityId: invoice.id,
+    link: `/admin/invoices/${invoice.id}`,
+  });
+
+  revalidatePath("/admin/invoices");
+  revalidatePath(`/admin/invoices/${invoiceId}`);
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+export async function deletePayment(paymentId: string): Promise<ActionResult> {
+  await requireAdmin();
+  const payment = await prisma.invoicePayment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, invoiceId: true },
+  });
+  if (!payment) return { ok: false, error: "Payment not found." };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.invoicePayment.delete({ where: { id: paymentId } });
+    const [agg, invoice] = await Promise.all([
+      tx.invoicePayment.aggregate({
+        where: { invoiceId: payment.invoiceId },
+        _sum: { amount: true },
+      }),
+      tx.invoice.findUnique({
+        where: { id: payment.invoiceId },
+        select: { amount: true, status: true },
+      }),
+    ]);
+    const paid = Number(agg._sum.amount ?? 0);
+    const total = Number(invoice?.amount ?? 0);
+    await tx.invoice.update({
+      where: { id: payment.invoiceId },
+      data: {
+        amountPaid: paid,
+        status: paid >= total && total > 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "SENT",
+      },
+    });
+  });
+
+  revalidatePath(`/admin/invoices/${payment.invoiceId}`);
+  return { ok: true };
+}
+
+/**
+ * Issue a credit note against an invoice — a separate document carrying the
+ * credited amount, linked back to the original. Cancelling an invoice outright
+ * would lose the paper trail.
+ */
+export async function createCreditNote(
+  invoiceId: string,
+  input: { amount: number; reason?: string },
+): Promise<ActionResult<{ id: string }>> {
+  await requireAdmin();
+  const source = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      clientId: true,
+      projectId: true,
+      currency: true,
+      amount: true,
+    },
+  });
+  if (!source) return { ok: false, error: "Invoice not found." };
+  if (!(input.amount > 0)) return { ok: false, error: "Enter an amount above zero." };
+  if (input.amount > Number(source.amount)) {
+    return { ok: false, error: "A credit note can't exceed the invoice total." };
+  }
+
+  const note = await prisma.$transaction(async (tx) => {
+    const number = await nextInvoiceNumber(tx);
+    return tx.invoice.create({
+      data: {
+        invoiceNumber: `CN-${number.replace(/^INV-/, "")}`,
+        title: `Credit note for ${source.invoiceNumber}`,
+        clientId: source.clientId,
+        projectId: source.projectId,
+        currency: source.currency,
+        creditNoteForId: source.id,
+        amount: input.amount,
+        subtotal: input.amount,
+        status: "SENT",
+        issueDate: new Date(),
+        notes: input.reason?.trim() || null,
+        items: {
+          create: [
+            {
+              description: `Credit against ${source.invoiceNumber}${input.reason ? ` — ${input.reason}` : ""}`,
+              qty: 1,
+              rate: input.amount,
+              sortOrder: 0,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  revalidatePath("/admin/invoices");
+  revalidatePath(`/admin/invoices/${invoiceId}`);
+  return { ok: true, data: { id: note.id } };
 }
 
 export async function deleteInvoice(id: string): Promise<ActionResult> {

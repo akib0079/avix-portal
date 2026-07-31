@@ -10,6 +10,7 @@ import {
   DeleteInvoiceButton,
 } from "@/components/invoices/invoice-actions";
 import { InvoiceStatusBadge } from "@/components/status-badges";
+import { InvoicePayments } from "@/components/invoices/invoice-payments";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
@@ -93,6 +94,47 @@ export default async function InvoiceDetailPage({
         }
       />
 
+      {/* Money first: what's owed is the question you open an invoice with. */}
+      <div className="mb-6">
+        <InvoicePayments
+          invoiceId={invoice.id}
+          total={Number(invoice.amount)}
+          amountPaid={Number(invoice.amountPaid)}
+          currencySymbol={invoice.currency === "EUR" ? "€" : "$"}
+          payments={invoice.payments.map((p) => ({
+            id: p.id,
+            amount: Number(p.amount),
+            paidAt: p.paidAt.toISOString(),
+            method: p.method,
+            note: p.note,
+          }))}
+        />
+        {invoice.creditNotes.length > 0 && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Credited by{" "}
+            {invoice.creditNotes.map((note, i) => (
+              <span key={note.id}>
+                {i > 0 && ", "}
+                <Link href={`/admin/invoices/${note.id}`} className="hover:text-primary">
+                  {note.invoiceNumber}
+                </Link>
+              </span>
+            ))}
+          </p>
+        )}
+        {invoice.creditNoteFor && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Credit note against{" "}
+            <Link
+              href={`/admin/invoices/${invoice.creditNoteFor.id}`}
+              className="hover:text-primary"
+            >
+              {invoice.creditNoteFor.invoiceNumber}
+            </Link>
+          </p>
+        )}
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-lg">Edit invoice</CardTitle>
@@ -107,6 +149,10 @@ export default async function InvoiceDetailPage({
               clientId: invoice.clientId,
               projectId: invoice.projectId ?? "none",
               amount: Number(invoice.amount),
+              discount: Number(invoice.discount ?? 0),
+              taxRate: invoice.taxRate == null ? null : Number(invoice.taxRate),
+              taxLabel: invoice.taxLabel ?? "",
+              paymentTermsDays: invoice.paymentTermsDays ?? null,
               status: invoice.status,
               issueDate: invoice.issueDate.toISOString().slice(0, 10),
               dueDate: invoice.dueDate?.toISOString().slice(0, 10) ?? "",

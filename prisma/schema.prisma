@@ -68,7 +68,11 @@ enum InvoiceStatus {
   ASSIGNED
   SENT
   IN_REVIEW
+  /// Some money in, balance still owing.
+  PARTIALLY_PAID
   PAID
+  /// Written off / voided. Excluded from receivables.
+  CANCELLED
 }
 
 enum TaskRequestStatus {
@@ -377,7 +381,27 @@ model Invoice {
   /// Set when this invoice belongs to a retainer plan (generated or attached).
   retainerId      String?
   retainer        Retainer?     @relation(fields: [retainerId], references: [id], onDelete: SetNull)
+  /// Grand total the client owes. Kept as the single source for lists and
+  /// reports; subtotal/discount/tax below explain how it was reached.
   amount          Decimal       @db.Decimal(10, 2)
+  /// Sum of the line items before discount and tax.
+  subtotal        Decimal?      @db.Decimal(10, 2)
+  /// Flat amount knocked off the subtotal.
+  discount        Decimal       @default(0) @db.Decimal(10, 2)
+  /// Percentage applied after the discount, e.g. 15 for 15% VAT.
+  taxRate         Decimal?      @db.Decimal(5, 2)
+  /// What the tax is called on the document, e.g. "VAT", "AIT", "GST".
+  taxLabel        String?
+  /// Money actually received. Drives PARTIALLY_PAID and the balance due.
+  amountPaid      Decimal       @default(0) @db.Decimal(10, 2)
+  /// Net terms in days, used to derive the due date from the issue date.
+  paymentTermsDays Int?
+  /// When set, this document is a credit note against that invoice.
+  creditNoteForId String?
+  creditNoteFor   Invoice?      @relation("CreditNote", fields: [creditNoteForId], references: [id], onDelete: SetNull)
+  creditNotes     Invoice[]     @relation("CreditNote")
+  /// Last time an overdue reminder went out, so the chaser can't spam.
+  lastReminderAt  DateTime?
   status          InvoiceStatus @default(ASSIGNED)
   pdfPath         String?
   pdfOriginalName String?
@@ -398,6 +422,7 @@ model Invoice {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   items           InvoiceItem[]
+  payments        InvoicePayment[]
 
   @@index([clientId])
   @@index([status])
@@ -427,6 +452,22 @@ model Deliverable {
 
   @@index([projectId])
   @@map("deliverables")
+}
+
+/// One receipt of money against an invoice. Several add up to amountPaid, so
+/// deposits and instalments are recorded rather than guessed.
+model InvoicePayment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount    Decimal  @db.Decimal(10, 2)
+  paidAt    DateTime
+  method    String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId, paidAt])
+  @@map("invoice_payments")
 }
 
 model InvoiceItem {

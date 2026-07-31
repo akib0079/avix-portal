@@ -2,6 +2,7 @@ import "server-only";
 import { readFile } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
+import { invoiceTotals } from "@/lib/invoice-totals";
 import { getBranding, getInvoiceFooter } from "@/lib/dal/settings";
 import { openUpload } from "@/lib/uploads";
 import { renderInvoicePdf, type InvoicePdfData } from "@/lib/pdf/invoice-pdf";
@@ -67,6 +68,19 @@ export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
       qty: Number(i.qty),
       rate: Number(i.rate),
     })),
+    subtotal: invoice.subtotal == null ? null : Number(invoice.subtotal),
+    discount: Number(invoice.discount ?? 0),
+    taxLabel: invoice.taxLabel,
+    taxRate: invoice.taxRate == null ? null : Number(invoice.taxRate),
+    // Recomputed rather than stored, so the document can never disagree with
+    // the rate and discount printed beside it.
+    taxAmount: invoiceTotals({
+      items: invoice.items.map((i) => ({ qty: Number(i.qty), rate: Number(i.rate) })),
+      amount: Number(invoice.amount),
+      discount: Number(invoice.discount ?? 0),
+      taxRate: invoice.taxRate == null ? null : Number(invoice.taxRate),
+    }).taxAmount,
+    amountPaid: Number(invoice.amountPaid ?? 0),
     total: Number(invoice.amount),
     client: {
       name: `${invoice.client.firstName} ${invoice.client.lastName}`.trim(),

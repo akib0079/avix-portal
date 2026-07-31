@@ -60,6 +60,14 @@ export type InvoicePdfData = {
   footer?: string | null;
   /** Line items; empty = legacy single-amount invoice (one fallback line). */
   items: { description: string; qty: number; rate: number }[];
+  /** Line-item sum before discount and tax; omit for legacy invoices. */
+  subtotal?: number | null;
+  discount?: number | null;
+  taxLabel?: string | null;
+  taxRate?: number | null;
+  taxAmount?: number | null;
+  /** Recorded payments, so a part-paid invoice prints its balance. */
+  amountPaid?: number | null;
   total: number;
   client: {
     name: string;
@@ -170,6 +178,8 @@ function buildStyles(accent: string) {
     totalLabel: { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 },
     totalAmountCell: { width: 110, paddingVertical: 9, paddingHorizontal: 12, alignItems: "flex-end" },
     totalAmount: { fontSize: 13, fontWeight: 700, color: accent },
+    subtotalLabel: { fontSize: 9, color: "#6b7280" },
+    subtotalAmount: { fontSize: 9, color: "#374151" },
     paidStamp: {
       alignSelf: "flex-start", borderWidth: 1.5, borderColor: "#059669", color: "#059669",
       paddingVertical: 2, paddingHorizontal: 9, fontSize: 11,
@@ -298,6 +308,50 @@ export function invoicePdfDocument(data: InvoicePdfData) {
           </View>
         </View>
 
+        {/* Subtotal / discount / tax only print when they actually apply, so
+            a simple invoice still looks simple. */}
+        {(data.discount ?? 0) > 0 || (data.taxAmount ?? 0) > 0 ? (
+          <View wrap={false}>
+            <View style={s.totalRow}>
+              <View style={s.totalLabelCell}>
+                <Text style={s.subtotalLabel}>Subtotal</Text>
+              </View>
+              <View style={s.totalAmountCell}>
+                <Text style={s.subtotalAmount}>
+                  {money(data.subtotal ?? data.total, data.currency)}
+                </Text>
+              </View>
+            </View>
+            {(data.discount ?? 0) > 0 ? (
+              <View style={s.totalRow}>
+                <View style={s.totalLabelCell}>
+                  <Text style={s.subtotalLabel}>Discount</Text>
+                </View>
+                <View style={s.totalAmountCell}>
+                  <Text style={s.subtotalAmount}>
+                    -{money(data.discount ?? 0, data.currency)}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+            {(data.taxAmount ?? 0) > 0 ? (
+              <View style={s.totalRow}>
+                <View style={s.totalLabelCell}>
+                  <Text style={s.subtotalLabel}>
+                    {data.taxLabel || "Tax"}
+                    {data.taxRate ? ` (${data.taxRate}%)` : ""}
+                  </Text>
+                </View>
+                <View style={s.totalAmountCell}>
+                  <Text style={s.subtotalAmount}>
+                    {money(data.taxAmount ?? 0, data.currency)}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={s.totalRow} wrap={false}>
           <View style={s.totalLabelCell}>
             <Text style={s.totalLabel}>Total</Text>
@@ -306,6 +360,31 @@ export function invoicePdfDocument(data: InvoicePdfData) {
             <Text style={s.totalAmount}>{money(data.total, data.currency)}</Text>
           </View>
         </View>
+
+        {(data.amountPaid ?? 0) > 0 ? (
+          <View wrap={false}>
+            <View style={s.totalRow}>
+              <View style={s.totalLabelCell}>
+                <Text style={s.subtotalLabel}>Paid</Text>
+              </View>
+              <View style={s.totalAmountCell}>
+                <Text style={s.subtotalAmount}>
+                  -{money(data.amountPaid ?? 0, data.currency)}
+                </Text>
+              </View>
+            </View>
+            <View style={s.totalRow}>
+              <View style={s.totalLabelCell}>
+                <Text style={s.totalLabel}>Balance due</Text>
+              </View>
+              <View style={s.totalAmountCell}>
+                <Text style={s.totalAmount}>
+                  {money(Math.max(data.total - (data.amountPaid ?? 0), 0), data.currency)}
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         {data.bankAccount ? (
           <View style={s.bankBlock}>

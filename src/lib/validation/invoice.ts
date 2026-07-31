@@ -1,6 +1,16 @@
 import { z } from "zod";
 
-export const invoiceStatusValues = ["ASSIGNED", "SENT", "IN_REVIEW", "PAID"] as const;
+export const invoiceStatusValues = [
+  "ASSIGNED",
+  "SENT",
+  "IN_REVIEW",
+  "PARTIALLY_PAID",
+  "PAID",
+  "CANCELLED",
+] as const;
+
+/** Net terms offered in the form; the due date is derived from the issue date. */
+export const paymentTermsOptions = [0, 7, 14, 30, 45, 60] as const;
 
 export const invoiceItemSchema = z.object({
   description: z.string().trim().min(1, "Describe this line item").max(200),
@@ -45,6 +55,14 @@ export const invoiceSchema = z.object({
   // superRefine below demands a positive value.
   amount: z.number({ message: "Enter an amount" }).min(0).max(9999999, "Amount is too large"),
   status: z.enum(invoiceStatusValues),
+  /** Flat amount off the subtotal, before tax. */
+  discount: z.number().min(0).max(9999999).optional(),
+  /** Percentage applied after the discount, e.g. 15 for 15% VAT. */
+  taxRate: z.number().min(0).max(100).optional().nullable(),
+  /** What the tax line is called on the document. */
+  taxLabel: z.string().trim().max(40).optional().or(z.literal("")),
+  /** Net days; when set the due date is computed from the issue date. */
+  paymentTermsDays: z.number().int().min(0).max(365).optional().nullable(),
   issueDate: z.string().min(1, "Issue date is required"),
   dueDate: z.string().optional().or(z.literal("")),
   notes: z.string().trim().max(2000).optional().or(z.literal("")),

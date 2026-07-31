@@ -4,7 +4,12 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
+import {
+  invoiceSchema,
+  paymentTermsOptions,
+  type InvoiceInput,
+} from "@/lib/validation/invoice";
+import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
 import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -82,6 +87,10 @@ export function InvoiceForm({
       status: invoice?.status ?? "ASSIGNED",
       issueDate: invoice?.issueDate ?? new Date().toISOString().slice(0, 10),
       dueDate: invoice?.dueDate ?? "",
+      discount: invoice?.discount ?? 0,
+      taxRate: invoice?.taxRate ?? null,
+      taxLabel: invoice?.taxLabel ?? "",
+      paymentTermsDays: invoice?.paymentTermsDays ?? null,
       notes: invoice?.notes ?? "",
       pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
       invoiceNumber: invoice?.invoiceNumber ?? "",
@@ -110,11 +119,36 @@ export function InvoiceForm({
   const watchedItems = form.watch("items");
   const currency = form.watch("currency");
   const currencySymbol = currency === "EUR" ? "€" : "$";
-  const itemsTotal = (watchedItems ?? []).reduce((sum, i) => {
-    const qty = typeof i?.qty === "number" && !Number.isNaN(i.qty) ? i.qty : 0;
-    const rate = typeof i?.rate === "number" && !Number.isNaN(i.rate) ? i.rate : 0;
-    return sum + qty * rate;
-  }, 0);
+  const watchedDiscount = form.watch("discount");
+  const watchedTaxRate = form.watch("taxRate");
+  const watchedTaxLabel = form.watch("taxLabel");
+  const watchedAmount = form.watch("amount");
+  const watchedIssueDate = form.watch("issueDate");
+  const watchedTerms = form.watch("paymentTermsDays");
+
+  // Same helper the server and the PDF use, so the number on screen is the
+  // number that gets stored.
+  const totals = invoiceTotals({
+    items: (watchedItems ?? []).map((i) => ({
+      qty: typeof i?.qty === "number" && !Number.isNaN(i.qty) ? i.qty : 0,
+      rate: typeof i?.rate === "number" && !Number.isNaN(i.rate) ? i.rate : 0,
+    })),
+    amount: typeof watchedAmount === "number" ? watchedAmount : 0,
+    discount: typeof watchedDiscount === "number" ? watchedDiscount : 0,
+    taxRate: typeof watchedTaxRate === "number" ? watchedTaxRate : null,
+  });
+  const money = (value: number) =>
+    `${currencySymbol}${value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+
+  // Net terms drive the due date; picking terms fills the date field in.
+  function applyTerms(days: number | null) {
+    form.setValue("paymentTermsDays", days);
+    const derived = dueDateFromTerms(watchedIssueDate, days);
+    if (derived) form.setValue("dueDate", derived);
+  }
 
   async function onSubmit(values: InvoiceInput) {
     const formData = new FormData();
@@ -257,6 +291,27 @@ export function InvoiceForm({
               </FormItem>
             )}
           />
+          <FormItem>
+            <FormLabel>Payment terms</FormLabel>
+            <Select
+              value={watchedTerms == null ? "none" : String(watchedTerms)}
+              onValueChange={(v) => applyTerms(v === "none" ? null : Number(v))}
+            >
+              <FormControl>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="No terms" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value="none">No terms</SelectItem>
+                {paymentTermsOptions.map((days) => (
+                  <SelectItem key={days} value={String(days)}>
+                    {days === 0 ? "Due on receipt" : `Net ${days}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormItem>
         </div>
 
         <FormField
@@ -572,17 +627,99 @@ export function InvoiceForm({
                   &quot;:&quot; become group headings, the rest become bullets.
                 </p>
 
-                <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
-                  <span className="text-muted-foreground">
-                    Total (replaces the amount above)
-                  </span>
-                  <span className="font-heading text-lg font-bold text-primary">
-                    {currencySymbol}
-                    {itemsTotal.toLocaleString("en-US", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
+                {/* Discount and tax live with the lines they modify. */}
+                <div className="mt-3 grid grid-cols-1 gap-3 border-t pt-3 sm:grid-cols-3">
+                  <FormField
+                    control={form.control}
+                    name="discount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Discount</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={field.value ?? ""}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value === "" ? 0 : Number(e.target.value),
+                              )
+                            }
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="taxLabel"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Tax label</FormLabel>
+                        <FormControl>
+                          <Input placeholder="VAT / AIT / GST" {...field} value={field.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="taxRate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Tax %</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            value={field.value ?? ""}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value === "" ? null : Number(e.target.value),
+                              )
+                            }
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="mt-3 space-y-1 border-t pt-3 text-sm">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Subtotal</span>
+                    <span>{money(totals.subtotal)}</span>
+                  </div>
+                  {totals.discount > 0 && (
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span>Discount</span>
+                      <span>−{money(totals.discount)}</span>
+                    </div>
+                  )}
+                  {totals.taxAmount > 0 && (
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span>
+                        {watchedTaxLabel || "Tax"} ({watchedTaxRate}%)
+                      </span>
+                      <span>{money(totals.taxAmount)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between border-t pt-2">
+                    <span className="text-muted-foreground">
+                      Total (replaces the amount above)
+                    </span>
+                    <span className="font-heading text-lg font-bold text-primary">
+                      {money(totals.total)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>

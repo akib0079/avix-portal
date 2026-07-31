@@ -19,6 +19,7 @@ import { projectHealth, pendingWork } from "@/lib/project-health";
 import { ArrowLeft } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
 import { listTeamOptions } from "@/lib/dal/users";
+import { getBillableWork } from "@/lib/dal/billable";
 
 export const metadata = { title: "Project" };
 
@@ -40,6 +41,8 @@ export default async function ProjectDetailPage({
   // Staff are money-blind. getProject already strips prices server-side; this
   // just avoids rendering empty money shells and the billing editor for them.
   const isAdmin = viewer.role === "ADMIN";
+  // Money-bearing: staff never see what could be billed.
+  const billable = isAdmin ? await getBillableWork(id) : null;
 
   // The milestone include is capped at a recent page of time entries, so the
   // true totals come from the workspace aggregate.
@@ -115,6 +118,12 @@ export default async function ProjectDetailPage({
             alert: pending.unpaidInvoices > 0,
             content: (
               <ProjectMoney
+                projectId={project.id}
+                billable={{
+                  lines: billable?.lines ?? [],
+                  total: billable?.total ?? 0,
+                  unbilled: billable?.unbilled ?? 0,
+                }}
                 milestones={milestones}
                 billingType={project.billingType}
                 contractPrice={
@@ -125,6 +134,7 @@ export default async function ProjectDetailPage({
                   invoiceNumber: i.invoiceNumber,
                   issueDate: i.issueDate,
                   amount: Number(i.amount),
+                  amountPaid: Number(i.amountPaid),
                   status: i.status,
                 }))}
                 retainers={workspace.retainers}

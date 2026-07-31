@@ -62,7 +62,9 @@ export const invoiceStatusLabels: Record<InvoiceStatus, string> = {
   ASSIGNED: "Assigned",
   SENT: "Sent",
   IN_REVIEW: "In Review",
+  PARTIALLY_PAID: "Part paid",
   PAID: "Paid",
+  CANCELLED: "Cancelled",
 };
 
 export const taskRequestStatusLabels: Record<TaskRequestStatus, string> = {
@@ -112,4 +114,16 @@ export function initials(name: string) {
     .slice(0, 2)
     .map((p) => p[0]!.toUpperCase())
     .join("");
+}
+
+/**
+ * Money in the invoice's own currency. Reports and lists must never add
+ * different currencies together — format each in its own.
+ */
+export function formatMoney(amount: number, currency: "USD" | "EUR" = "USD"): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+  }).format(amount);
 }

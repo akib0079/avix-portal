@@ -33,6 +33,13 @@ export type ReportsData = {
     outstanding: number;
     projects: number;
   }[];
+  /** One row per currency in use; the KPIs are raw sums across all of them. */
+  byCurrency: {
+    currency: string;
+    invoiced: number;
+    paid: number;
+    outstanding: number;
+  }[];
   timeEarnings: {
     totalHours: number;
     earnedFromHours: number;
@@ -50,8 +57,12 @@ export async function getReportsData(): Promise<ReportsData> {
 
   const [invoices, timeEntries, clients, hourlyMilestones] = await Promise.all([
     prisma.invoice.findMany({
+      // Cancelled documents and credit notes aren't revenue.
+      where: { status: { not: "CANCELLED" }, creditNoteForId: null },
       select: {
         amount: true,
+        amountPaid: true,
+        currency: true,
         status: true,
         issueDate: true,
         clientId: true,
@@ -88,31 +99,46 @@ export async function getReportsData(): Promise<ReportsData> {
   let totalPaid = 0;
   const perClient = new Map<string, { paid: number; outstanding: number }>();
   const perSource = new Map<string, number>();
+  // Totals per currency, so a EUR invoice never gets added to a USD figure.
+  const perCurrency = new Map<string, { invoiced: number; paid: number; outstanding: number }>();
 
   for (const inv of invoices) {
     const amount = Number(inv.amount);
+    // Partial payments are real money: count what was received, not the status.
+    const received = Number(inv.amountPaid ?? 0);
+    const owing = Math.max(amount - received, 0);
+
     totalInvoiced += amount;
-    const paid = inv.status === "PAID";
-    if (paid) totalPaid += amount;
-    else outstanding += amount;
-    if (paid && inv.issueDate >= startOfMonth) revenueThisMonth += amount;
+    totalPaid += received;
+    outstanding += owing;
+    if (received > 0 && inv.issueDate >= startOfMonth) revenueThisMonth += received;
+
+    const currency = perCurrency.get(inv.currency) ?? {
+      invoiced: 0,
+      paid: 0,
+      outstanding: 0,
+    };
+    currency.invoiced += amount;
+    currency.paid += received;
+    currency.outstanding += owing;
+    perCurrency.set(inv.currency, currency);
 
     if (inv.issueDate >= startWindow) {
       const bucket = monthly[monthKey(inv.issueDate)];
       if (bucket) {
-        if (paid) bucket.paid += amount;
-        else bucket.unpaid += amount;
+        bucket.paid += received;
+        bucket.unpaid += owing;
       }
     }
 
     const client = perClient.get(inv.clientId) ?? { paid: 0, outstanding: 0 };
-    if (paid) client.paid += amount;
-    else client.outstanding += amount;
+    client.paid += received;
+    client.outstanding += owing;
     perClient.set(inv.clientId, client);
 
-    if (paid) {
+    if (received > 0) {
       const source = inv.project ? projectSourceLabels[inv.project.source] : "No project";
-      perSource.set(source, (perSource.get(source) ?? 0) + amount);
+      perSource.set(source, (perSource.get(source) ?? 0) + received);
     }
   }
 
@@ -147,7 +173,7 @@ export async function getReportsData(): Promise<ReportsData> {
     .sort((a, b) => b.paid - a.paid)
     .slice(0, 8);
 
-  const paidCount = invoices.filter((i) => i.status === "PAID").length;
+  const paidCount = invoices.filter((i) => Number(i.amountPaid ?? 0) > 0).length;
 
   return {
     kpis: {
@@ -166,5 +192,13 @@ export async function getReportsData(): Promise<ReportsData> {
       .sort((a, b) => b.value - a.value),
     topClients,
     timeEarnings: { totalHours, earnedFromHours, totalInvoiced, totalPaid },
+    // Shown when more than one currency is in play; the KPIs above are raw sums
+    // and only make sense for a single-currency book.
+    byCurrency: [...perCurrency.entries()].map(([currency, totals]) => ({
+      currency,
+      invoiced: Math.round(totals.invoiced * 100) / 100,
+      paid: Math.round(totals.paid * 100) / 100,
+      outstanding: Math.round(totals.outstanding * 100) / 100,
+    })),
   };
 }

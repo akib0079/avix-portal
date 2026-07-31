@@ -4,6 +4,7 @@ import { nextInvoiceNumber } from "@/lib/invoice-number";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
+import { formatMoney } from "@/lib/format";
 import { googleCalendarUrl, formatInTimezone } from "@/lib/calendar-links";
 import {
   createMeetingIcsToken,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/marketing-token";
 import MeetingScheduledEmail from "@/emails/meeting-scheduled";
 import CampaignEmail from "@/emails/campaign";
+import InvoiceReminderEmail from "@/emails/invoice-reminder";
 import { renderMergeTags, renderMergeTagsInDoc } from "@/lib/merge-tags";
 
 /**
@@ -346,6 +348,83 @@ async function drainCampaigns(now: Date): Promise<void> {
   await runCampaignBatch(campaign, now);
 }
 
+/**
+ * Chase overdue invoices. One reminder per invoice per REMINDER_GAP_DAYS, and
+ * only for documents that were actually sent and still owe money — stamp-first
+ * on lastReminderAt so a re-run can't double-send.
+ */
+const REMINDER_GAP_DAYS = 7;
+const REMINDER_BATCH = 10;
+
+async function chaseOverdueInvoices(now: Date): Promise<void> {
+  const gapAgo = new Date(now.getTime() - REMINDER_GAP_DAYS * 24 * 60 * 60 * 1000);
+
+  const overdue = await prisma.invoice.findMany({
+    where: {
+      status: { in: ["SENT", "IN_REVIEW", "PARTIALLY_PAID"] },
+      dueDate: { not: null, lt: now },
+      OR: [{ lastReminderAt: null }, { lastReminderAt: { lt: gapAgo } }],
+    },
+    take: REMINDER_BATCH,
+    include: {
+      client: { select: { id: true, firstName: true, email: true, status: true } },
+    },
+  });
+
+  for (const invoice of overdue) {
+    const balance = Number(invoice.amount) - Number(invoice.amountPaid);
+    if (balance <= 0 || invoice.client.status !== "ACTIVE") {
+      // Nothing owing (or nobody to tell) — stamp so it stops being picked up.
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { lastReminderAt: now },
+      });
+      continue;
+    }
+
+    // Stamp first: a send that fails should not retry on every page load.
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { lastReminderAt: now },
+    });
+
+    const daysOverdue = Math.max(
+      1,
+      Math.floor((now.getTime() - invoice.dueDate!.getTime()) / 86_400_000),
+    );
+
+    await sendEmail({
+      to: invoice.client.email,
+      subject: `Reminder: invoice ${invoice.invoiceNumber} is overdue`,
+      react: (
+        <InvoiceReminderEmail
+          firstName={invoice.client.firstName || "there"}
+          invoiceNumber={invoice.invoiceNumber}
+          amount={formatMoney(balance, invoice.currency)}
+          dueDate={invoice.dueDate!.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+          daysOverdue={daysOverdue}
+          portalUrl={`${appUrl()}/portal/invoices/${invoice.id}`}
+        />
+      ),
+      devHint: `invoice reminder → ${invoice.client.email}`,
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: invoice.client.id,
+        type: "INVOICE_SENT",
+        title: `Invoice ${invoice.invoiceNumber} is overdue`,
+        body: `${formatMoney(balance, invoice.currency)} was due ${daysOverdue} day${daysOverdue === 1 ? "" : "s"} ago`,
+        link: `/portal/invoices/${invoice.id}`,
+      },
+    });
+  }
+}
+
 /** Entry point — throttled, never throws (a duty failure must not 500 a page). */
 export async function runDueDuties(): Promise<void> {
   try {
@@ -361,6 +440,7 @@ export async function runDueDuties(): Promise<void> {
 
     await sendMeetingReminders(now);
     await generateRetainerInvoices(now);
+    await chaseOverdueInvoices(now);
     await drainCampaigns(now);
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
