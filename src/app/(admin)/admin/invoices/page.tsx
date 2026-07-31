@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { InvoiceTable } from "@/components/invoices/invoice-table";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
+import { serverNow } from "@/lib/server-now";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Invoices" };
@@ -11,6 +12,8 @@ export const metadata = { title: "Invoices" };
 export default async function InvoicesPage() {
   await requireAdmin();
   const invoices = await listInvoices();
+  // Server-rendered timestamp keeps the aging buckets stable across renders.
+  const renderedAt = serverNow();
 
   return (
     <div>
@@ -27,7 +30,7 @@ export default async function InvoicesPage() {
       />
 
       <InvoiceTable
-        now={Date.now()}
+        now={renderedAt}
         invoices={invoices.map((invoice) => ({
           id: invoice.id,
           invoiceNumber: invoice.invoiceNumber,

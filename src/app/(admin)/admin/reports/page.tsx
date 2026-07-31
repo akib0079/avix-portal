@@ -25,7 +25,10 @@ function fmtHours(hours: number): string {
 export default async function ReportsPage() {
   await requireAdmin();
   const data = await getReportsData();
-  const { kpis, timeEarnings } = data;
+  const { kpis, timeEarnings, pipeline, monthlyRecurring, utilisation, byCurrency } = data;
+  const pipelineWeighted = pipeline.reduce((sum, p) => sum + p.weighted, 0);
+  const pipelineValue = pipeline.reduce((sum, p) => sum + p.value, 0);
+  const maxUtilisation = Math.max(1, ...utilisation.map((u) => u.hours));
 
   const kpiCards = [
     {
@@ -96,6 +99,131 @@ export default async function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Forward view — everything above this point is history. */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">Pipeline</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {pipeline.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No open leads — the pipeline is empty.
+              </p>
+            ) : (
+              <>
+                <div className="mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                  <span className="font-heading text-2xl font-bold">
+                    {usd.format(pipelineWeighted)}
+                  </span>
+                  <span className="text-sm text-muted-foreground">
+                    weighted · {usd.format(pipelineValue)} total
+                  </span>
+                </div>
+                <ul className="space-y-2">
+                  {pipeline.map((row) => (
+                    <li key={row.stage} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground">
+                        {row.stage.charAt(0) + row.stage.slice(1).toLowerCase()}
+                        <span className="ml-1 text-xs">({row.count})</span>
+                      </span>
+                      <span className="font-medium">
+                        {usd.format(row.weighted)}
+                        <span className="ml-1 text-xs font-normal text-muted-foreground">
+                          of {usd.format(row.value)}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Weighted by stage: new 10%, contacted 30%, proposal 60%.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">Committed &amp; capacity</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Recurring revenue (active retainers)
+              </p>
+              <p className="font-heading text-xl font-bold">
+                {usd.format(monthlyRecurring)}
+                <span className="ml-1 text-sm font-normal text-muted-foreground">/ month</span>
+              </p>
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm text-muted-foreground">
+                Hours logged per person · last 4 weeks
+              </p>
+              {utilisation.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No attributed time yet — entries logged before attribution
+                  existed aren&apos;t counted.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {utilisation.map((person) => (
+                    <li key={person.userId}>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="truncate">{person.name}</span>
+                        <span className="font-medium">{fmtHours(person.hours)}</span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary"
+                          style={{ width: `${(person.hours / maxUtilisation) * 100}%` }}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {byCurrency.length > 1 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">By currency</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-xs text-muted-foreground">
+              The totals above add every currency together — these don&apos;t.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Currency</TableHead>
+                  <TableHead>Invoiced</TableHead>
+                  <TableHead>Collected</TableHead>
+                  <TableHead>Outstanding</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {byCurrency.map((row) => (
+                  <TableRow key={row.currency}>
+                    <TableCell className="font-medium">{row.currency}</TableCell>
+                    <TableCell>{row.invoiced.toFixed(2)}</TableCell>
+                    <TableCell>{row.paid.toFixed(2)}</TableCell>
+                    <TableCell>{row.outstanding.toFixed(2)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">

@@ -33,6 +33,12 @@ export type ReportsData = {
     outstanding: number;
     projects: number;
   }[];
+  /** Open leads by stage, with a crude stage-weighted value. */
+  pipeline: { stage: string; count: number; value: number; weighted: number }[];
+  /** Sum of active retainers — the part of next month already committed. */
+  monthlyRecurring: number;
+  /** Hours logged per person over the last four weeks. */
+  utilisation: { userId: string; name: string; hours: number }[];
   /** One row per currency in use; the KPIs are raw sums across all of them. */
   byCurrency: {
     currency: string;
@@ -55,7 +61,8 @@ export async function getReportsData(): Promise<ReportsData> {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startWindow = new Date(now.getFullYear(), now.getMonth() - 11, 1);
 
-  const [invoices, timeEntries, clients, hourlyMilestones] = await Promise.all([
+  const [invoices, timeEntries, clients, hourlyMilestones, leads, retainers, teamHours] =
+    await Promise.all([
     prisma.invoice.findMany({
       // Cancelled documents and credit notes aren't revenue.
       where: { status: { not: "CANCELLED" }, creditNoteForId: null },
@@ -83,6 +90,21 @@ export async function getReportsData(): Promise<ReportsData> {
     prisma.milestone.findMany({
       where: { pricingType: "HOURLY", hourlyRate: { not: null } },
       select: { hourlyRate: true, timeEntries: { select: { hours: true } } },
+    }),
+    // Forward view: open pipeline by stage.
+    prisma.lead.findMany({
+      where: { stage: { notIn: ["WON", "LOST"] } },
+      select: { stage: true, estimatedValue: true },
+    }),
+    prisma.retainer.findMany({
+      where: { active: true },
+      select: { amount: true },
+    }),
+    // Utilisation: hours per person over the last 4 weeks.
+    prisma.timeEntry.groupBy({
+      by: ["userId"],
+      where: { date: { gte: new Date(now.getTime() - 28 * 86_400_000) } },
+      _sum: { hours: true },
     }),
   ]);
 
@@ -175,6 +197,40 @@ export async function getReportsData(): Promise<ReportsData> {
 
   const paidCount = invoices.filter((i) => Number(i.amountPaid ?? 0) > 0).length;
 
+  // ---- forward view
+  // Weighting is deliberately crude and explicit: it's a planning aid, not a
+  // forecast model, and a stated number beats an implied one.
+  const STAGE_ODDS: Record<string, number> = { NEW: 0.1, CONTACTED: 0.3, PROPOSAL: 0.6 };
+  const pipeline = new Map<string, { value: number; weighted: number; count: number }>();
+  for (const lead of leads) {
+    const value = Number(lead.estimatedValue ?? 0);
+    const row = pipeline.get(lead.stage) ?? { value: 0, weighted: 0, count: 0 };
+    row.value += value;
+    row.weighted += value * (STAGE_ODDS[lead.stage] ?? 0);
+    row.count += 1;
+    pipeline.set(lead.stage, row);
+  }
+  const monthlyRecurring = retainers.reduce((sum, r) => sum + Number(r.amount), 0);
+
+  const teamById = new Map(
+    clients.length >= 0
+      ? (
+          await prisma.user.findMany({
+            where: { role: { in: ["ADMIN", "STAFF"] } },
+            select: { id: true, firstName: true, lastName: true },
+          })
+        ).map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim() || "Team member"])
+      : [],
+  );
+  const utilisation = teamHours
+    .filter((row) => row.userId)
+    .map((row) => ({
+      userId: row.userId!,
+      name: teamById.get(row.userId!) ?? "Former member",
+      hours: Math.round(Number(row._sum.hours ?? 0) * 10) / 10,
+    }))
+    .sort((a, b) => b.hours - a.hours);
+
   return {
     kpis: {
       revenueThisMonth,
@@ -192,6 +248,14 @@ export async function getReportsData(): Promise<ReportsData> {
       .sort((a, b) => b.value - a.value),
     topClients,
     timeEarnings: { totalHours, earnedFromHours, totalInvoiced, totalPaid },
+    pipeline: [...pipeline.entries()].map(([stage, row]) => ({
+      stage,
+      count: row.count,
+      value: Math.round(row.value * 100) / 100,
+      weighted: Math.round(row.weighted * 100) / 100,
+    })),
+    monthlyRecurring: Math.round(monthlyRecurring * 100) / 100,
+    utilisation,
     // Shown when more than one currency is in play; the KPIs above are raw sums
     // and only make sense for a single-currency book.
     byCurrency: [...perCurrency.entries()].map(([currency, totals]) => ({
