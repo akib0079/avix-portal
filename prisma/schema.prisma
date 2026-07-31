@@ -300,6 +300,7 @@ model Project {
   @@index([clientId])
   @@index([status])
   @@index([ownerId])
+  @@index([createdAt])
   @@map("projects")
 }
 
@@ -609,6 +610,7 @@ model Lead {
 
   @@index([stage, nextFollowUp])
   @@index([ownerId])
+  @@index([createdAt])
   @@map("leads")
 }
 

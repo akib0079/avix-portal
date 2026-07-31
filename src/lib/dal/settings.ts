@@ -1,9 +1,21 @@
 import "server-only";
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import type { PaymentField } from "@/lib/validation/payment";
 import type { PaymentAccount } from "@prisma/client";
+
+/**
+ * Cache tag for everything in AppSetting + PaymentAccount.
+ *
+ * These are read on EVERY page render (branding sits in both layouts) and
+ * change a few times a year, so they were costing one database round trip per
+ * navigation for nothing. Cached across requests and busted explicitly by the
+ * settings actions — see revalidateSettings().
+ */
+export const SETTINGS_CACHE_TAG = "app-settings";
+
 
 /** Serialized payment account safe for client components. */
 export type PaymentAccountView = {
@@ -45,23 +57,31 @@ export async function listPaymentAccounts(): Promise<PaymentAccountView[]> {
 
 /** Active accounts only — shown to clients. No auth scoping needed (public
  *  bank details), but callers are already inside authenticated routes. */
-export async function listActivePaymentAccounts(): Promise<PaymentAccountView[]> {
-  const rows = await prisma.paymentAccount.findMany({
-    where: { isActive: true },
-    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-  });
-  return rows.map(toView);
-}
+export const listActivePaymentAccounts = unstable_cache(
+  async (): Promise<PaymentAccountView[]> => {
+    const rows = await prisma.paymentAccount.findMany({
+      where: { isActive: true },
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+    });
+    return rows.map(toView);
+  },
+  ["active-payment-accounts"],
+  { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
+);
 
 export const WHATSAPP_SETTING_KEY = "whatsappSupportUrl";
 
 /** Admin-editable WhatsApp support link, or null when not configured. */
-export async function getWhatsappSupportUrl(): Promise<string | null> {
-  const row = await prisma.appSetting.findUnique({
-    where: { key: WHATSAPP_SETTING_KEY },
-  });
-  return row?.value || null;
-}
+export const getWhatsappSupportUrl = unstable_cache(
+  async (): Promise<string | null> => {
+    const row = await prisma.appSetting.findUnique({
+      where: { key: WHATSAPP_SETTING_KEY },
+    });
+    return row?.value || null;
+  },
+  ["whatsapp-support-url"],
+  { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
+);
 
 export const BRAND_KEYS = {
   color: "brandColor",
@@ -80,11 +100,15 @@ export const INVOICE_FOOTER_KEY = "invoiceFooter";
 export const DEFAULT_INVOICE_FOOTER =
   "Please use wise.com or your personal bank network to do the payment.";
 
-export async function getInvoiceFooter(): Promise<string> {
-  const row = await prisma.appSetting.findUnique({ where: { key: INVOICE_FOOTER_KEY } });
-  // Unset → default text; explicitly emptied (whitespace) → no footer.
-  return row ? row.value : DEFAULT_INVOICE_FOOTER;
-}
+export const getInvoiceFooter = unstable_cache(
+  async (): Promise<string> => {
+    const row = await prisma.appSetting.findUnique({ where: { key: INVOICE_FOOTER_KEY } });
+    // Unset → default text; explicitly emptied (whitespace) → no footer.
+    return row ? row.value : DEFAULT_INVOICE_FOOTER;
+  },
+  ["invoice-footer"],
+  { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
+);
 
 export type Branding = {
   color: string | null;
@@ -99,7 +123,8 @@ export type Branding = {
  * `cache()` dedupes the read within a single request — the root layout reads
  * it in both generateMetadata and the layout component.
  */
-export const getBranding = cache(async (): Promise<Branding> => {
+const loadBranding = unstable_cache(
+  async (): Promise<Branding> => {
   const rows = await prisma.appSetting.findMany({
     where: {
       key: {
@@ -115,4 +140,10 @@ export const getBranding = cache(async (): Promise<Branding> => {
     signatureFile: map[BRAND_KEYS.signature] || null,
     invoiceLogoFile: map[BRAND_KEYS.invoiceLogo] || null,
   };
-});
+  },
+  ["branding"],
+  { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
+);
+
+/** react cache() dedupes within a request; unstable_cache spans requests. */
+export const getBranding = cache((): Promise<Branding> => loadBranding());
