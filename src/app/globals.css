@@ -168,6 +168,13 @@
 /* Rich text content rendered from Tiptap JSON */
 .rich-text {
   @apply text-sm leading-relaxed text-foreground;
+  /* Long unbreakable tokens — a Figma link, an API key, a password — were
+     pushing chat bubbles past the panel edge and getting clipped. `anywhere`
+     breaks them only when they'd otherwise overflow, so normal prose is
+     untouched. min-width:0 stops the prose block from claiming its content's
+     intrinsic width inside a flex parent. */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .rich-text h2 {
   @apply mt-4 mb-2 text-base font-semibold;
@@ -194,13 +201,16 @@
   @apply text-primary underline underline-offset-2;
 }
 .rich-text img {
-  @apply my-3 max-h-96 rounded-lg border;
+  @apply my-3 max-h-96 max-w-full rounded-lg border;
 }
 .rich-text code {
   @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.8em];
 }
 .rich-text pre {
   @apply my-2 overflow-x-auto rounded-lg bg-muted p-3;
+  /* Code keeps its own line breaks; it scrolls inside its own box rather
+     than stretching the message. */
+  overflow-wrap: normal;
 }
 .rich-text pre code {
   @apply bg-transparent p-0;

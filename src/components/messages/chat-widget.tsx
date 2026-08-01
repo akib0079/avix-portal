@@ -9,7 +9,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { X } from "lucide-react";
+import Link from "next/link";
+import { X, Maximize2 } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
 import { LocalTime } from "@/components/local-time";
 
@@ -48,6 +49,11 @@ export function ChatWidget({
   canWriteInternal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // Somewhere to go when the panel is too small for the conversation.
+  const fullThreadHref =
+    viewerRole === "ADMIN"
+      ? `/admin/messages${clientId ? `?client=${clientId}` : ""}`
+      : "/portal/messages";
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -78,7 +84,9 @@ export function ChatWidget({
       </SheetTrigger>
       <SheetContent
         side="right"
-        className="w-full gap-0 p-0 sm:max-w-md"
+        // Wider than the old max-w-md: briefs and links are the normal traffic
+        // here, and 28rem forced everything into a narrow column.
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg lg:max-w-2xl"
         aria-describedby={undefined}
       >
         <div className="flex items-center gap-3 border-b bg-sidebar px-5 py-4">
@@ -96,6 +104,14 @@ export function ChatWidget({
               <LocalTime timezone={clientTimezone ?? null} className="mt-0.5" />
             )}
           </div>
+          <Link
+            href={fullThreadHref}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/10 hover:text-white"
+            title="Open the full conversation"
+          >
+            <Maximize2 className="size-3.5" />
+            <span className="hidden sm:inline">Full view</span>
+          </Link>
         </div>
         {viewerRole === "CLIENT" && whatsappUrl && (
           <a
@@ -110,13 +126,16 @@ export function ChatWidget({
             </span>
           </a>
         )}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
+        {/* min-h-0 lets the thread's own scroll area shrink; without it the
+            flex child grows to its content and the composer scrolls away. */}
+        <div className="min-h-0 flex-1 px-4 pt-3 pb-4">
           <MessageThread
             projectId={projectId}
             clientId={clientId}
             viewerRole={viewerRole}
             initialMessages={initialMessages}
             canWriteInternal={canWriteInternal}
+            variant="fill"
           />
         </div>
       </SheetContent>
