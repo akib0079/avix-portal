@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
+import { useNavFavourites } from "@/lib/nav-favourites";
 import { initials } from "@/lib/format";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ import {
   CalendarPlus,
   PanelLeftClose,
   PanelLeftOpen,
+  Star,
 } from "lucide-react";
 
 /** Only the admin shell varies by role; the portal is always CLIENT. */
@@ -124,43 +126,87 @@ function NavLinks({
     return data?.pendingActions ?? 0;
   };
 
+  const { favourites, toggle, isFavourite } = useNavFavourites();
+
+  // Pinned links lift to the top in the order they were pinned; the rest keep
+  // their original grouping. An item appears once, never in both places.
+  const pinned = favourites
+    .map((href) => items.find((item) => item.href === href))
+    .filter((item): item is NavItem => Boolean(item));
+  const rest = items.filter((item) => !favourites.includes(item.href));
+
+  function renderItem(item: NavItem, options: { inFavourites?: boolean } = {}) {
+    const active =
+      item.href === "/admin" || item.href === "/portal"
+        ? pathname === item.href
+        : pathname.startsWith(item.href);
+    const Icon = item.icon;
+    const starred = isFavourite(item.href);
+    const count = item.badge ? badgeCount(item.badge) : 0;
+
+    return (
+      <div key={item.href} className="group/nav relative">
+        {!options.inFavourites && item.section && (
+          <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">
+            {item.section}
+          </p>
+        )}
+        <Link
+          href={item.href}
+          onClick={onNavigate}
+          className={cn(
+            "relative flex items-center gap-3 rounded-lg py-2 pr-9 pl-3 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-white",
+            active && "bg-sidebar-accent text-white",
+          )}
+        >
+          {active && (
+            <span className="absolute top-1/2 left-0 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
+          )}
+          <Icon className="size-4 shrink-0" />
+          <span className="flex-1 truncate">{item.label}</span>
+          {count > 0 && (
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
+              {count > 99 ? "99+" : count}
+            </span>
+          )}
+        </Link>
+
+        {/* Sits above the link rather than inside it — a button can't be a
+            child of an anchor, and this keeps the whole row clickable. */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            toggle(item.href);
+          }}
+          aria-label={starred ? `Unpin ${item.label}` : `Pin ${item.label} to the top`}
+          title={starred ? "Unpin" : "Pin to top"}
+          className={cn(
+            "absolute top-1/2 right-1.5 -translate-y-1/2 rounded p-1 transition-opacity",
+            "focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none",
+            starred
+              ? "text-primary opacity-100"
+              : "text-sidebar-foreground/50 opacity-0 group-hover/nav:opacity-100 hover:text-white",
+          )}
+        >
+          <Star className={cn("size-3.5", starred && "fill-current")} />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <nav className="flex flex-col gap-1">
-      {items.map((item) => {
-        const active =
-          item.href === "/admin" || item.href === "/portal"
-            ? pathname === item.href
-            : pathname.startsWith(item.href);
-        const Icon = item.icon;
-        return (
-          <div key={item.href}>
-            {item.section && (
-              <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">
-                {item.section}
-              </p>
-            )}
-          <Link
-            href={item.href}
-            onClick={onNavigate}
-            className={cn(
-              "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-white",
-              active && "bg-sidebar-accent text-white",
-            )}
-          >
-            {active && (
-              <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
-            )}
-            <Icon className="size-4 shrink-0" />
-            <span className="flex-1">{item.label}</span>
-            {item.badge && badgeCount(item.badge) > 0 && (
-              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
-                {badgeCount(item.badge) > 99 ? "99+" : badgeCount(item.badge)}
-              </span>
-            )}
-          </Link>
-          </div>
-        );
-      })}
+      {pinned.length > 0 && (
+        <>
+          <p className="flex items-center gap-1.5 px-3 pt-1 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">
+            <Star className="size-2.5 fill-current" /> Pinned
+          </p>
+          {pinned.map((item) => renderItem(item, { inFavourites: true }))}
+          <span className="mx-3 my-2 h-px bg-sidebar-foreground/10" />
+        </>
+      )}
+      {rest.map((item) => renderItem(item))}
     </nav>
   );
 }
