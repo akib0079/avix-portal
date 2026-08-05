@@ -145,12 +145,16 @@ function NavLinks({
     const count = item.badge ? badgeCount(item.badge) : 0;
 
     return (
-      <div key={item.href} className="group/nav relative">
+      // The section heading sits OUTSIDE the positioning context: when it was
+      // inside, the star centred itself over heading + link together and rode
+      // up into the "CONTACT" label instead of the row.
+      <div key={item.href}>
         {!options.inFavourites && item.section && (
           <p className="px-3 pt-4 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">
             {item.section}
           </p>
         )}
+        <div className="group/nav relative">
         <Link
           href={item.href}
           onClick={onNavigate}
@@ -191,6 +195,7 @@ function NavLinks({
         >
           <Star className={cn("size-3.5", starred && "fill-current")} />
         </button>
+        </div>
       </div>
     );
   }
