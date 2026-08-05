@@ -137,7 +137,7 @@ export default async function MyProjectPage({
               </span>
             )}
             {project.billingType === "CONTRACT" && project.contractPrice != null && (
-              <span className="flex items-center gap-1.5 font-medium text-primary">
+              <span className="flex items-center gap-1.5 font-semibold text-foreground">
                 <BadgeDollarSign className="size-3.5 shrink-0" />
                 {usd.format(Number(project.contractPrice))} fixed contract
               </span>
@@ -176,7 +176,7 @@ export default async function MyProjectPage({
           {extras.meetings.length > 0 && (
             <Card>
               <CardContent className="pt-6">
-                <h2 className="font-heading mb-3 flex items-center gap-2 text-base font-semibold">
+                <h2 className="title-card mb-3 flex items-center gap-2">
                   <CalendarClock className="size-4" /> Upcoming calls
                 </h2>
                 <ul className="space-y-2">
@@ -208,7 +208,7 @@ export default async function MyProjectPage({
 
           <Card>
             <CardContent className="pt-6">
-              <h2 className="font-heading mb-3 flex items-center gap-2 text-base font-semibold">
+              <h2 className="title-card mb-3 flex items-center gap-2">
                 <ReceiptText className="size-4" /> Invoices
               </h2>
               {extras.invoices.length === 0 ? (

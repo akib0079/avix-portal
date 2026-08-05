@@ -167,7 +167,7 @@ export function ProjectRail({
 
   return (
     <div className={cn("rounded-2xl border bg-card p-5", className)}>
-      <h1 className="font-heading text-xl leading-tight font-bold">
+      <h1 className="title-page text-xl leading-tight">
         {project.projectName}
       </h1>
 
@@ -298,7 +298,7 @@ export function ProjectRail({
       )}
 
       {canEdit && project.billingType === "CONTRACT" && (
-        <p className="mt-2 text-sm font-medium text-primary">
+        <p className="mt-2 text-sm font-semibold text-foreground">
           {project.contractPrice != null
             ? `${usd.format(project.contractPrice)} fixed contract`
             : "Fixed contract"}

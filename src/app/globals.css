@@ -166,6 +166,29 @@
 }
 
 /* Rich text content rendered from Tiptap JSON */
+/* Typography scale
+   ------------------------------------------------------------------
+   Five different sizes were doing heading duty (text-lg 57×, text-2xl
+   19×, text-xl 18×, text-base 16×, text-sm 12×), so nothing anchored
+   the eye and pages read as one flat wall of small grey text. Four
+   steps, named for their job rather than their size. */
+.title-page {
+  @apply font-heading text-2xl font-bold tracking-tight;
+}
+.title-section {
+  @apply font-heading text-lg font-semibold;
+}
+.title-card {
+  @apply font-heading text-base font-semibold;
+}
+/* Row titles carry full contrast; the detail under them steps down. */
+.title-row {
+  @apply text-sm font-medium text-foreground;
+}
+.meta {
+  @apply text-xs text-muted-foreground;
+}
+
 .rich-text {
   @apply text-sm leading-relaxed text-foreground;
   /* Long unbreakable tokens — a Figma link, an API key, a password — were

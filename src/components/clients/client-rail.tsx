@@ -54,7 +54,7 @@ export function ClientRail({
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border bg-card p-5">
-        <h1 className="font-heading text-xl leading-tight font-bold">
+        <h1 className="title-page text-xl leading-tight">
           {client.firstName} {client.lastName}
         </h1>
         {client.company && (

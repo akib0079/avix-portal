@@ -178,7 +178,7 @@ export function ProjectMoney({
       {retainers.length > 0 && (
         <Card>
           <CardContent className="pt-6">
-            <h3 className="font-heading mb-3 flex items-center gap-2 text-base font-semibold">
+            <h3 className="title-card mb-3 flex items-center gap-2">
               <Repeat className="size-4" /> Retainers
             </h3>
             <ul className="space-y-2">
@@ -220,7 +220,7 @@ export function ProjectMoney({
 
       <Card>
         <CardContent className="pt-6">
-          <h3 className="font-heading mb-3 text-base font-semibold">
+          <h3 className="title-card mb-3">
             Invoices ({invoices.length})
           </h3>
           {invoices.length === 0 ? (

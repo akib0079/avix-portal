@@ -180,7 +180,7 @@ export default async function MyWorkPage() {
         <div className="xl:sticky xl:top-16 xl:self-start">
           <Card>
             <CardContent className="pt-6">
-              <h2 className="font-heading mb-3 text-base font-semibold">
+              <h2 className="title-card mb-3">
                 Projects I own
               </h2>
               {work.ownedProjects.length === 0 ? (

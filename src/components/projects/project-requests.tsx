@@ -46,7 +46,7 @@ export function ProjectRequests({
       {meetings.length > 0 && (
         <Card>
           <CardContent className="pt-6">
-            <h3 className="font-heading mb-3 flex items-center gap-2 text-base font-semibold">
+            <h3 className="title-card mb-3 flex items-center gap-2">
               <CalendarClock className="size-4" /> Upcoming calls
             </h3>
             <ul className="space-y-2">
@@ -83,7 +83,7 @@ export function ProjectRequests({
 
       <Card>
         <CardContent className="pt-6">
-          <h3 className="font-heading mb-3 flex items-center gap-2 text-base font-semibold">
+          <h3 className="title-card mb-3 flex items-center gap-2">
             <Inbox className="size-4" /> Client requests ({requests.length})
           </h3>
 
