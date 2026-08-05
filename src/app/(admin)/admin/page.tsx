@@ -33,6 +33,7 @@ import {
   ArrowRight,
   Repeat,
 } from "lucide-react";
+import { toneChip, toneText } from "@/lib/tone";
 
 export const metadata = { title: "Dashboard" };
 
@@ -146,7 +147,7 @@ export default async function AdminDashboardPage({
           label="Outstanding"
           value={usd.format(data.outstanding)}
           icon={<Receipt className="size-5" />}
-          iconClassName="bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-300"
+          iconClassName={toneChip.warn}
         />
         <StatCard
           label="Active projects"
@@ -197,7 +198,7 @@ export default async function AdminDashboardPage({
               <CalendarClock className="size-3.5" /> Overdue, aged
             </p>
             <dl className="mt-2 space-y-1.5 text-sm">
-              <AgingRow label="1–30 days" bucket={data.money.aging.current} tone="text-amber-600 dark:text-amber-300" />
+              <AgingRow label="1–30 days" bucket={data.money.aging.current} tone={toneText.warn} />
               <AgingRow label="31–60 days" bucket={data.money.aging.thirty} tone="text-orange-600 dark:text-orange-300" />
               <AgingRow label="60+ days" bucket={data.money.aging.sixtyPlus} tone="text-red-600 dark:text-red-300" />
             </dl>

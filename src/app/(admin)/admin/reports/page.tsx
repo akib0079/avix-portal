@@ -15,6 +15,7 @@ import {
 import { usd } from "@/lib/format";
 import { BadgeDollarSign, Clock, Receipt, TrendingUp } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
+import { toneText } from "@/lib/tone";
 
 export const metadata = { title: "Reports" };
 
@@ -41,19 +42,19 @@ export default async function ReportsPage() {
       label: "Outstanding",
       value: usd.format(kpis.outstanding),
       icon: Receipt,
-      accent: "text-amber-600 dark:text-amber-300",
+      accent: toneText.warn,
     },
     {
       label: "Avg paid invoice",
       value: usd.format(kpis.avgInvoice),
       icon: BadgeDollarSign,
-      accent: "text-emerald-600 dark:text-emerald-300",
+      accent: toneText.good,
     },
     {
       label: "Hours this month",
       value: fmtHours(kpis.hoursThisMonth),
       icon: Clock,
-      accent: "text-sky-600 dark:text-sky-300",
+      accent: toneText.info,
     },
   ];
 

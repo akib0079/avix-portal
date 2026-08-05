@@ -16,6 +16,7 @@ import {
   ThumbsUp,
   AlertTriangle,
 } from "lucide-react";
+import { toneChip, toneText } from "@/lib/tone";
 
 /** How long without a word before we call the relationship quiet. */
 const QUIET_DAYS = 14;
@@ -93,8 +94,8 @@ export function ClientRail({
           className={cn(
             "mt-4 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
             isQuiet
-              ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+              ? toneChip.warn
+              : toneChip.good,
           )}
         >
           {isQuiet && <AlertTriangle className="size-3" />}
@@ -151,7 +152,7 @@ export function ClientRail({
             <dd
               className={cn(
                 "font-medium",
-                snapshot.outstanding > 0 && "text-amber-600 dark:text-amber-400",
+                snapshot.outstanding > 0 && toneText.warn,
               )}
             >
               {usd.format(snapshot.outstanding)}
@@ -160,7 +161,7 @@ export function ClientRail({
           {snapshot.overdue > 0 && (
             <div className="flex items-center justify-between">
               <dt className="text-muted-foreground">Overdue</dt>
-              <dd className="font-medium text-red-600 dark:text-red-400">
+              <dd className={cn("font-medium", toneText.bad)}>
                 {usd.format(snapshot.overdue)}
               </dd>
             </div>

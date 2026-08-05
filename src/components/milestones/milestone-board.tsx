@@ -63,6 +63,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toneChip, toneText } from "@/lib/tone";
 
 /** Past its due date and not finished. */
 function isOverdue(milestone: MilestoneView): boolean {
@@ -138,8 +139,8 @@ function SortableRow({
                 className={cn(
                   "rounded-full px-2 py-0.5 text-xs font-medium",
                   milestone.clientRating === 1
-                    ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-300"
-                    : "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-300",
+                    ? toneChip.good
+                    : toneChip.warn,
                 )}
               >
                 {milestone.clientRating === 1 ? "👍 Rated" : "👎 Rated"}
@@ -162,7 +163,7 @@ function SortableRow({
                   className={cn(
                     "inline-flex items-center gap-1",
                     isOverdue(milestone)
-                      ? "font-medium text-red-600 dark:text-red-400"
+                      ? cn("font-medium", toneText.bad)
                       : "text-muted-foreground",
                   )}
                 >

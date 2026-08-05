@@ -13,6 +13,7 @@ import { usd, formatDate, projectTypeLabels } from "@/lib/format";
 import { projectHealth } from "@/lib/project-health";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Bell, FileText } from "lucide-react";
+import { toneChip } from "@/lib/tone";
 
 export const metadata = { title: "Overview" };
 
@@ -112,10 +113,10 @@ export default async function PortalOverviewPage() {
                           className={cn(
                             "mt-3 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
                             health.tone === "bad"
-                              ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+                              ? toneChip.bad
                               : health.tone === "warn"
-                                ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-                                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+                                ? toneChip.warn
+                                : toneChip.good,
                           )}
                         >
                           {health.dueLabel}

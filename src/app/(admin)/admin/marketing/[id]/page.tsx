@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { ArrowLeft, CheckCircle2, XCircle, Clock3, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { requireAdmin } from "@/lib/dal/session";
+import { toneChip } from "@/lib/tone";
 
 export const metadata = { title: "Campaign" };
 
@@ -49,10 +50,10 @@ export default async function CampaignDetailPage({
   const statusTone: Record<string, string> = {
     DRAFT: "bg-muted text-muted-foreground",
     SCHEDULED: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
-    QUEUED: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
-    SENDING: "bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300",
-    SENT: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
-    FAILED: "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300",
+    QUEUED: toneChip.warn,
+    SENDING: toneChip.info,
+    SENT: toneChip.good,
+    FAILED: toneChip.bad,
   };
 
   const subtitle =

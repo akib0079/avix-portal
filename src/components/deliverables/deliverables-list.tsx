@@ -19,6 +19,7 @@ import {
   MessageSquareWarning,
   Loader2,
 } from "lucide-react";
+import { toneText } from "@/lib/tone";
 
 /** Client-facing deliverables: download/open, then approve or ask for changes. */
 export function DeliverablesList({ deliverables }: { deliverables: DeliverableRow[] }) {
@@ -93,8 +94,8 @@ export function DeliverablesList({ deliverables }: { deliverables: DeliverableRo
                     className={
                       "mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium " +
                       (approved
-                        ? "text-emerald-600 dark:text-emerald-300"
-                        : "text-amber-600 dark:text-amber-300")
+                        ? toneText.good
+                        : toneText.warn)
                     }
                   >
                     {approved ? (

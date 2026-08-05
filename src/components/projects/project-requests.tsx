@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import { Inbox, CalendarClock, ArrowUpRight, CheckCircle2 } from "lucide-react";
+import { toneChip } from "@/lib/tone";
 
 export type ProjectRequestRow = {
   id: string;
@@ -22,10 +23,10 @@ export type ProjectMeetingRow = {
 };
 
 const statusTone: Record<string, string> = {
-  PENDING: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
-  ACCEPTED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+  PENDING: toneChip.warn,
+  ACCEPTED: toneChip.good,
   DECLINED: "bg-muted text-muted-foreground",
-  COMPLETED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+  COMPLETED: toneChip.good,
 };
 
 /**

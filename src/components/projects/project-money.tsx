@@ -14,6 +14,7 @@ import { usd, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Clock, BadgeDollarSign, ReceiptText, Repeat } from "lucide-react";
 import { BillWorkButton, type BillableLineView } from "@/components/invoices/bill-work-button";
+import { toneChip, toneText } from "@/lib/tone";
 
 type InvoiceRow = {
   id: string;
@@ -58,8 +59,8 @@ function Stat({
       <p
         className={cn(
           "font-heading mt-1 text-xl font-bold",
-          tone === "warn" && "text-amber-600 dark:text-amber-400",
-          tone === "good" && "text-emerald-600 dark:text-emerald-400",
+          tone === "warn" && toneText.warn,
+          tone === "good" && toneText.good,
         )}
       >
         {value}
@@ -203,7 +204,7 @@ export function ProjectMoney({
                       className={cn(
                         "rounded-full px-2 py-0.5 text-[11px] font-medium",
                         r.active
-                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                          ? toneChip.good
                           : "bg-muted text-muted-foreground",
                       )}
                     >

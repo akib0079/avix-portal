@@ -19,6 +19,7 @@ import {
   FileText,
   ExternalLink,
 } from "lucide-react";
+import { toneText } from "@/lib/tone";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
@@ -152,8 +153,8 @@ export function DeliverablesCard({
                       className={
                         "mt-0.5 text-xs font-medium " +
                         (d.reviewStatus === "APPROVED"
-                          ? "text-emerald-600 dark:text-emerald-300"
-                          : "text-amber-600 dark:text-amber-300")
+                          ? toneText.good
+                          : toneText.warn)
                       }
                     >
                       {d.reviewStatus === "APPROVED"

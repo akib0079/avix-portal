@@ -26,6 +26,7 @@ import {
   Loader2,
   Send,
 } from "lucide-react";
+import { toneText } from "@/lib/tone";
 
 type Kind = "NOTE" | "CALL" | "EMAIL" | "MEETING";
 
@@ -34,10 +35,10 @@ const KIND_META: Record<
   { icon: React.ComponentType<{ className?: string }>; tone: string }
 > = {
   NOTE: { icon: StickyNote, tone: "text-muted-foreground" },
-  CALL: { icon: Phone, tone: "text-sky-600 dark:text-sky-300" },
+  CALL: { icon: Phone, tone: toneText.info },
   EMAIL: { icon: Mail, tone: "text-primary" },
-  MEETING: { icon: CalendarDays, tone: "text-emerald-600 dark:text-emerald-300" },
-  STAGE: { icon: ArrowRightLeft, tone: "text-amber-600 dark:text-amber-300" },
+  MEETING: { icon: CalendarDays, tone: toneText.good },
+  STAGE: { icon: ArrowRightLeft, tone: toneText.warn },
 };
 
 function when(iso: string) {

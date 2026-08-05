@@ -20,6 +20,7 @@ import { usd, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Search, Paperclip, FileText } from "lucide-react";
 import type { InvoiceStatus } from "@prisma/client";
+import { toneText } from "@/lib/tone";
 
 export type InvoiceListRow = {
   id: string;
@@ -147,8 +148,8 @@ export function InvoiceTable({
             <p
               className={cn(
                 "font-heading mt-0.5 text-lg font-bold",
-                bucket === "d60" && aging[bucket] > 0 && "text-amber-600 dark:text-amber-400",
-                bucket === "d90" && aging[bucket] > 0 && "text-red-600 dark:text-red-400",
+                bucket === "d60" && aging[bucket] > 0 && toneText.warn,
+                bucket === "d90" && aging[bucket] > 0 && toneText.bad,
               )}
             >
               {usd.format(aging[bucket])}
@@ -247,7 +248,7 @@ export function InvoiceTable({
                         className={cn(
                           "hidden text-sm sm:table-cell",
                           overdue
-                            ? "font-medium text-red-600 dark:text-red-400"
+                            ? cn("font-medium", toneText.bad)
                             : "text-muted-foreground",
                         )}
                       >
@@ -258,7 +259,7 @@ export function InvoiceTable({
                       </TableCell>
                       <TableCell className="hidden text-sm sm:table-cell">
                         {balance > 0 ? (
-                          <span className="text-amber-600 dark:text-amber-400">
+                          <span className={toneText.warn}>
                             {usd.format(balance)}
                           </span>
                         ) : (

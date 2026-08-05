@@ -22,6 +22,7 @@ import { usd, formatDate, projectTypeLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Inbox } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
+import { toneChip } from "@/lib/tone";
 
 export const metadata = { title: "Client" };
 
@@ -196,7 +197,7 @@ export default async function ClientDetailPage({
                       className={cn(
                         "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
                         r.status === "PENDING"
-                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                          ? toneChip.warn
                           : "bg-muted text-muted-foreground",
                       )}
                     >

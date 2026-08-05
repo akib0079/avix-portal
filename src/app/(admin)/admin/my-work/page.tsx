@@ -7,6 +7,7 @@ import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { requireTeam } from "@/lib/dal/session";
 import { Clock, FolderKanban, CalendarClock, CheckCircle2, TrendingUp } from "lucide-react";
+import { toneText } from "@/lib/tone";
 
 export const metadata = { title: "My Work" };
 
@@ -84,7 +85,7 @@ export default async function MyWorkPage() {
                   className={cn(
                     "ml-2 inline-flex items-center gap-0.5 text-xs font-normal",
                     trend >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
+                      ? toneText.good
                       : "text-muted-foreground",
                   )}
                 >
@@ -116,7 +117,7 @@ export default async function MyWorkPage() {
                 <h2
                   className={cn(
                     "font-heading mb-2 text-sm font-semibold",
-                    bucket === "Overdue" && "text-red-600 dark:text-red-400",
+                    bucket === "Overdue" && toneText.bad,
                   )}
                 >
                   {bucket}{" "}
@@ -151,7 +152,7 @@ export default async function MyWorkPage() {
                               className={cn(
                                 "flex items-center gap-1 text-xs",
                                 bucket === "Overdue"
-                                  ? "font-medium text-red-600 dark:text-red-400"
+                                  ? cn("font-medium", toneText.bad)
                                   : "text-muted-foreground",
                               )}
                             >

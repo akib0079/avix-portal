@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Loader2, Plus, Trash2, ReceiptText, Undo2 } from "lucide-react";
+import { toneText } from "@/lib/tone";
 
 export type PaymentRow = {
   id: string;
@@ -125,7 +126,7 @@ export function InvoicePayments({
             <p
               className={cn(
                 "font-heading mt-0.5 font-bold",
-                balance > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+                balance > 0 ? toneText.warn : "text-muted-foreground",
               )}
             >
               {money(balance)}
