@@ -50,11 +50,18 @@ export function balanceDue(total: number, amountPaid: number): number {
   return round(Math.max(total - amountPaid, 0));
 }
 
-/** Due date implied by net terms, or null when no terms are set. */
+/**
+ * Due date implied by net terms, or null when no terms are set.
+ *
+ * All arithmetic is in UTC. Doing it in local time and then calling
+ * toISOString() shifts the result back a day for anyone east of UTC — in
+ * Dhaka (UTC+6), Net 14 from 31 Jul produced 13 Aug instead of 14 Aug, so
+ * every invoice fell due a day early.
+ */
 export function dueDateFromTerms(issueDate: string, termsDays: number | null | undefined): string | null {
   if (termsDays == null) return null;
-  const issued = new Date(`${issueDate}T00:00:00`);
+  const issued = new Date(`${issueDate}T00:00:00Z`);
   if (Number.isNaN(issued.getTime())) return null;
-  issued.setDate(issued.getDate() + termsDays);
+  issued.setUTCDate(issued.getUTCDate() + termsDays);
   return issued.toISOString().slice(0, 10);
 }
