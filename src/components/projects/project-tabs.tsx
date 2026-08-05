@@ -55,9 +55,15 @@ export function ProjectTabs({
 
   return (
     <Tabs value={active} onValueChange={select}>
-      <TabsList className="w-full justify-start overflow-x-auto">
+      {/* Inline-flex, not full width: stretched triggers read as a nav bar
+          rather than tabs, and the active pill got lost against the page. */}
+      <TabsList className="inline-flex max-w-full justify-start overflow-x-auto">
         {tabs.map((tab) => (
-          <TabsTrigger key={tab.value} value={tab.value} className="shrink-0 gap-1.5">
+          <TabsTrigger
+            key={tab.value}
+            value={tab.value}
+            className="shrink-0 gap-1.5 data-[state=active]:shadow-sm"
+          >
             {tab.label}
             {tab.count ? (
               <span

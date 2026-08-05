@@ -106,7 +106,7 @@ function SortableRow({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        "rounded-xl border bg-card",
+        "group/row rounded-xl border bg-card transition-colors hover:border-primary/30",
         isDragging && "z-10 opacity-80 shadow-lg ring-2 ring-primary/30",
       )}
     >
@@ -232,19 +232,24 @@ function SortableRow({
               ))}
             </SelectContent>
           </Select>
-          <Button variant="ghost" size="icon" className="size-8" onClick={onEdit}>
-            <Pencil className="size-4" />
-            <span className="sr-only">Edit</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 text-destructive hover:text-destructive"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-4" />
-            <span className="sr-only">Delete</span>
-          </Button>
+          {/* Secondary actions: every row previously showed five controls at
+              once. These fade in on hover or keyboard focus, and stay put on
+              touch devices, which have no hover. */}
+          <div className="flex items-center gap-1 opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100">
+            <Button variant="ghost" size="icon" className="size-8" onClick={onEdit}>
+              <Pencil className="size-4" />
+              <span className="sr-only">Edit</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive hover:text-destructive"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-4" />
+              <span className="sr-only">Delete</span>
+            </Button>
+          </div>
         </div>
       </div>
       {expanded && hasDescription && (
