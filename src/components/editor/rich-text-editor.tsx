@@ -29,6 +29,7 @@ import {
   Link2,
   ImagePlus,
   CloudUpload,
+  Loader2,
 } from "lucide-react";
 
 /** Short display label for an inserted image link, e.g. "📎 mockup.png". */
@@ -86,11 +87,17 @@ function Toolbar({
   allowImages,
   onLink,
   onImage,
+  onImageLink,
+  uploading,
 }: {
   editor: Editor;
   allowImages: boolean;
   onLink: () => void;
+  /** Opens the file picker — the primary path. */
   onImage: () => void;
+  /** Falls back to linking an image hosted elsewhere. */
+  onImageLink: () => void;
+  uploading: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-0.5 border-b bg-muted/50 p-1">
@@ -157,9 +164,18 @@ function Toolbar({
         <Link2 className="size-4" />
       </ToolbarButton>
       {allowImages && (
-        <ToolbarButton label="Insert image link" onClick={onImage}>
-          <ImagePlus className="size-4" />
-        </ToolbarButton>
+        <>
+          <ToolbarButton label="Upload an image" onClick={onImage}>
+            {uploading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <ImagePlus className="size-4" />
+            )}
+          </ToolbarButton>
+          <ToolbarButton label="Link an image hosted elsewhere" onClick={onImageLink}>
+            <Link2 className="size-4" />
+          </ToolbarButton>
+        </>
       )}
     </div>
   );
@@ -188,11 +204,45 @@ export function RichTextEditor({
   const [linkUrl, setLinkUrl] = useState("");
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // The editor instance is needed inside ProseMirror handlers that are created
+  // before `editor` exists, so reach it through a ref.
+  const editorRef = useRef<Editor | null>(null);
   // Held in a ref so the editor's key handler never calls a stale closure.
   const submitRef = useRef(onSubmit);
   useEffect(() => {
     submitRef.current = onSubmit;
   }, [onSubmit]);
+
+  /**
+   * Sends each file to /api/uploads/images and inserts the returned URL. The
+   * bytes live on the server's disk; the document only ever carries the path.
+   */
+  async function uploadFiles(files: File[]) {
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const body = new FormData();
+        body.append("file", file);
+        const res = await fetch("/api/uploads/images", { method: "POST", body });
+        const data = (await res.json().catch(() => null)) as
+          | { url?: string; error?: string }
+          | null;
+        if (!res.ok || !data?.url) {
+          toast.error(data?.error ?? "Couldn't upload that image.");
+          continue;
+        }
+        editorRef.current
+          ?.chain()
+          .focus()
+          .setImage({ src: data.url, alt: file.name })
+          .run();
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -235,26 +285,34 @@ export function RichTextEditor({
         }
         return false;
       },
-      // Pasting or dropping image FILES is not supported — pop the
-      // Drive/Dropbox dialog instead of silently ignoring the file.
+      // Paste or drop an image file and it uploads — screenshots are the
+      // single most common thing people put in a message.
       handlePaste: (_view, event) => {
-        if (event.clipboardData?.files?.length) {
-          setImageUrl("");
-          setImageOpen(true);
-          return true;
-        }
-        return false;
+        const files = Array.from(event.clipboardData?.files ?? []).filter((f) =>
+          f.type.startsWith("image/"),
+        );
+        if (files.length === 0) return false;
+        event.preventDefault();
+        void uploadFiles(files);
+        return true;
       },
       handleDrop: (_view, event) => {
-        if (event.dataTransfer?.files?.length) {
-          setImageUrl("");
-          setImageOpen(true);
-          return true;
-        }
-        return false;
+        const files = Array.from(event.dataTransfer?.files ?? []).filter((f) =>
+          f.type.startsWith("image/"),
+        );
+        if (files.length === 0) return false;
+        event.preventDefault();
+        void uploadFiles(files);
+        return true;
       },
     },
   });
+
+  // Assigned in an effect, not during render: the ProseMirror handlers only
+  // read it on a user event, by which time the effect has run.
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
 
   if (!editor) {
     return (
@@ -332,12 +390,31 @@ export function RichTextEditor({
         editor={editor}
         allowImages={allowImages}
         onLink={openLinkDialog}
-        onImage={() => {
+        onImage={() => fileInputRef.current?.click()}
+        onImageLink={() => {
           setImageUrl("");
           setImageOpen(true);
         }}
+        uploading={uploading}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = ""; // let the same file be picked again
+          if (files.length) void uploadFiles(files);
+        }}
       />
       <EditorContent editor={editor} />
+      {uploading && (
+        <p className="flex items-center gap-1.5 border-t bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" /> Uploading image…
+        </p>
+      )}
 
       <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
         <DialogContent className="sm:max-w-md">
@@ -376,12 +453,12 @@ export function RichTextEditor({
           <DialogHeader>
             <DialogTitle className="font-heading flex items-center gap-2">
               <CloudUpload className="size-4 text-primary" />
-              Share an image
+              Link an image
             </DialogTitle>
             <DialogDescription>
-              Direct image uploads aren&apos;t supported. Please upload your image
-              to <strong>Google Drive</strong> or <strong>Dropbox</strong>, then
-              paste the share link below — it will appear as a clickable link.
+              For images that already live somewhere else. To put an image in
+              directly, paste or drag it into the editor, or use the upload
+              button — it&apos;s stored with the message.
             </DialogDescription>
           </DialogHeader>
           <Input

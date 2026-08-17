@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { ViewerImage } from "./viewer-image";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
@@ -89,12 +90,10 @@ function renderNode(node: Node, key: number): ReactNode {
       const src = safeImageSrc(node.attrs?.src);
       if (!src) return null;
       return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <ViewerImage
           key={key}
           src={src}
           alt={typeof node.attrs?.alt === "string" ? node.attrs.alt : ""}
-          loading="lazy"
         />
       );
     }
