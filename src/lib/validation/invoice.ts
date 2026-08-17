@@ -20,7 +20,10 @@ export const invoiceItemSchema = z.object({
 
 export type InvoiceItemInput = z.infer<typeof invoiceItemSchema>;
 
-export const invoiceCurrencyValues = ["USD", "EUR"] as const;
+import { currencyCodes } from "@/lib/currency";
+
+/** Re-exported so existing imports keep working; the list lives in one place. */
+export const invoiceCurrencyValues = currencyCodes;
 
 export const invoiceSchema = z.object({
   /** Optional line items; when present the server recomputes amount = Σ qty×rate. */

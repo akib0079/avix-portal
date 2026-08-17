@@ -363,6 +363,9 @@ model TimeEntry {
 enum InvoiceCurrency {
   USD
   EUR
+  GBP
+  CAD
+  AUD
 }
 
 model Invoice {

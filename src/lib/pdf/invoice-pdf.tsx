@@ -11,6 +11,7 @@ import {
   Font,
   renderToBuffer,
 } from "@react-pdf/renderer";
+import { currencySymbol, type CurrencyCode } from "@/lib/currency";
 
 /**
  * Poppins, embedded from bundled TTFs in public/fonts (the proven-reliable
@@ -51,7 +52,7 @@ export type InvoicePdfData = {
   invoiceNumber: string;
   /** Big document headline; falls back to "Invoice {number}". */
   title: string | null;
-  currency: "USD" | "EUR";
+  currency: CurrencyCode;
   status: string;
   issueDate: string;
   dueDate: string | null;
@@ -115,8 +116,8 @@ function describe(description: string) {
   };
 }
 
-function money(n: number, currency: "USD" | "EUR"): string {
-  const sym = currency === "EUR" ? "€" : "$";
+function money(n: number, currency: CurrencyCode): string {
+  const sym = currencySymbol(currency);
   return `${sym}${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 

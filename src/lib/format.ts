@@ -120,7 +120,7 @@ export function initials(name: string) {
  * Money in the invoice's own currency. Reports and lists must never add
  * different currencies together — format each in its own.
  */
-export function formatMoney(amount: number, currency: "USD" | "EUR" = "USD"): string {
+export function formatMoney(amount: number, currency: string = "USD"): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,

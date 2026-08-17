@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ProposalStatus } from "@prisma/client";
 import { projectTypeValues } from "@/lib/validation/project";
+import { currencyCodes } from "@/lib/currency";
 
 export const proposalStatusValues = [
   "DRAFT",
@@ -33,7 +34,7 @@ export const proposalInvoiceItemSchema = z.object({
 /** The full deposit/first invoice built alongside the proposal (step 2). */
 export const proposalInvoiceSchema = z.object({
   title: z.string().trim().max(160).optional().or(z.literal("")),
-  currency: z.enum(["USD", "EUR"]),
+  currency: z.enum(currencyCodes),
   paymentAccountId: z.string().optional().or(z.literal("")),
   invoiceNumber: z.string().trim().max(40).optional().or(z.literal("")),
   issueDate: z.string().min(1, "Issue date is required"),

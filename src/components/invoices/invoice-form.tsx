@@ -10,6 +10,7 @@ import {
   type InvoiceInput,
 } from "@/lib/validation/invoice";
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
+import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
 import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -118,7 +119,7 @@ export function InvoiceForm({
 
   const watchedItems = form.watch("items");
   const currency = form.watch("currency");
-  const currencySymbol = currency === "EUR" ? "€" : "$";
+  const currencySymbol = symbolFor(currency);
   const watchedDiscount = form.watch("discount");
   const watchedTaxRate = form.watch("taxRate");
   const watchedTaxLabel = form.watch("taxLabel");
@@ -425,8 +426,11 @@ export function InvoiceForm({
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="USD">USD ($)</SelectItem>
-                          <SelectItem value="EUR">EUR (€)</SelectItem>
+                          {CURRENCIES.map((c) => (
+                            <SelectItem key={c.code} value={c.code}>
+                              {c.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <FormMessage />

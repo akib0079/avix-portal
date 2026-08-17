@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import type { Prisma, ProposalStatus, ProjectType } from "@prisma/client";
+import type { CurrencyCode } from "@/lib/currency";
 
 export type ProposalItemView = {
   id: string;
@@ -51,7 +52,7 @@ export type ProposalView = {
 
 export type ProposalInvoiceDraft = {
   title: string | null;
-  currency: "USD" | "EUR";
+  currency: CurrencyCode;
   paymentAccountId: string | null;
   invoiceNumber: string;
   issueDate: string;

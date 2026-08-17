@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
 import { Download, ExternalLink } from "lucide-react";
+import { currencySymbol } from "@/lib/currency";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Invoice" };
@@ -100,7 +101,7 @@ export default async function InvoiceDetailPage({
           invoiceId={invoice.id}
           total={Number(invoice.amount)}
           amountPaid={Number(invoice.amountPaid)}
-          currencySymbol={invoice.currency === "EUR" ? "€" : "$"}
+          currencySymbol={currencySymbol(invoice.currency)}
           payments={invoice.payments.map((p) => ({
             id: p.id,
             amount: Number(p.amount),
