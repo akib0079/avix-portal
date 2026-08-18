@@ -193,6 +193,19 @@ export async function sendMessage(
       where: { role: { in: ["ADMIN", "STAFF"] }, status: "ACTIVE" },
       select: { id: true },
     });
+    // Ask BEFORE writing this message's own notification rows. alreadyNotified
+    // looks for a MESSAGE_RECEIVED row for this admin inside the quiet window,
+    // so creating one first means it always finds the row we just wrote, quiet
+    // is always true, and the admin email below never sends — for any message,
+    // ever. The client branch below already gets this order right.
+    const quiet = admins[0]
+      ? await alreadyNotified({
+          recipientId: admins[0].id,
+          clientId: client.id,
+          projectId,
+          readField: "readByAdminAt",
+        })
+      : false;
     if (admins.length > 0) {
       await prisma.notification.createMany({
         data: admins.map((a) => ({
@@ -204,14 +217,6 @@ export async function sendMessage(
         })),
       });
     }
-    const quiet = admins[0]
-      ? await alreadyNotified({
-          recipientId: admins[0].id,
-          clientId: client.id,
-          projectId,
-          readField: "readByAdminAt",
-        })
-      : false;
     const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
     if (adminEmail && !quiet) {
       await sendEmail({
