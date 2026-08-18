@@ -143,11 +143,10 @@ export async function createInvoice(
   const relations = await validateRelations(data.clientId, data.projectId);
   if ("error" in relations) return { ok: false, error: relations.error! };
 
-  const pdf = await handlePdf(formData);
-  if (!pdf.ok) return { ok: false, error: pdf.error };
-  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
-
   // Custom number if given (must be unique); otherwise auto-assign.
+  // Checked BEFORE the PDF is stored: a duplicate number is an ordinary typo,
+  // and saving first would strand the uploaded file in the bucket with no
+  // invoice row ever pointing at it.
   const custom = data.invoiceNumber?.trim();
   if (custom) {
     const clash = await prisma.invoice.findUnique({
@@ -156,6 +155,10 @@ export async function createInvoice(
     });
     if (clash) return { ok: false, error: `Invoice number "${custom}" is already used.` };
   }
+
+  const pdf = await handlePdf(formData);
+  if (!pdf.ok) return { ok: false, error: pdf.error };
+  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
   const invoice = await prisma.$transaction(async (tx) => {
     const invoiceNumber = custom || (await nextInvoiceNumber(tx));
@@ -213,16 +216,8 @@ export async function updateInvoice(
   const relations = await validateRelations(data.clientId, data.projectId);
   if ("error" in relations) return { ok: false, error: relations.error! };
 
-  const pdf = await handlePdf(formData);
-  if (!pdf.ok) return { ok: false, error: pdf.error };
-
-  // Replacing the PDF? Clean up the old file.
-  if (pdf.fileName && invoice.pdfPath) {
-    await deleteUpload("invoices", invoice.pdfPath);
-  }
-  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
-
-  // Allow renaming the invoice number; keep it unique.
+  // Allow renaming the invoice number; keep it unique. Checked before the new
+  // PDF is stored so a rejected rename doesn't strand an uploaded file.
   const custom = data.invoiceNumber?.trim();
   const nextNumber = custom || invoice.invoiceNumber;
   if (nextNumber !== invoice.invoiceNumber) {
@@ -232,6 +227,10 @@ export async function updateInvoice(
     });
     if (clash) return { ok: false, error: `Invoice number "${nextNumber}" is already used.` };
   }
+
+  const pdf = await handlePdf(formData);
+  if (!pdf.ok) return { ok: false, error: pdf.error };
+  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
   const totals = totalsFor(data);
   await prisma.$transaction(async (tx) => {
@@ -268,6 +267,13 @@ export async function updateInvoice(
       },
     });
   });
+
+  // Only now is the old file safe to drop. Deleting it before the update meant
+  // any later failure — a rejected rename, a transaction rollback — left the
+  // invoice row pointing at a PDF that no longer existed.
+  if (pdf.fileName && invoice.pdfPath) {
+    await deleteUpload("invoices", invoice.pdfPath);
+  }
 
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${id}`);
