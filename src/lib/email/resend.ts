@@ -24,6 +24,17 @@ export async function sendEmail(options: {
   devHint?: string;
 }) {
   if (!resend) {
+    // devHint carries single-use bearer URLs (password reset, account invite).
+    // Printing those to stdout is the right trade locally; in production the
+    // same line would put a working credential into the host's log store, so
+    // the hint is withheld and the missing key is reported as the fault it is.
+    const isProd = process.env.NODE_ENV === "production";
+    if (isProd) {
+      console.error(
+        `[email] RESEND_API_KEY is not configured — mail to ${options.to} was NOT sent.`,
+      );
+      return { ok: true as const, skipped: true as const };
+    }
     console.log(
       `[email:dev] to=${options.to} subject="${options.subject}"` +
         (options.attachments?.length ? ` attachments=${options.attachments.length}` : "") +
