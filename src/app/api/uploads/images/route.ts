@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
 import { saveUpload } from "@/lib/uploads";
+import { checkImageQuota, reconcileImageQuota } from "@/lib/upload-quota";
 
 /**
  * Image uploads for the rich-text editor: chat messages, project briefs,
@@ -14,7 +15,9 @@ import { saveUpload } from "@/lib/uploads";
  *
  * Anyone signed in may upload — clients paste screenshots into chat too — but
  * saveUpload enforces the type allowlist (png/jpeg/webp), magic-byte checking
- * and the 5 MB cap, so "any signed-in user" is not "any file".
+ * and the 5 MB cap, so "any signed-in user" is not "any file", and
+ * checkImageQuota bounds how many of those files one account can store, so it
+ * is not "any number of files" either.
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -34,12 +37,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No file received." }, { status: 400 });
   }
 
+  // Checked before the bytes are written, so a rejected upload costs no disk.
+  const quota = await checkImageQuota(session.user.id, file.size, session.user.role);
+  if (!quota.ok) {
+    return NextResponse.json(
+      { error: quota.error },
+      { status: 429, headers: { "Retry-After": String(quota.retryAfterSeconds) } },
+    );
+  }
+
   const saved = await saveUpload("images", file);
   if (!saved.ok) {
     return NextResponse.json({ error: saved.error }, { status: 400 });
   }
 
-  await prisma.imageUpload.create({
+  const row = await prisma.imageUpload.create({
     data: {
       fileName: saved.fileName,
       originalName: file.name.slice(0, 255) || "pasted-image",
@@ -47,7 +59,18 @@ export async function POST(request: Request) {
       size: saved.size,
       uploaderId: session.user.id,
     },
+    select: { id: true, uploaderId: true, fileName: true, size: true, createdAt: true },
   });
+
+  // The pre-check couldn't see the other requests in this burst; this one can.
+  // It undoes the upload if too many arrived at once.
+  const settled = await reconcileImageQuota(row, session.user.role);
+  if (!settled.ok) {
+    return NextResponse.json(
+      { error: settled.error },
+      { status: 429, headers: { "Retry-After": String(settled.retryAfterSeconds) } },
+    );
+  }
 
   // The editor stores only this path; the bytes never touch the database.
   return NextResponse.json({

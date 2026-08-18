@@ -231,6 +231,9 @@ export function RichTextEditor({
           | null;
         if (!res.ok || !data?.url) {
           toast.error(data?.error ?? "Couldn't upload that image.");
+          // Over quota: every remaining file in this batch would be refused
+          // too, so stop rather than firing a toast per image.
+          if (res.status === 429) break;
           continue;
         }
         editorRef.current
