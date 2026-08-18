@@ -31,8 +31,8 @@ first upload.
 ## 2. Hostinger — create the web app (~10 min)
 
 1. hPanel → **Websites → Add website → Web app** (the Node.js flow).
-2. **Domain**: choose `avixdigital.com` and enter subdomain `portal` →
-   the app will live at `portal.avixdigital.com` (DNS is wired automatically
+2. **Domain**: choose `avixdigital.com` and enter subdomain `admin` →
+   the app will live at `admin.avixdigital.com` (DNS is wired automatically
    since the domain is on the same account).
 3. **Source** — either works:
    - **GitHub** (preferred — pushes auto-deploy): connect the
@@ -52,17 +52,27 @@ first upload.
 | `DATABASE_URL` | Supabase *Transaction pooler* string + `?pgbouncer=true&connection_limit=1` |
 | `DIRECT_URL` | Supabase *Direct connection* string |
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 32` (any long random string) |
-| `BETTER_AUTH_URL` | `https://portal.avixdigital.com` |
-| `NEXT_PUBLIC_APP_URL` | `https://portal.avixdigital.com` |
+| `BETTER_AUTH_URL` | `https://admin.avixdigital.com` |
+| `NEXT_PUBLIC_APP_URL` | `https://admin.avixdigital.com` |
 | `RESEND_API_KEY` | your `re_...` key |
 | `EMAIL_FROM` | `Avix Digital <portal@avixdigital.com>` |
 | `ADMIN_NOTIFICATION_EMAIL` | `akibzawayed0079@gmail.com` |
 | `SUPABASE_URL` | Supabase Project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service_role key |
 | `SUPABASE_STORAGE_BUCKET` | `uploads` |
+| `CRON_SECRET` | `openssl rand -hex 32` — **required**, see §5 |
 | `SEED_ADMIN_EMAIL` | `akibzawayed0079@gmail.com` |
 | `SEED_ADMIN_PASSWORD` | a strong password — this becomes your admin login |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional — for Google sign-in |
+| `STORAGE_BACKEND` | leave **unset** on this host — see the note below |
+
+**Where uploaded files go.** `src/lib/uploads.ts` sends every upload (invoice
+PDFs, editor images, deliverables) to Supabase Storage whenever `SUPABASE_URL`
+and `SUPABASE_SERVICE_ROLE_KEY` are both present. That is what you want here:
+Hostinger's app directory is replaced on redeploy, so anything written to local
+disk disappears with the next push. Set `STORAGE_BACKEND=disk` **only** on a VPS
+with a persistent volume, and pair it with an absolute `UPLOAD_DIR` outside the
+deploy directory (`/home/<user>/avix-uploads`, never the default `./uploads`).
 
 6. **Deploy.** The build log should show Prisma migrations applying, then the
    Next.js build. On first boot the super admin account is created
@@ -85,7 +95,7 @@ local uploads. Hostinger installs dependencies and builds from it.
 
 ## 4. After it's live — checklist
 
-- [ ] `https://portal.avixdigital.com` loads with HTTPS
+- [ ] `https://admin.avixdigital.com` loads with HTTPS
 - [ ] Log in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`
 - [ ] Add a test client with an email you control → invite email arrives
 - [ ] Upload an invoice PDF → download works → **redeploy the app** →
@@ -101,14 +111,61 @@ it on a schedule and the project simply never idles:
 
 1. Sign up free at [uptimerobot.com](https://uptimerobot.com) →
    **Add New Monitor** → type **HTTP(s)**.
-2. URL: `https://portal.avixdigital.com/api/health` — interval **5 minutes**.
+2. URL: `https://admin.avixdigital.com/api/health` — interval **5 minutes**.
 3. Add your email as the alert contact.
 
 You get two things at once: the database never pauses, and you're emailed
 within minutes if the portal ever goes down. (Alternative without a third
 party: hPanel → Advanced → **Cron Jobs** →
-`curl -fsS https://portal.avixdigital.com/api/health > /dev/null`, every 5
+`curl -fsS https://admin.avixdigital.com/api/health > /dev/null`, every 5
 minutes.)
+
+## 6. Scheduled duties pinger (required for anything time-based)
+
+Meeting reminders, retainer generation, scheduled-campaign drains and
+overdue-invoice chasing all live in `runDueDuties()`. It fires from two places:
+lazily on admin page loads (throttled to 15 minutes) and from
+`/api/cron/duties`. Without the second one, "scheduled for 3am" really means
+"whenever an admin next opens the app" — so a campaign can sit unsent all night.
+
+1. Set `CRON_SECRET` in hPanel to the output of `openssl rand -hex 32`.
+   Without it the route answers **503** and nothing is scheduled.
+2. Point a 15-minute pinger at `/api/cron/duties`. The route accepts the secret
+   two ways — **prefer the header**, because a query string is written verbatim
+   into the web server's access log and into the monitoring vendor's stored
+   check history:
+
+   ```bash
+   curl -fsS -H "x-cron-secret: $CRON_SECRET" \
+     https://admin.avixdigital.com/api/cron/duties
+   ```
+
+   Use that as an hPanel cron job (hPanel → Advanced → **Cron Jobs**). If you
+   would rather use UptimeRobot and your plan cannot set a custom header, the
+   `?key=<CRON_SECRET>` form works too — just treat that secret as logged, and
+   rotate it if the monitor is ever shared.
+
+Every duty is stamp-first and idempotent, so calling it repeatedly — or twice at
+once — is safe; a second call simply finds nothing left to do.
+
+## 7. Rotating a leaked secret
+
+Any of these leaking is a real incident, and each has its own blast radius.
+Rotate in this order, redeploying after each so the running app picks it up.
+
+| Secret | What it lets someone do | Rotate at |
+|---|---|---|
+| `SEED_ADMIN_PASSWORD` | Sign in as you at `/login` | Portal → Settings → Profile → change password, then update the env var to match |
+| `SUPABASE_SERVICE_ROLE_KEY` | Read/write **every** table, bypassing row-level security | Supabase → Project Settings → API Keys → new secret key → paste → redeploy → revoke the old one |
+| `BETTER_AUTH_SECRET` | Forge session cookies for any account | Generate a new one; every existing session is signed out |
+| `DATABASE_URL` password | Direct database access | Supabase → Project Settings → Database → reset password → update `DATABASE_URL` **and** `DIRECT_URL` |
+| `RESEND_API_KEY` | Send mail as your domain | Resend → API Keys → revoke + create |
+| `GOOGLE_CLIENT_SECRET` | Impersonate the OAuth app | Google Cloud Console → Credentials → reset secret |
+| `CRON_SECRET` | Trigger the duties route (low impact — idempotent) | Generate a new one; update the pinger URL |
+
+`SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET`, `NEXT_PUBLIC_APP_URL` and
+`GOOGLE_CLIENT_ID` are not secrets — they are public identifiers and need no
+rotation.
 
 ## Trade-offs vs the VPS path — and their fixes
 

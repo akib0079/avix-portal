@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template, which carries no values — only the variable names and
+# what each one does. Keeping it ignored meant the one file documenting the
+# required configuration never reached the repo.
+!.env.example
 
 # vercel
 .vercel
