@@ -40,6 +40,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Star,
+  ListTodo,
 } from "lucide-react";
 
 /** Only the admin shell varies by role; the portal is always CLIENT. */
@@ -58,6 +59,7 @@ type NavItem = {
 const adminNav: NavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutGrid },
   { href: "/admin/my-work", label: "My Work", icon: CircleCheckBig },
+  { href: "/admin/tasks", label: "Tasks", icon: ListTodo },
   { href: "/admin/reports", label: "Reports", icon: ChartNoAxesCombined },
   { href: "/admin/leads", label: "Leads", icon: Target },
   { href: "/admin/proposals", label: "Proposals", icon: FileSignature },
@@ -78,6 +80,7 @@ const adminNav: NavItem[] = [
  */
 const staffNav: NavItem[] = [
   { href: "/admin/my-work", label: "My Work", icon: CircleCheckBig },
+  { href: "/admin/tasks", label: "Tasks", icon: ListTodo },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare, badge: "messages" },
 ];

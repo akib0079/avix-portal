@@ -118,6 +118,17 @@ export function applyPersistentEnv(): Secrets {
       `[env] ignoring blank/placeholder values in the persistent secrets file: ${skipped.join(", ")} — using the host environment for these instead.`,
     );
   }
+  // Say out loud which database this file just pointed the process at.
+  //
+  // The override is silent by design and correct on the host, but on a
+  // developer machine it means any script run with NODE_ENV set to anything
+  // other than "development" silently talks to PRODUCTION — the local
+  // DATABASE_URL is replaced before Prisma ever sees it. That has happened.
+  // Host only: never the credentials.
+  if (secrets.DATABASE_URL) {
+    const host = secrets.DATABASE_URL.replace(/^.*@/, "").replace(/[/?].*$/, "");
+    console.warn(`[env] persistent secrets file is directing DATABASE_URL at ${host}`);
+  }
   return secrets;
 }
 

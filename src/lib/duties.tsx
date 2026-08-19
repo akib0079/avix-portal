@@ -426,6 +426,138 @@ async function chaseOverdueInvoices(now: Date): Promise<void> {
 }
 
 /** Entry point — throttled, never throws (a duty failure must not 500 a page). */
+/**
+ * Turns things the app already knows into to-dos.
+ *
+ * The portal has always been able to tell you an invoice is 14 days late, a
+ * lead has sat unanswered since Tuesday, a proposal expires on Friday. Until
+ * now it could only email about it, which means the reminder lives in an inbox
+ * you have already archived. These become real tasks you can tick, snooze or
+ * reassign.
+ *
+ * Every task carries a systemKey unique per source row, and the column is
+ * @unique, so this is safe to run on the 15-minute cadence: the second run
+ * finds the existing task instead of adding a duplicate. A task the user
+ * deleted stays deleted only until the underlying condition changes — which is
+ * the correct behaviour for "this invoice is still unpaid".
+ */
+async function generateSystemTasks(now: Date): Promise<void> {
+  const owner = await prisma.user.findFirst({
+    where: { role: "ADMIN", status: "ACTIVE" },
+    select: { id: true },
+  });
+  if (!owner) return;
+
+  type Seed = {
+    systemKey: string;
+    title: string;
+    priority: "HIGH" | "MEDIUM" | "LOW";
+    dueDate: Date;
+    clientId?: string | null;
+    projectId?: string | null;
+    invoiceId?: string | null;
+    leadId?: string | null;
+  };
+  const seeds: Seed[] = [];
+
+  // Invoices past their due date and still unpaid.
+  const overdue = await prisma.invoice.findMany({
+    // Same status set the email chaser uses, so the task and the chase email
+    // never disagree about which invoices are actually outstanding.
+    where: {
+      status: { in: ["SENT", "IN_REVIEW", "PARTIALLY_PAID"] },
+      dueDate: { not: null, lt: now },
+    },
+    select: { id: true, invoiceNumber: true, clientId: true, dueDate: true, amount: true },
+    take: 50,
+  });
+  for (const inv of overdue) {
+    seeds.push({
+      systemKey: `invoice-overdue:${inv.id}`,
+      title: `Chase payment on ${inv.invoiceNumber}`,
+      priority: "HIGH",
+      dueDate: now,
+      clientId: inv.clientId,
+      invoiceId: inv.id,
+    });
+  }
+
+  // Leads with a follow-up date that has arrived, and no reply logged.
+  const dueLeads = await prisma.lead.findMany({
+    where: {
+      stage: { notIn: ["WON", "LOST"] },
+      nextFollowUp: { lte: now },
+    },
+    select: { id: true, name: true, nextFollowUp: true },
+    take: 50,
+  });
+  for (const lead of dueLeads) {
+    seeds.push({
+      systemKey: `lead-followup:${lead.id}:${lead.nextFollowUp?.toISOString().slice(0, 10)}`,
+      title: `Follow up with ${lead.name}`,
+      priority: "HIGH",
+      dueDate: lead.nextFollowUp ?? now,
+      leadId: lead.id,
+    });
+  }
+
+  // Meetings inside the next 24h — a prep task, due before the call.
+  const soon = new Date(now.getTime() + 24 * 60 * 60_000);
+  const meetings = await prisma.meeting.findMany({
+    where: { status: "SCHEDULED", startsAt: { gte: now, lte: soon } },
+    select: { id: true, title: true, startsAt: true, clientId: true },
+    take: 25,
+  });
+  for (const m of meetings) {
+    seeds.push({
+      systemKey: `meeting-prep:${m.id}`,
+      title: `Prep for ${m.title}`,
+      priority: "MEDIUM",
+      dueDate: m.startsAt,
+      clientId: m.clientId,
+    });
+  }
+
+  // Proposals expiring within three days and still unanswered.
+  const expiring = await prisma.proposal.findMany({
+    where: {
+      status: "SENT",
+      expiresAt: { gte: now, lte: new Date(now.getTime() + 3 * 24 * 60 * 60_000) },
+    },
+    select: { id: true, title: true, expiresAt: true },
+    take: 25,
+  });
+  for (const p of expiring) {
+    seeds.push({
+      systemKey: `proposal-expiring:${p.id}`,
+      title: `"${p.title}" expires soon — nudge or extend`,
+      priority: "HIGH",
+      dueDate: p.expiresAt ?? now,
+    });
+  }
+
+  if (seeds.length === 0) return;
+
+  // createMany + skipDuplicates leans on the unique systemKey, so this is one
+  // round trip regardless of how many conditions currently hold.
+  await prisma.task.createMany({
+    data: seeds.map((seed) => ({
+      systemKey: seed.systemKey,
+      title: seed.title,
+      priority: seed.priority,
+      dueDate: seed.dueDate,
+      origin: "SYSTEM" as const,
+      assigneeId: owner.id,
+      createdById: owner.id,
+      clientId: seed.clientId ?? null,
+      projectId: seed.projectId ?? null,
+      invoiceId: seed.invoiceId ?? null,
+      leadId: seed.leadId ?? null,
+    })),
+    skipDuplicates: true,
+  });
+}
+
 export async function runDueDuties(): Promise<void> {
   try {
     const now = new Date();
@@ -442,6 +574,7 @@ export async function runDueDuties(): Promise<void> {
     await generateRetainerInvoices(now);
     await chaseOverdueInvoices(now);
     await drainCampaigns(now);
+    await generateSystemTasks(now);
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
   }
