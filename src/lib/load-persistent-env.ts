@@ -81,11 +81,42 @@ export function getPersistentSecrets(): Secrets {
   return cache;
 }
 
+/**
+ * Whether a value from the secrets file may override the host's environment.
+ *
+ * The file is hand-maintained on the server, and the whole point of it is to
+ * WIN over the panel — which means a half-filled one silently breaks whatever
+ * it half-fills. Two values must never win: an empty string (a key left blank,
+ * or a line truncated to `KEY=`) and an unfilled template placeholder like
+ * `<key-from-resend-dashboard>`, which is what shipped in the template and is
+ * easy to leave behind. Both are indistinguishable from "not configured", and
+ * "not configured" should defer to the panel rather than overwrite it.
+ *
+ * This is not hypothetical: a placeholder RESEND_API_KEY here overrode a
+ * perfectly good panel key and made every outbound email fail with
+ * "API key is invalid", while the panel still showed the correct value.
+ */
+function isUsable(value: string): boolean {
+  if (!value) return false;
+  if (/^<.*>$/.test(value.trim())) return false;
+  return true;
+}
+
 /** Applies the persistent secrets over process.env and returns them. */
 export function applyPersistentEnv(): Secrets {
   const secrets = getPersistentSecrets();
+  const skipped: string[] = [];
   for (const [key, value] of Object.entries(secrets)) {
+    if (!isUsable(value)) {
+      skipped.push(key);
+      continue;
+    }
     process.env[key] = value;
+  }
+  if (skipped.length > 0) {
+    console.warn(
+      `[env] ignoring blank/placeholder values in the persistent secrets file: ${skipped.join(", ")} — using the host environment for these instead.`,
+    );
   }
   return secrets;
 }
