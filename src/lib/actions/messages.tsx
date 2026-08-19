@@ -68,6 +68,8 @@ async function alreadyNotified(input: {
   projectId: string | null;
   /** Which read-stamp proves the recipient is currently looking. */
   readField: "readByAdminAt" | "readByClientAt";
+  /** The thread's own deep link — scopes the quiet window to this thread. */
+  threadLink: string;
 }): Promise<boolean> {
   const since = new Date(Date.now() - NOTIFY_QUIET_MINUTES * 60_000);
 
@@ -76,6 +78,11 @@ async function alreadyNotified(input: {
       where: {
         userId: input.recipientId,
         type: "MESSAGE_RECEIVED",
+        // Scoped by thread. Without the link filter one client writing in
+        // silences the email for every other client for half an hour — on a
+        // single-client test that reads as "the quiet window works", and with
+        // a full roster it reads as "messages go missing".
+        link: input.threadLink,
         createdAt: { gte: since },
       },
       select: { id: true },
@@ -204,6 +211,7 @@ export async function sendMessage(
           clientId: client.id,
           projectId,
           readField: "readByAdminAt",
+          threadLink: adminLink,
         })
       : false;
     if (admins.length > 0) {
@@ -240,6 +248,7 @@ export async function sendMessage(
       clientId: client.id,
       projectId,
       readField: "readByClientAt",
+      threadLink: clientLink,
     });
 
     // Admin → notify the client. The in-app row is cheap; the email is not.
