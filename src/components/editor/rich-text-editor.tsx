@@ -189,6 +189,9 @@ export function RichTextEditor({
   className,
   onSubmit,
   compact = false,
+  collapsed = false,
+  onFocus,
+  onBlur,
 }: {
   value?: JSONContent | null;
   onChange: (json: JSONContent) => void;
@@ -199,6 +202,14 @@ export function RichTextEditor({
   onSubmit?: () => void;
   /** Shorter default height, for a message composer rather than a document. */
   compact?: boolean;
+  /**
+   * Collapsed: one line, no toolbar. The composer opens on focus, so a phone
+   * screen isn't handed a two-row toolbar and five blank lines before anyone
+   * has decided to type.
+   */
+  collapsed?: boolean;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }) {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
@@ -214,6 +225,13 @@ export function RichTextEditor({
   useEffect(() => {
     submitRef.current = onSubmit;
   }, [onSubmit]);
+  // Same reason as submitRef: tiptap binds these once, at editor creation.
+  const onFocusRef = useRef(onFocus);
+  const onBlurRef = useRef(onBlur);
+  useEffect(() => {
+    onFocusRef.current = onFocus;
+    onBlurRef.current = onBlur;
+  }, [onFocus, onBlur]);
 
   /**
    * Sends each file to /api/uploads/images and inserts the returned URL. The
@@ -266,12 +284,18 @@ export function RichTextEditor({
     // which React refuses to serialize into server actions ("temporary
     // client reference"). Re-cloning yields plain Object.prototype objects.
     onUpdate: ({ editor }) => onChange(JSON.parse(JSON.stringify(editor.getJSON()))),
+    onFocus: () => onFocusRef.current?.(),
+    onBlur: () => onBlurRef.current?.(),
     editorProps: {
       attributes: {
         class: compact
-          // Compact starts at two lines and grows to the cap as you type.
-          // Reserving five lines up front just moves the conversation off screen.
-          ? "rich-text px-3 py-2 min-h-14 max-h-56 overflow-y-auto"
+          // Compact starts at two lines and grows to the cap as you type;
+          // collapsed is a single line until focus. Reserving five lines up
+          // front just moves the conversation off screen.
+          ? cn(
+              "rich-text px-3 py-2 max-h-56 overflow-y-auto",
+              collapsed ? "min-h-9" : "min-h-14",
+            )
           : "rich-text px-3 py-2 min-h-32 max-h-96 overflow-y-auto",
       },
       // Enter sends, Shift+Enter (and the modifier combos) keep their meaning.
@@ -391,6 +415,7 @@ export function RichTextEditor({
         className,
       )}
     >
+      {!collapsed && (
       <Toolbar
         editor={editor}
         allowImages={allowImages}
@@ -402,6 +427,7 @@ export function RichTextEditor({
         }}
         uploading={uploading}
       />
+      )}
       <input
         ref={fileInputRef}
         type="file"

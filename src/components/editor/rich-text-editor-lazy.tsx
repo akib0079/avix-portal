@@ -23,6 +23,9 @@ type RichTextEditorProps = {
   className?: string;
   onSubmit?: () => void;
   compact?: boolean;
+  collapsed?: boolean;
+  onFocus?: () => void;
+  onBlur?: () => void;
 };
 
 function EditorPlaceholder({ className }: { className?: string }) {
@@ -32,7 +35,12 @@ function EditorPlaceholder({ className }: { className?: string }) {
       aria-busy="true"
       aria-label="Loading editor"
     >
-      {/* Mirrors the real toolbar + content box so there is no layout shift. */}
+      {/* Mirrors the real toolbar + content box so there is no layout shift.
+          It cannot vary with `collapsed`: next/dynamic's `loading` callback
+          receives none of the component's props, and rendering two dynamic
+          components to work around that would remount the editor whenever the
+          composer opened — dropping focus and any half-typed message. A brief
+          settle on the very first load is the cheaper trade. */}
       <div className="flex items-center gap-1 border-b px-2 py-1.5">
         {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} className="size-7 animate-pulse rounded bg-muted" />

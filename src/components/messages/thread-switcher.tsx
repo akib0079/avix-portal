@@ -83,11 +83,11 @@ export function ThreadSwitcher({
       // The floor is gated on available HEIGHT, not width. A phone held
       // landscape is ~375px tall: a 22rem minimum would put us straight back to
       // a pane taller than its container, which is the bug this replaced.
-      className="grid h-[calc(100dvh-10rem)] min-h-0 grid-cols-1 gap-4 [@media(min-height:640px)]:min-h-[22rem] lg:grid-cols-[280px_1fr] [@media(min-width:1024px)_and_(min-height:800px)]:min-h-[560px]"
+      className="grid h-[calc(100dvh-5rem)] sm:h-[calc(100dvh-10rem)] min-h-0 grid-cols-1 gap-4 [@media(min-height:640px)]:min-h-[22rem] lg:grid-cols-[280px_1fr] [@media(min-width:1024px)_and_(min-height:800px)]:min-h-[560px]"
       // Belt and braces for the keyboard: the meta tag handles browsers that
       // support it, this handles the rest. Where both apply the inset reads 0,
       // so nothing is subtracted twice.
-      style={keyboard ? { height: `calc(100dvh - 10rem - ${keyboard}px)` } : undefined}
+      style={keyboard ? { height: `calc(100dvh - 5rem - ${keyboard}px)` } : undefined}
     >
       {/* Thread list — scrolls on its own, so it stays put beside a long chat. */}
       <aside

@@ -96,8 +96,8 @@ export function AdminInbox({
       // already-scrolling message list. Floors are gated on available height,
       // and the keyboard inset keeps the composer clear on phones whose browser
       // won't shrink the viewport for it.
-      className="grid h-[calc(100dvh-10rem)] min-h-0 grid-cols-1 gap-4 [@media(min-height:640px)]:min-h-[22rem] [@media(min-width:1024px)_and_(min-height:800px)]:min-h-[560px] lg:grid-cols-[340px_1fr]"
-      style={keyboard ? { height: `calc(100dvh - 10rem - ${keyboard}px)` } : undefined}
+      className="grid h-[calc(100dvh-5rem)] sm:h-[calc(100dvh-10rem)] min-h-0 grid-cols-1 gap-4 [@media(min-height:640px)]:min-h-[22rem] [@media(min-width:1024px)_and_(min-height:800px)]:min-h-[560px] lg:grid-cols-[340px_1fr]"
+      style={keyboard ? { height: `calc(100dvh - 5rem - ${keyboard}px)` } : undefined}
     >
       {/* Conversation list — its own scroll container, so it never runs away
           with the page. */}

@@ -65,6 +65,12 @@ export function MessageThread({
   const [loadingOlder, setLoadingOlder] = useState(false);
   /** Team-only note mode — admins and staff only. */
   const [internal, setInternal] = useState(false);
+  /**
+   * The composer opens on focus and folds back when it is left empty.
+   * A toolbar and five blank lines are a fair trade for a desktop margin and a
+   * bad one on a phone, where they cost a quarter of the conversation.
+   */
+  const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<MessageView[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
 
@@ -207,6 +213,7 @@ export function MessageThread({
       readByClientAt: null,
     };
     setDraft(null);
+    setExpanded(false);
     setResetKey((k) => k + 1);
     setSending(true);
     stickToBottom.current = true;
@@ -336,7 +343,7 @@ export function MessageThread({
                   )}
                   <div
                     className={cn(
-                      "inline-block rounded-2xl px-4 py-2.5 text-left transition-opacity",
+                      "inline-block rounded-2xl px-3 py-2 text-left text-[13px] transition-opacity sm:px-4 sm:py-2.5 sm:text-sm",
                       m.visibility === "INTERNAL"
                         ? "border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-950/40"
                         : mine
@@ -402,6 +409,11 @@ export function MessageThread({
         placeholder="Write a message…"
         allowImages
         compact={fill}
+        collapsed={fill && !expanded && !draft}
+        onFocus={() => setExpanded(true)}
+        // Only fold back when nothing was written — collapsing a half-typed
+        // message the moment focus wanders would be its own bug.
+        onBlur={() => { if (!draftRef.current) setExpanded(false); }}
         onSubmit={onSend}
       />
       {/* One control row, not two: the note toggle used to own a line of its
