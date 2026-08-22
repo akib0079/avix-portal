@@ -280,7 +280,11 @@ export function MessageThread({
                   </span>
                 )}
 
-                <div className={cn("max-w-[78%] min-w-0", mine && "text-right")}>
+                {/* 78% of a phone-width column, minus a 32px avatar and its gap,
+                    leaves a bubble under 250px. Wider below sm — the reason to
+                    cap it at all is stopping a long line spanning a desktop
+                    pane, which is not a problem a phone has. */}
+                <div className={cn("max-w-[85%] min-w-0 sm:max-w-[78%]", mine && "text-right")}>
                   {!grouped && (
                     <p
                       className={cn(

@@ -61,14 +61,16 @@ export function ChatWidget({
         <button
           type="button"
           aria-label="Open project chat"
-          className="group fixed right-5 bottom-5 z-40 flex items-center gap-2.5 rounded-full border border-primary/20 bg-sidebar py-2.5 pr-5 pl-3.5 shadow-lg shadow-primary/25 transition-transform hover:scale-105"
+          className="group fixed right-4 bottom-4 z-40 flex items-center gap-2.5 rounded-full border border-primary/20 bg-sidebar p-3 shadow-lg shadow-primary/25 transition-transform hover:scale-105 sm:right-5 sm:bottom-5 sm:py-2.5 sm:pr-5 sm:pl-3.5"
         >
           {open ? (
             <X className="size-6 text-white" />
           ) : (
             <AvixBot size={22} />
           )}
-          <span className="text-left leading-tight">
+          {/* The strapline is helpful on a desktop margin and pure clutter
+              parked over a phone screen, so only the icon survives below sm. */}
+          <span className="hidden text-left leading-tight sm:block">
             <span className="block text-sm font-semibold text-white">
               {open ? "Close" : "Chat with us"}
             </span>
@@ -86,10 +88,10 @@ export function ChatWidget({
         side="right"
         // Wider than the old max-w-md: briefs and links are the normal traffic
         // here, and 28rem forced everything into a narrow column.
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg lg:max-w-2xl"
+        className="flex h-dvh max-h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg lg:max-w-2xl"
         aria-describedby={undefined}
       >
-        <div className="flex items-center gap-3 border-b bg-sidebar px-5 py-4">
+        <div className="flex items-center gap-3 border-b bg-sidebar px-4 py-3 sm:px-5 sm:py-4">
           <AvixBot size={26} />
           <div>
             <SheetTitle className="font-heading text-base text-white">
@@ -118,7 +120,7 @@ export function ChatWidget({
             href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2.5 border-b bg-emerald-50 dark:bg-emerald-950/40 px-5 py-3 text-sm text-emerald-800 dark:text-emerald-300 transition-colors hover:bg-emerald-100 dark:bg-emerald-900/40"
+            className="flex items-center gap-2.5 border-b bg-emerald-50 dark:bg-emerald-950/40 px-4 py-2.5 sm:px-5 sm:py-3 text-sm text-emerald-800 dark:text-emerald-300 transition-colors hover:bg-emerald-100 dark:bg-emerald-900/40"
           >
             <WhatsappIcon className="size-4.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
             <span>
@@ -128,7 +130,7 @@ export function ChatWidget({
         )}
         {/* min-h-0 lets the thread's own scroll area shrink; without it the
             flex child grows to its content and the composer scrolls away. */}
-        <div className="min-h-0 flex-1 px-4 pt-3 pb-4">
+        <div className="min-h-0 flex-1 px-2 pt-2 pb-2 sm:px-4 sm:pt-3 sm:pb-4">
           <MessageThread
             projectId={projectId}
             clientId={clientId}

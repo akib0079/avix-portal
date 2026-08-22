@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Inter } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -29,6 +29,20 @@ async function branding(): Promise<Branding> {
     return NO_BRANDING;
   }
 }
+
+/**
+ * `interactive-widget=resizes-content` makes the on-screen keyboard shrink the
+ * viewport instead of sliding the page up over itself. Without it a chat
+ * composer docked to the bottom of a full-height flex column disappears behind
+ * the keyboard the moment you tap it — which is exactly when you need to see
+ * it. Everything else here is the Next default, restated because declaring a
+ * viewport export replaces it wholesale.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  interactiveWidget: "resizes-content",
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const b = await branding();

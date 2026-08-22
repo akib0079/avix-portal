@@ -71,7 +71,13 @@ export function ThreadSwitcher({
   const active = threads.find((t) => t.id === selected) ?? threads[0];
 
   return (
-    <div className="grid h-[calc(100dvh-13rem)] min-h-[560px] grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+    // Height is the whole game on a phone. min-h-[560px] applied at every
+    // width, so on a 667px-tall handset the pane was ~100px taller than the
+    // space left for it: the page itself scrolled, the composer sat below the
+    // fold, and you got two nested scroll areas fighting each other. The floor
+    // is now only enforced where there is room for it, and the mobile
+    // subtraction is smaller because the header above is smaller too.
+    <div className="grid h-[calc(100dvh-11.5rem)] min-h-[22rem] grid-cols-1 gap-4 lg:h-[calc(100dvh-13rem)] lg:min-h-[560px] lg:grid-cols-[280px_1fr]">
       {/* Thread list — scrolls on its own, so it stays put beside a long chat. */}
       <aside
         className={cn(
@@ -130,7 +136,7 @@ export function ThreadSwitcher({
           mobilePane === "list" && "hidden lg:flex",
         )}
       >
-        <div className="flex items-start gap-3 border-b px-5 py-4">
+        <div className="flex items-center gap-2 border-b px-3 py-2.5 sm:items-start sm:gap-3 sm:px-5 sm:py-4">
           <Button
             variant="ghost"
             size="icon"
@@ -142,13 +148,13 @@ export function ThreadSwitcher({
           </Button>
           <div className="min-w-0">
             <h2 className="truncate font-heading text-lg font-semibold">{active.label}</h2>
-            <p className="text-sm text-muted-foreground">
+            <p className="hidden text-sm text-muted-foreground sm:block">
               You&apos;re messaging the Avix Digital team directly — we usually reply
               within one business day.
             </p>
           </div>
         </div>
-        <div className="min-h-0 flex-1 px-4 pt-2 pb-4">
+        <div className="min-h-0 flex-1 px-2 pt-2 pb-2 sm:px-4 sm:pb-4">
           {isLoading ? (
             <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> Loading conversation…
