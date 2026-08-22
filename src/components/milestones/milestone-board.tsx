@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   KeyboardSensor,
   useSensor,
   useSensors,
@@ -291,8 +292,15 @@ export function MilestoneBoard({
     setItems(milestones);
   }
 
+  // Mouse and touch need different activation, and one PointerSensor cannot
+  // serve both. dnd-kit's pointer listeners set `touch-action: none` on every
+  // draggable, so on a phone — where cards cover most of the board — a finger
+  // landing on a card could not scroll the page: a 5px move became a drag.
+  // Distance activation for the mouse, a 200ms long-press for touch, so a
+  // swipe scrolls and a deliberate hold picks the card up.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
