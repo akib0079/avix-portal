@@ -13,6 +13,7 @@ import Link from "next/link";
 import { X, Maximize2 } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
 import { LocalTime } from "@/components/local-time";
+import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 
 /**
  * Floating support-style chat: a fixed launcher bubble (bottom-right) that
@@ -49,6 +50,7 @@ export function ChatWidget({
   canWriteInternal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const keyboard = useKeyboardInset();
   // Somewhere to go when the panel is too small for the conversation.
   const fullThreadHref =
     viewerRole === "ADMIN"
@@ -89,6 +91,10 @@ export function ChatWidget({
         // Wider than the old max-w-md: briefs and links are the normal traffic
         // here, and 28rem forced everything into a narrow column.
         className="flex h-dvh max-h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg lg:max-w-2xl"
+        // The panel is fixed and pinned inset-y-0, so it cannot notice the
+        // keyboard on its own. Shrinking it keeps the docked composer above the
+        // keys on the browsers the viewport meta doesn't reach.
+        style={keyboard ? { height: `calc(100dvh - ${keyboard}px)` } : undefined}
         aria-describedby={undefined}
       >
         <div className="flex items-center gap-3 border-b bg-sidebar px-4 py-3 sm:px-5 sm:py-4">
