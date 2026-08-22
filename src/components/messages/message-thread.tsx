@@ -294,13 +294,13 @@ export function MessageThread({
               )}
 
               <SwipeToReply onReply={() => quoteReply(m)}>
-              <div
-                className={cn(
-                  "group/msg flex gap-2.5",
-                  grouped ? "mt-0.5" : "mt-2.5",
-                  mine && "flex-row-reverse",
-                )}
-              >
+                <div
+                  className={cn(
+                    "group/msg flex gap-2.5",
+                    grouped ? "mt-0.5" : "mt-2.5",
+                    mine && "flex-row-reverse",
+                  )}
+                >
                 {grouped ? (
                   <span className="size-8 shrink-0" aria-hidden />
                 ) : (
@@ -377,8 +377,8 @@ export function MessageThread({
                     onReply={() => quoteReply(m)}
                     align={mine ? "right" : "left"}
                   />
+                  </div>
                 </div>
-              </div>
               </SwipeToReply>
             </div>
           );

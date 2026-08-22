@@ -19,8 +19,6 @@ import { Reply, Copy, Check } from "lucide-react";
 
 /** Past this many px the release fires a reply. */
 const TRIGGER_PX = 56;
-/** Never let the bubble travel further than this, however hard you pull. */
-const MAX_PX = 80;
 /** Horizontal travel before we claim the gesture from the scroller. */
 const CLAIM_PX = 10;
 
