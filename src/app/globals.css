@@ -156,6 +156,20 @@
   }
   html {
     @apply font-sans;
+    /* Safari inflates text in landscape unless told not to. Rotating a phone
+       mid-conversation should not resize the conversation. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  /* Kills the ~300ms wait Safari holds every tap for, in case it turns out to
+     be a double-tap-to-zoom. On a chat screen that delay is the difference
+     between "app" and "website". */
+  button,
+  a,
+  [role="button"],
+  label,
+  summary {
+    touch-action: manipulation;
   }
   h1,
   h2,
@@ -241,7 +255,32 @@
 
 /* Tiptap editor area */
 .tiptap {
-  @apply min-h-32 outline-none;
+  /* No min-height here. The instance sets its own through editorProps — 9 for
+     the collapsed composer, 14 compact, 32 for a document — and a blanket
+     min-h-32 on this class silently won that fight, so the "collapsed"
+     composer still reserved eight rems of nothing. */
+  @apply outline-none;
+}
+
+/*
+ * iOS Safari zooms the whole page whenever a focused editable computes to
+ * under 16px, and that rule covers contenteditable, not just <input>. The
+ * editor body is text-sm, so tapping the composer on an iPhone zoomed the
+ * chat. Only the *editable* is bumped: the viewer shares .rich-text and is
+ * never focused, so message bubbles keep their smaller, denser type.
+ */
+@media (max-width: 639px) {
+  .rich-text[contenteditable="true"],
+  .rich-text[contenteditable="true"] p,
+  .rich-text[contenteditable="true"] h3,
+  .rich-text[contenteditable="true"] li {
+    font-size: 16px;
+  }
+  .rich-text[contenteditable="true"] code {
+    /* 0.8em of 16px is 12.8px, which zooms again the moment the caret lands
+       inside an inline code span. */
+    font-size: 16px;
+  }
 }
 .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

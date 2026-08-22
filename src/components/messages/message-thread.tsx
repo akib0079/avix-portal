@@ -463,7 +463,10 @@ export function MessageThread({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto px-1 pb-4"
+        // overscroll-contain stops the bounce at the top of the thread from
+        // scrolling the page behind it — or triggering pull-to-refresh, which
+        // reloads the conversation you were reading.
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-4"
       >
         {list}
       </div>
