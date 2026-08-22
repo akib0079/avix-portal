@@ -542,7 +542,7 @@ export function InvoiceForm({
 
                 <div className="space-y-2">
                   {fields.map((row, index) => (
-                    <div key={row.id} className="flex items-start gap-2">
+                    <div key={row.id} className="flex flex-col gap-2 sm:flex-row sm:items-start">
                       <FormField
                         control={form.control}
                         name={`items.${index}.description`}
@@ -561,67 +561,74 @@ export function InvoiceForm({
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={form.control}
-                        name={`items.${index}.qty`}
-                        render={({ field }) => (
-                          <FormItem className="w-16">
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={0.01}
-                                step="0.01"
-                                placeholder="Qty"
-                                value={(field.value as number | string) ?? ""}
-                                onChange={(e) =>
-                                  field.onChange(
-                                    e.target.value === ""
-                                      ? ("" as unknown as number)
-                                      : Number(e.target.value),
-                                  )
-                                }
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name={`items.${index}.rate`}
-                        render={({ field }) => (
-                          <FormItem className="w-28">
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                placeholder="Rate"
-                                value={(field.value as number | string) ?? ""}
-                                onChange={(e) =>
-                                  field.onChange(
-                                    e.target.value === ""
-                                      ? ("" as unknown as number)
-                                      : Number(e.target.value),
-                                  )
-                                }
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="mt-0.5 size-9 shrink-0 text-destructive hover:text-destructive"
-                        disabled={fields.length === 1}
-                        onClick={() => remove(index)}
-                      >
-                        <Trash2 className="size-4" />
-                        <span className="sr-only">Remove item</span>
-                      </Button>
+                      {/* Below sm these sit on their own row. In one line the
+                          description gets ~51px on a 375px screen, which is
+                          the invoice's main field reduced to a slit.
+                          `sm:contents` dissolves this wrapper above sm so the
+                          original single-row layout is untouched. */}
+                      <div className="flex items-start gap-2 sm:contents">
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.qty`}
+                          render={({ field }) => (
+                            <FormItem className="flex-1 sm:w-16 sm:flex-none">
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={0.01}
+                                  step="0.01"
+                                  placeholder="Qty"
+                                  value={(field.value as number | string) ?? ""}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      e.target.value === ""
+                                        ? ("" as unknown as number)
+                                        : Number(e.target.value),
+                                    )
+                                  }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.rate`}
+                          render={({ field }) => (
+                            <FormItem className="flex-1 sm:w-28 sm:flex-none">
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  placeholder="Rate"
+                                  value={(field.value as number | string) ?? ""}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      e.target.value === ""
+                                        ? ("" as unknown as number)
+                                        : Number(e.target.value),
+                                    )
+                                  }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="mt-0.5 size-9 shrink-0 text-destructive hover:text-destructive"
+                          disabled={fields.length === 1}
+                          onClick={() => remove(index)}
+                        >
+                          <Trash2 className="size-4" />
+                          <span className="sr-only">Remove item</span>
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
