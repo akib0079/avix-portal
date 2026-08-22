@@ -17,9 +17,17 @@ export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
   | { ok: false; error: string };
 
-function refresh() {
+/**
+ * Revalidate after a mutation.
+ *
+ * `scope: "tasks"` skips the dashboard. Subtask ticks and reorders are the
+ * highest-frequency actions here and change nothing the dashboard shows, so
+ * rebuilding it on every checkbox was pure latency on the path the user feels
+ * most.
+ */
+function refresh(scope: "all" | "tasks" = "all") {
   revalidatePath("/admin/tasks");
-  revalidatePath("/admin");
+  if (scope === "all") revalidatePath("/admin");
 }
 
 /** Local midnight, so "due today" means the whole day and not this instant. */
@@ -229,7 +237,7 @@ export async function addSubtask(input: SubtaskInput): Promise<ActionResult<{ id
     data: { taskId: parsed.data.taskId, title: parsed.data.title, position: count },
     select: { id: true },
   });
-  refresh();
+  refresh("tasks");
   return { ok: true, data: row };
 }
 
@@ -239,14 +247,14 @@ export async function setSubtaskDone(id: string, done: boolean): Promise<ActionR
     where: { id },
     data: { completedAt: done ? new Date() : null },
   });
-  refresh();
+  refresh("tasks");
   return { ok: true };
 }
 
 export async function deleteSubtask(id: string): Promise<ActionResult> {
   await requireTeam();
   await prisma.subtask.delete({ where: { id } });
-  refresh();
+  refresh("tasks");
   return { ok: true };
 }
 
@@ -256,6 +264,6 @@ export async function reorderTasks(ids: string[]): Promise<ActionResult> {
   await prisma.$transaction(
     ids.map((id, position) => prisma.task.update({ where: { id }, data: { position } })),
   );
-  refresh();
+  refresh("tasks");
   return { ok: true };
 }

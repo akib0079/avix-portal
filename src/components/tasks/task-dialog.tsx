@@ -116,9 +116,8 @@ function TaskForm({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div>
-            <Label htmlFor="task-title">Title</Label>
+        <div className="space-y-5">
+          <Field label="Title" htmlFor="task-title">
             <Input
               id="task-title"
               value={title}
@@ -126,18 +125,18 @@ function TaskForm({
               placeholder="What needs doing?"
               autoFocus
             />
-          </div>
+          </Field>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div>
-              <Label htmlFor="task-due">Due</Label>
+            <Field label="Due" htmlFor="task-due">
               <Input
                 id="task-due"
                 type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
+                className="w-full"
               />
-            </div>
+            </Field>
             <Picker label="Priority" value={priority} onChange={setPriority}
               options={[["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"]]} />
             <Picker label="Status" value={status} onChange={setStatus}
@@ -272,10 +271,12 @@ function Picker({
   options: [string, string][];
 }) {
   return (
-    <div>
-      <Label>{label}</Label>
+    <Field label={label}>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger>
+        {/* The base trigger is w-fit, which leaves every dropdown as wide as
+            its longest option — three of them in a row then line up at three
+            different widths. */}
+        <SelectTrigger className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -286,6 +287,24 @@ function Picker({
           ))}
         </SelectContent>
       </Select>
+    </Field>
+  );
+}
+
+/** Label + control with one consistent gap. Label carries no margin of its own. */
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
     </div>
   );
 }

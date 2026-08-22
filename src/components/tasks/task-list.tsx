@@ -157,7 +157,12 @@ export function TaskList({
                 >
                   {bucket} · {list.length}
                 </h2>
-                <div className="space-y-1.5">
+                {/* Columns, not one long stack. Thirty overdue items in a
+                    single file is a scroll; in three columns it is a glance.
+                    Rows size themselves with container queries, so a task in a
+                    narrow column drops its chips without consulting the
+                    viewport. */}
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                   {list.map((task) => (
                     <TaskRow
                       key={task.id}

@@ -82,7 +82,7 @@ export function TaskRow({
   return (
     <div
       className={cn(
-        "group flex items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+        "group @container flex items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors",
         done && "opacity-50",
         overdue ? "border-red-500/30 bg-red-500/[0.03]" : "hover:bg-muted/40",
         pending && "opacity-60",
@@ -161,7 +161,7 @@ export function TaskRow({
       </button>
 
       {/* Context links jump straight to the thing the task is about. */}
-      <div className="hidden shrink-0 items-center gap-1 sm:flex">
+      <div className="hidden shrink-0 items-center gap-1 @[26rem]:flex">
         {task.invoice && (
           <ContextChip href={`/admin/invoices/${task.invoice.id}`} icon={ReceiptText}>
             {task.invoice.invoiceNumber}
