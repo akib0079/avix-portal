@@ -12,6 +12,8 @@ import { RichTextViewer } from "@/components/editor/rich-text-viewer";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { richTextToPlain } from "@/lib/rich-text";
+import { SwipeToReply, MessageActions } from "./message-actions";
 import { initials } from "@/lib/format";
 import { Loader2, Send, ChevronUp, Check, CheckCheck, Lock } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
@@ -65,6 +67,39 @@ export function MessageThread({
   const [internal, setInternal] = useState(false);
   const [messages, setMessages] = useState<MessageView[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
+
+  /**
+   * Quote a message into the composer.
+   *
+   * A blockquote in the draft rather than a replyToId column: it needs no
+   * migration, it survives in the message body so the client sees exactly what
+   * you were answering, and it is editable — you can trim a long quote down to
+   * the line that actually matters before sending.
+   */
+  function quoteReply(m: MessageView) {
+    const text = richTextToPlain(m.body).trim();
+    if (!text) return;
+    // Long messages get quoted by their opening, not in full.
+    const excerpt = text.length > 220 ? `${text.slice(0, 220).trimEnd()}…` : text;
+    setDraft({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: `${m.senderName}: ${excerpt}` }],
+            },
+          ],
+        },
+        { type: "paragraph" },
+      ],
+    });
+    // Remount the editor so it picks the new value up, then put the caret
+    // after the quote.
+    setResetKey((k) => k + 1);
+  }
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -258,10 +293,11 @@ export function MessageThread({
                 </div>
               )}
 
+              <SwipeToReply onReply={() => quoteReply(m)}>
               <div
                 className={cn(
-                  "flex gap-2.5",
-                  grouped ? "mt-0.5" : "mt-3",
+                  "group/msg flex gap-2.5",
+                  grouped ? "mt-0.5" : "mt-2.5",
                   mine && "flex-row-reverse",
                 )}
               >
@@ -335,8 +371,15 @@ export function MessageThread({
                       )}
                     </p>
                   )}
+
+                  <MessageActions
+                    text={richTextToPlain(m.body)}
+                    onReply={() => quoteReply(m)}
+                    align={mine ? "right" : "left"}
+                  />
                 </div>
               </div>
+              </SwipeToReply>
             </div>
           );
         })
@@ -347,33 +390,11 @@ export function MessageThread({
   const composer = (
     <div
       className={cn(
-        "rounded-xl border bg-background p-3",
+        "rounded-xl border bg-background p-2 sm:p-3",
         fill && "shadow-sm",
         internal && "border-amber-400 bg-amber-50/60 dark:bg-amber-950/20",
       )}
     >
-      {canWriteInternal && (
-        <div className="mb-2 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setInternal((v) => !v)}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-              internal
-                ? "border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Lock className="size-3" />
-            {internal ? "Internal note" : "Reply to client"}
-          </button>
-          {internal && (
-            <span className="text-xs text-amber-700 dark:text-amber-300">
-              Only the team sees this.
-            </span>
-          )}
-        </div>
-      )}
       <RichTextEditor
         key={resetKey}
         value={draft}
@@ -383,13 +404,32 @@ export function MessageThread({
         compact={fill}
         onSubmit={onSend}
       />
-      <div className="mt-2 flex items-center justify-between gap-3">
-        <p className="hidden text-[11px] text-muted-foreground sm:block">
+      {/* One control row, not two: the note toggle used to own a line of its
+          own above the editor, which on a chat pane is a line of conversation. */}
+      <div className="mt-2 flex items-center gap-2">
+        {canWriteInternal && (
+          <button
+            type="button"
+            onClick={() => setInternal((v) => !v)}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+              internal
+                ? "border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Lock className="size-3" />
+            <span className="hidden sm:inline">
+              {internal ? "Internal note" : "Reply to client"}
+            </span>
+          </button>
+        )}
+        <p className="hidden text-[11px] text-muted-foreground lg:block">
           <kbd className="rounded border px-1">Enter</kbd> to send ·{" "}
           <kbd className="rounded border px-1">Shift</kbd>+
           <kbd className="rounded border px-1">Enter</kbd> for a new line
         </p>
-        <Button onClick={onSend} disabled={sending || !draft} className="ml-auto">
+        <Button onClick={onSend} disabled={sending || !draft} className="ml-auto shrink-0">
           {sending ? <Loader2 className="animate-spin" /> : internal ? <Lock /> : <Send />}
           {internal ? "Save note" : "Send"}
         </Button>
@@ -415,7 +455,7 @@ export function MessageThread({
       >
         {list}
       </div>
-      <div className="pt-3">{composer}</div>
+      <div className="pt-2">{composer}</div>
     </div>
   );
 }

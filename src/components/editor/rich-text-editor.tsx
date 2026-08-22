@@ -269,7 +269,9 @@ export function RichTextEditor({
     editorProps: {
       attributes: {
         class: compact
-          ? "rich-text px-3 py-2 min-h-20 max-h-56 overflow-y-auto"
+          // Compact starts at two lines and grows to the cap as you type.
+          // Reserving five lines up front just moves the conversation off screen.
+          ? "rich-text px-3 py-2 min-h-14 max-h-56 overflow-y-auto"
           : "rich-text px-3 py-2 min-h-32 max-h-96 overflow-y-auto",
       },
       // Enter sends, Shift+Enter (and the modifier combos) keep their meaning.

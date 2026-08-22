@@ -7,6 +7,7 @@ import { MessageThread } from "./message-thread";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import { initials } from "@/lib/format";
 import { LocalTime } from "@/components/local-time";
 import { formatDistanceToNow } from "date-fns";
@@ -43,6 +44,7 @@ export function AdminInbox({
   const [search, setSearch] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [mobilePane, setMobilePane] = useState<"list" | "thread">("list");
+  const keyboard = useKeyboardInset();
 
   const active = conversations.find((c) => threadKey(c) === selectedKey) ?? null;
   const totalUnread = conversations.reduce((sum, c) => sum + c.unread, 0);
@@ -88,7 +90,15 @@ export function AdminInbox({
   }
 
   return (
-    <div className="grid h-[calc(100dvh-13rem)] min-h-[560px] grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
+    <div
+      // Same story as the client inbox: a fixed 560px floor made the pane taller
+      // than its container on short screens, so the page scrolled behind an
+      // already-scrolling message list. Floors are gated on available height,
+      // and the keyboard inset keeps the composer clear on phones whose browser
+      // won't shrink the viewport for it.
+      className="grid h-[calc(100dvh-10rem)] min-h-0 grid-cols-1 gap-4 [@media(min-height:640px)]:min-h-[22rem] [@media(min-width:1024px)_and_(min-height:800px)]:min-h-[560px] lg:grid-cols-[340px_1fr]"
+      style={keyboard ? { height: `calc(100dvh - 10rem - ${keyboard}px)` } : undefined}
+    >
       {/* Conversation list — its own scroll container, so it never runs away
           with the page. */}
       <aside
