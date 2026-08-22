@@ -3,10 +3,12 @@ import {
   getWhatsappSupportUrl,
   getBranding,
   getInvoiceFooter,
+  getPaymentGuideUrl,
 } from "@/lib/dal/settings";
 import { PageHeader } from "@/components/page-header";
 import { PaymentAccountManager } from "@/components/settings/payment-account-manager";
 import { WhatsappSetting } from "@/components/settings/whatsapp-setting";
+import { PaymentGuideSetting } from "@/components/settings/payment-guide-setting";
 import { BrandingSetting } from "@/components/settings/branding-setting";
 import { InvoiceFooterSetting } from "@/components/settings/invoice-footer-setting";
 import { RevenueTargetSetting } from "@/components/settings/revenue-target-setting";
@@ -28,7 +30,7 @@ export default async function SettingsPage({
   searchParams: Promise<{ gcal?: string }>;
 }) {
   await requireAdmin();
-  const [{ gcal: gcalResult }, [accounts, whatsappUrl, branding, staff, availWindows, bookingConfig, invoiceFooter]] =
+  const [{ gcal: gcalResult }, [accounts, whatsappUrl, branding, staff, availWindows, bookingConfig, invoiceFooter, paymentGuideUrl]] =
     await Promise.all([
       searchParams,
       Promise.all([
@@ -39,6 +41,7 @@ export default async function SettingsPage({
         listAvailabilityWindows(),
         getBookingConfig(),
         getInvoiceFooter(),
+        getPaymentGuideUrl(),
       ]),
     ]);
   const gcal = await calendarStatus();
@@ -124,6 +127,11 @@ export default async function SettingsPage({
       <Card className="mt-6">
         <CardContent className="pt-6">
           <GoogleCalendarSetting connected={gcal.connected} email={gcal.email} />
+        </CardContent>
+      </Card>
+      <Card className="mt-6">
+        <CardContent className="pt-6">
+          <PaymentGuideSetting initialUrl={paymentGuideUrl} />
         </CardContent>
       </Card>
       <Card className="mt-6">

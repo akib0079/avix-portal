@@ -69,6 +69,34 @@ export const listActivePaymentAccounts = unstable_cache(
   { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
 );
 
+export const PAYMENT_GUIDE_SETTING_KEY = "paymentGuideUrl";
+
+/**
+ * The Wise/bank payment-instructions PDF shown to clients.
+ *
+ * A setting rather than a constant because the default is a WordPress upload
+ * path with the month baked into it (/2026/08/). Re-upload the file and that
+ * URL 404s — as a constant that would need a code change and a deploy to fix,
+ * while a client stares at a broken download.
+ */
+export const DEFAULT_PAYMENT_GUIDE_URL =
+  "https://avixdigital.com/wp-content/uploads/2026/08/AvixDigital-Payment-Instructions-Guide.pdf";
+
+/** Configured guide link, falling back to the default. Empty string hides it. */
+export const getPaymentGuideUrl = unstable_cache(
+  async (): Promise<string | null> => {
+    const row = await prisma.appSetting.findUnique({
+      where: { key: PAYMENT_GUIDE_SETTING_KEY },
+    });
+    // A row that exists but is blank is a deliberate "hide it"; no row at all
+    // means never configured, so fall back to the default.
+    if (row) return row.value.trim() || null;
+    return DEFAULT_PAYMENT_GUIDE_URL;
+  },
+  ["payment-guide-url"],
+  { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
+);
+
 export const WHATSAPP_SETTING_KEY = "whatsappSupportUrl";
 
 /** Admin-editable WhatsApp support link, or null when not configured. */

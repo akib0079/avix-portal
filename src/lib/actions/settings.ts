@@ -106,6 +106,23 @@ export async function updateWhatsappSupportUrl(url: string): Promise<ActionResul
   return { ok: true };
 }
 
+export async function updatePaymentGuideUrl(url: string): Promise<ActionResult> {
+  await requireAdmin();
+  const trimmed = url.trim();
+  if (trimmed && !/^https?:\/\/\S+$/i.test(trimmed)) {
+    return { ok: false, error: "Enter a full link starting with https:// (or leave empty to hide it)." };
+  }
+  await prisma.appSetting.upsert({
+    where: { key: "paymentGuideUrl" },
+    create: { key: "paymentGuideUrl", value: trimmed },
+    update: { value: trimmed },
+  });
+  revalidateTag(SETTINGS_CACHE_TAG, "max");
+  revalidatePath("/admin/settings");
+  revalidatePath("/portal/payment");
+  return { ok: true };
+}
+
 // ---------- Branding ----------
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { BRAND_KEYS, getBranding, INVOICE_FOOTER_KEY, SETTINGS_CACHE_TAG } from "@/lib/dal/settings";

@@ -1,5 +1,6 @@
 import { requireClient } from "@/lib/dal/session";
-import { listActivePaymentAccounts } from "@/lib/dal/settings";
+import { listActivePaymentAccounts, getPaymentGuideUrl } from "@/lib/dal/settings";
+import { PaymentGuideButton } from "@/components/payments/payment-guide-button";
 import { PageHeader } from "@/components/page-header";
 import { PaymentDetails } from "@/components/payments/payment-details";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,7 +10,10 @@ export const metadata = { title: "How to Pay" };
 
 export default async function ClientPaymentPage() {
   await requireClient();
-  const accounts = await listActivePaymentAccounts();
+  const [accounts, guideUrl] = await Promise.all([
+    listActivePaymentAccounts(),
+    getPaymentGuideUrl(),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -17,6 +21,19 @@ export default async function ClientPaymentPage() {
         title="How to pay"
         description="Settle invoices by bank transfer using the details below."
       />
+
+      {guideUrl && (
+        <div className="mb-6 flex flex-col gap-3 rounded-xl border bg-brand-tint/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Step-by-step payment guide</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              How to send payment through Wise, with our bank details and what to
+              use as the reference.
+            </p>
+          </div>
+          <PaymentGuideButton url={guideUrl} className="shrink-0" />
+        </div>
+      )}
 
       {accounts.length === 0 ? (
         <Card>

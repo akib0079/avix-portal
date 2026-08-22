@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getMyInvoice } from "@/lib/dal/portal";
-import { listActivePaymentAccounts } from "@/lib/dal/settings";
+import { listActivePaymentAccounts, getPaymentGuideUrl } from "@/lib/dal/settings";
+import { PaymentGuideButton } from "@/components/payments/payment-guide-button";
 import { InvoiceStatusBadge } from "@/components/status-badges";
 import { PaymentDetails } from "@/components/payments/payment-details";
 import { ClaimPaymentButton } from "@/components/portal/claim-payment-button";
@@ -21,8 +22,11 @@ export default async function ClientInvoiceDetailPage({
   const invoice = await getMyInvoice(id);
   if (!invoice) notFound();
 
-  const paymentAccounts =
-    invoice.status === "PAID" ? [] : await listActivePaymentAccounts();
+  // A paid invoice needs neither bank details nor a how-to-pay guide.
+  const [paymentAccounts, guideUrl] =
+    invoice.status === "PAID"
+      ? [[], null]
+      : await Promise.all([listActivePaymentAccounts(), getPaymentGuideUrl()]);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -138,6 +142,15 @@ export default async function ClientInvoiceDetailPage({
           </CardHeader>
           <CardContent>
             <PaymentDetails accounts={paymentAccounts} />
+            {guideUrl && (
+              <div className="mt-5 border-t pt-4">
+                <p className="mb-3 text-sm text-muted-foreground">
+                  First time paying us, or transferring through Wise? The guide
+                  walks through it step by step.
+                </p>
+                <PaymentGuideButton url={guideUrl} variant="subtle" />
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
