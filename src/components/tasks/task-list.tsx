@@ -9,7 +9,7 @@ import { TaskDialog, type TaskTargets } from "./task-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Plus, Sparkles, CheckCircle2 } from "lucide-react";
+import { Plus, Sparkles, CheckCircle2, SlidersHorizontal } from "lucide-react";
 
 /**
  * Buckets by when, not by stage — the question a personal list has to answer
@@ -91,18 +91,24 @@ export function TaskList({
           className="h-10"
           aria-label="Quick add a task"
         />
-        <Button type="submit" disabled={pending || !quick.trim()}>
-          <Plus className="mr-1 size-4" /> Add
+        {/* Labels collapse to icons on a phone: three full-width controls in
+            one row leaves the input about 150px, which is not enough to see
+            what you are typing. */}
+        <Button type="submit" disabled={pending || !quick.trim()} aria-label="Add task">
+          <Plus className="size-4 sm:mr-1" />
+          <span className="hidden sm:inline">Add</span>
         </Button>
         <Button
           type="button"
           variant="outline"
+          aria-label="Add a task with full details"
           onClick={() => {
             setEditing(null);
             setDialogOpen(true);
           }}
         >
-          Details…
+          <SlidersHorizontal className="size-4 sm:hidden" />
+          <span className="hidden sm:inline">Details…</span>
         </Button>
       </form>
 

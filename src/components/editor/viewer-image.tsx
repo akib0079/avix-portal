@@ -24,7 +24,7 @@ export function ViewerImage({ src, alt }: { src: string; alt: string }) {
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src} alt={alt} loading="lazy" className="block max-h-96 w-auto" />
-        <span className="pointer-events-none absolute top-2 right-2 rounded-md bg-black/60 p-1.5 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
+        <span className="pointer-events-none absolute top-2 right-2 rounded-md bg-black/60 p-1.5 text-white opacity-100 transition-opacity sm:opacity-0 sm:group-hover/img:opacity-100">
           <Maximize2 className="size-3.5" />
         </span>
       </button>

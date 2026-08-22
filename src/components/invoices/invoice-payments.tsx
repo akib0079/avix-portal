@@ -110,7 +110,7 @@ export function InvoicePayments({
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-3 gap-3 text-sm">
+        <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Invoice total</p>
             <p className="font-heading mt-0.5 font-bold">{money(total)}</p>

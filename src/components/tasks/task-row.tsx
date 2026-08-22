@@ -93,7 +93,12 @@ export function TaskRow({
         onClick={toggle}
         aria-label={done ? `Mark "${task.title}" not done` : `Mark "${task.title}" done`}
         className={cn(
-          "mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors",
+          // The box stays 18px, but the tap area grows to ~42px via a
+          // pseudo-element. An 18px target is fine for a mouse and far below
+          // the ~44px a thumb needs; -inset-3 exactly fills the flex gap, so
+          // nothing overlaps the title button beside it.
+          "relative mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors",
+          "before:absolute before:-inset-3 before:content-[''] sm:before:hidden",
           done
             ? "border-primary bg-primary text-primary-foreground"
             : "border-muted-foreground/40 hover:border-primary",
@@ -176,7 +181,7 @@ export function TaskRow({
 
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100 focus:opacity-100"
+          className="shrink-0 rounded-md p-2 text-muted-foreground opacity-100 transition-opacity hover:bg-muted focus:opacity-100 sm:p-1 sm:opacity-0 sm:group-hover:opacity-100"
           aria-label="Task actions"
         >
           <MoreHorizontal className="size-4" />

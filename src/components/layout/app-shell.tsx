@@ -193,7 +193,7 @@ function NavLinks({
             "focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none",
             starred
               ? "text-primary opacity-100"
-              : "text-sidebar-foreground/50 opacity-0 group-hover/nav:opacity-100 hover:text-white",
+              : "text-sidebar-foreground/50 opacity-100 sm:opacity-0 sm:group-hover/nav:opacity-100 hover:text-white",
           )}
         >
           <Star className={cn("size-3.5", starred && "fill-current")} />

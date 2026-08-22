@@ -214,7 +214,7 @@ function TaskForm({
                       type="button"
                       aria-label={`Delete ${s.title}`}
                       onClick={() => startTransition(async () => void (await deleteSubtask(s.id)))}
-                      className="opacity-0 transition-opacity group-hover:opacity-100"
+                      className="p-1 opacity-100 transition-opacity sm:p-0 sm:opacity-0 sm:group-hover:opacity-100"
                     >
                       <Trash2 className="size-3.5 text-muted-foreground hover:text-red-600" />
                     </button>
