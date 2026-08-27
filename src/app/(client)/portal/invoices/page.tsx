@@ -12,19 +12,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { usd, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import { formatCurrency, sumByCurrency } from "@/lib/currency";
 import { Download, FileText, ChevronRight, ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Invoices" };
 
 export default async function MyInvoicesPage() {
   const invoices = await listMyInvoices();
-  const outstanding = invoices
-    .filter((i) => i.status !== "PAID")
-    .reduce((sum, i) => sum + Number(i.amount), 0);
-  const paid = invoices
-    .filter((i) => i.status === "PAID")
-    .reduce((sum, i) => sum + Number(i.amount), 0);
+  // Per currency, never summed together: a client billed in EUR and USD has
+  // two totals, and adding them makes a number that is true of nothing.
+  const rows = invoices.map((i) => ({ amount: Number(i.amount), currency: i.currency, status: i.status }));
+  const outstanding = sumByCurrency(rows.filter((i) => i.status !== "PAID"));
+  const paid = sumByCurrency(rows.filter((i) => i.status === "PAID"));
 
   return (
     <div>
@@ -38,13 +38,17 @@ export default async function MyInvoicesPage() {
           <div className="rounded-xl border bg-card p-5">
             <p className="text-sm text-muted-foreground">Outstanding</p>
             <p className="font-heading mt-1 text-2xl font-bold text-primary">
-              {usd.format(outstanding)}
+              {outstanding.length === 0
+                ? formatCurrency(0, "USD")
+                : outstanding.map((t) => formatCurrency(t.total, t.code)).join(" · ")}
             </p>
           </div>
           <div className="rounded-xl border bg-card p-5">
             <p className="text-sm text-muted-foreground">Paid to date</p>
             <p className="font-heading mt-1 text-2xl font-bold text-success">
-              {usd.format(paid)}
+              {paid.length === 0
+                ? formatCurrency(0, "USD")
+                : paid.map((t) => formatCurrency(t.total, t.code)).join(" · ")}
             </p>
           </div>
           <div className="rounded-xl border bg-card p-5">
@@ -103,7 +107,7 @@ export default async function MyInvoicesPage() {
                       {formatDate(invoice.dueDate)}
                     </TableCell>
                     <TableCell className="text-sm font-medium">
-                      {usd.format(Number(invoice.amount))}
+                      {formatCurrency(Number(invoice.amount), invoice.currency)}
                     </TableCell>
                     <TableCell>
                       <InvoiceStatusBadge status={invoice.status} />

@@ -58,6 +58,18 @@ export const invoiceSchema = z.object({
   // superRefine below demands a positive value.
   amount: z.number({ message: "Enter an amount" }).min(0).max(9999999, "Amount is too large"),
   status: z.enum(invoiceStatusValues),
+  /**
+   * What the invoice is worth in USD. Only meaningful when `currency` is not
+   * USD; the server mirrors `amount` when it is. Blank is allowed and means
+   * "not known yet" — such an invoice sits outside the USD totals until it is
+   * filled in, which is far better than being counted at face value.
+   */
+  amountUsd: z
+    .number({ message: "Enter the USD value" })
+    .min(0)
+    .max(9999999, "Amount is too large")
+    .nullish(),
+
   /** Flat amount off the subtotal, before tax. */
   discount: z.number().min(0).max(9999999).optional(),
   /** Percentage applied after the discount, e.g. 15 for 15% VAT. */

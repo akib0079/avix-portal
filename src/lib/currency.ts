@@ -38,3 +38,23 @@ export function formatCurrency(amount: number, code: string | null | undefined):
     maximumFractionDigits: 2,
   })}`;
 }
+
+/**
+ * Totals grouped by currency, largest first.
+ *
+ * A client billed in two currencies has two totals, not one: adding EUR to USD
+ * produces a number that is true of nothing. Callers render each — with a
+ * single currency, which is the normal case, the output is indistinguishable
+ * from the plain total it replaces.
+ */
+export function sumByCurrency(
+  rows: { amount: number; currency: string }[],
+): { code: string; total: number }[] {
+  const byCode = new Map<string, number>();
+  for (const row of rows) {
+    byCode.set(row.currency, (byCode.get(row.currency) ?? 0) + row.amount);
+  }
+  return [...byCode.entries()]
+    .map(([code, total]) => ({ code, total: Math.round(total * 100) / 100 }))
+    .sort((a, b) => b.total - a.total);
+}

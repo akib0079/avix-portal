@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { usdValue } from "@/lib/invoice-usd";
 import { requireAdmin } from "@/lib/dal/session";
 import { projectSourceLabels } from "@/lib/format";
 
@@ -22,6 +23,8 @@ export type ReportsData = {
     outstanding: number;
     avgInvoice: number;
     hoursThisMonth: number;
+    /** Invoices excluded from the figures above for want of a USD value. */
+    missingUsd: number;
   };
   monthly: { month: string; paid: number; unpaid: number }[];
   bySource: { name: string; value: number }[];
@@ -68,6 +71,7 @@ export async function getReportsData(): Promise<ReportsData> {
       where: { status: { not: "CANCELLED" }, creditNoteForId: null },
       select: {
         amount: true,
+        amountUsd: true,
         amountPaid: true,
         currency: true,
         status: true,
@@ -124,16 +128,30 @@ export async function getReportsData(): Promise<ReportsData> {
   // Totals per currency, so a EUR invoice never gets added to a USD figure.
   const perCurrency = new Map<string, { invoiced: number; paid: number; outstanding: number }>();
 
+  // Invoices in another currency with no USD value yet. They are left out of
+  // the cross-currency KPIs rather than folded in at face value.
+  let missingUsd = 0;
+
   for (const inv of invoices) {
     const amount = Number(inv.amount);
     // Partial payments are real money: count what was received, not the status.
     const received = Number(inv.amountPaid ?? 0);
     const owing = Math.max(amount - received, 0);
 
-    totalInvoiced += amount;
-    totalPaid += received;
-    outstanding += owing;
-    if (received > 0 && inv.issueDate >= startOfMonth) revenueThisMonth += received;
+    // The KPIs are one number across every currency, so they may only use USD.
+    // The per-currency block below still uses the invoice's own amounts —
+    // that is the point of it.
+    const usdTotal = usdValue({ amount, currency: inv.currency, amountUsd: inv.amountUsd == null ? null : Number(inv.amountUsd) });
+    if (usdTotal == null) {
+      missingUsd++;
+    } else {
+      const ratio = amount > 0 ? Math.min(1, received / amount) : 0;
+      const usdReceived = usdTotal * ratio;
+      totalInvoiced += usdTotal;
+      totalPaid += usdReceived;
+      outstanding += Math.max(usdTotal - usdReceived, 0);
+      if (received > 0 && inv.issueDate >= startOfMonth) revenueThisMonth += usdReceived;
+    }
 
     const currency = perCurrency.get(inv.currency) ?? {
       invoiced: 0,
@@ -235,6 +253,8 @@ export async function getReportsData(): Promise<ReportsData> {
     kpis: {
       revenueThisMonth,
       outstanding,
+      /** Invoices excluded from these KPIs for want of a USD value. */
+      missingUsd,
       avgInvoice: paidCount === 0 ? 0 : totalPaid / paidCount,
       hoursThisMonth,
     },

@@ -113,6 +113,9 @@ export async function getMyProjectExtras(projectId: string) {
         issueDate: true,
         dueDate: true,
         amount: true,
+        // Without this the portal cannot know what currency it is showing, so
+        // it showed dollars for everything.
+        currency: true,
         status: true,
       },
     }),
@@ -136,6 +139,7 @@ export async function getMyProjectExtras(projectId: string) {
       issueDate: i.issueDate.toISOString(),
       dueDate: i.dueDate?.toISOString() ?? null,
       amount: Number(i.amount),
+      currency: i.currency,
       status: i.status,
     })),
     meetings: meetings.map((m) => ({

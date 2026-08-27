@@ -405,9 +405,20 @@ model Invoice {
   /// Optional document headline, e.g. "Monthly retainer invoice — June".
   /// Falls back to "Invoice {number}" on the generated PDF.
   title            String?
-  /// Display currency for the document + portal. Reports still sum raw
-  /// amounts regardless of currency.
+  /// Display currency for the document + portal.
   currency         InvoiceCurrency  @default(USD)
+  /// What this invoice is worth in USD — the figure that reaches the bank and
+  /// the only one the stats are allowed to add up.
+  ///
+  /// Entered by hand for non-USD invoices, deliberately: the rate that matters
+  /// is the one the payment actually settled at, which no live FX feed can
+  /// tell you at invoicing time and which nobody wants silently restated
+  /// later. Mirrors `amount` whenever the currency already is USD.
+  ///
+  /// Null means "not known yet". Such an invoice is excluded from USD totals
+  /// and reported as needing a value, rather than being folded in at face
+  /// value — which is how a EUR 1400 invoice used to become $1400 of revenue.
+  amountUsd        Decimal?         @db.Decimal(12, 2)
   /// Optional per-invoice "Billed to" overrides for the generated PDF. When
   /// null, the PDF falls back to the client's own company/email. Address and
   /// the extra email have no client-record equivalent, so they only appear

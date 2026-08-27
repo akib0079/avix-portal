@@ -118,6 +118,23 @@ async function validateRelations(clientId: string, projectId: string) {
   return { resolvedProjectId };
 }
 
+/**
+ * What to store in `amountUsd`.
+ *
+ * A USD invoice is worth its own total, so it mirrors and the field never has
+ * to be typed. Anything else takes the hand-entered figure, and null when it
+ * has not been given — the totals then leave the invoice out and say so, which
+ * is the whole point of the column.
+ */
+function usdToStore(
+  currency: string,
+  total: number,
+  entered: number | null | undefined,
+): number | null {
+  if (currency === "USD") return total;
+  return entered ?? null;
+}
+
 async function handlePdf(formData: FormData): Promise<
   { ok: true; fileName: string | null; originalName: string | null } | { ok: false; error: string }
 > {
@@ -182,6 +199,7 @@ export async function createInvoice(
         notes: data.notes || null,
         title: data.title || null,
         currency: data.currency ?? "USD",
+        amountUsd: usdToStore(data.currency ?? "USD", totals.total, data.amountUsd),
         billToCompany: data.billToCompany || null,
         billToAddress: data.billToAddress || null,
         billToEmail: data.billToEmail || null,
@@ -255,6 +273,7 @@ export async function updateInvoice(
         notes: data.notes || null,
         title: data.title || null,
         currency: data.currency ?? "USD",
+        amountUsd: usdToStore(data.currency ?? "USD", totals.total, data.amountUsd),
         billToCompany: data.billToCompany || null,
         billToAddress: data.billToAddress || null,
         billToEmail: data.billToEmail || null,

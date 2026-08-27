@@ -39,18 +39,19 @@ export async function getAdminDashboard(range: DashboardRange = "month") {
     aging30,
     aging60,
     expectedInvoicesAgg,
+    invoicesMissingUsd,
   ] = await Promise.all([
     prisma.user.count({ where: { role: "CLIENT" } }),
     prisma.project.count({ where: { status: { not: "COMPLETED" } } }),
     prisma.invoice.count(),
-    prisma.invoice.aggregate({ where: { status: "PAID" }, _sum: { amount: true } }),
+    prisma.invoice.aggregate({ where: { status: "PAID" }, _sum: { amountUsd: true } }),
     prisma.invoice.aggregate({
       where: { status: "PAID", issueDate: { gte: win.start, lt: win.end } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
     }),
     prisma.invoice.aggregate({
       where: { status: { not: "PAID" } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
     }),
     prisma.taskRequest.count({ where: { status: "PENDING" } }),
     prisma.timeEntry.aggregate({
@@ -76,33 +77,39 @@ export async function getAdminDashboard(range: DashboardRange = "month") {
     // Aging: unpaid invoices past due, bucketed by how overdue.
     prisma.invoice.aggregate({
       where: { status: { not: "PAID" }, dueDate: { gte: days30Ago, lt: now } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
       _count: { _all: true },
     }),
     prisma.invoice.aggregate({
       where: { status: { not: "PAID" }, dueDate: { gte: days60Ago, lt: days30Ago } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
       _count: { _all: true },
     }),
     prisma.invoice.aggregate({
       where: { status: { not: "PAID" }, dueDate: { not: null, lt: days60Ago } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
       _count: { _all: true },
     }),
     // Expected inflow: unpaid invoices due within the next 30 days.
     prisma.invoice.aggregate({
       where: { status: { not: "PAID" }, dueDate: { gte: now, lte: in30Days } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
     }),
+    // Invoices with no USD value yet. They sit outside every figure above, so
+    // the count has to be visible: a total that quietly shrank would be worse
+    // than the face-value sum it replaced.
+    prisma.invoice.count({ where: { amountUsd: null } }),
   ]);
 
   return {
     totalClients,
     activeProjects,
     totalInvoices,
-    paidRevenue: Number(paidAgg._sum.amount ?? 0),
-    revenueThisMonth: Number(monthPaidAgg._sum.amount ?? 0),
-    outstanding: Number(outstandingAgg._sum.amount ?? 0),
+    paidRevenue: Number(paidAgg._sum.amountUsd ?? 0),
+    /** Non-USD invoices awaiting a USD value; excluded from every total here. */
+    invoicesMissingUsd,
+    revenueThisMonth: Number(monthPaidAgg._sum.amountUsd ?? 0),
+    outstanding: Number(outstandingAgg._sum.amountUsd ?? 0),
     pendingRequests,
     hoursThisMonth: Number(hoursAgg._sum.hours ?? 0),
     recentProjects,
@@ -121,18 +128,18 @@ export async function getAdminDashboard(range: DashboardRange = "month") {
       mrr: Number(mrrAgg._sum.amount ?? 0),
       // Recurring value expected next 30 days = one-off invoices due soon + MRR.
       expectedNext30:
-        Number(expectedInvoicesAgg._sum.amount ?? 0) + Number(mrrAgg._sum.amount ?? 0),
+        Number(expectedInvoicesAgg._sum.amountUsd ?? 0) + Number(mrrAgg._sum.amount ?? 0),
       aging: {
         current: {
-          amount: Number(agingCurrent._sum.amount ?? 0),
+          amount: Number(agingCurrent._sum.amountUsd ?? 0),
           count: agingCurrent._count._all,
         },
         thirty: {
-          amount: Number(aging30._sum.amount ?? 0),
+          amount: Number(aging30._sum.amountUsd ?? 0),
           count: aging30._count._all,
         },
         sixtyPlus: {
-          amount: Number(aging60._sum.amount ?? 0),
+          amount: Number(aging60._sum.amountUsd ?? 0),
           count: aging60._count._all,
         },
       },
@@ -444,11 +451,11 @@ export async function getBusinessHealth(
     prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
     prisma.invoice.aggregate({
       where: { status: "PAID", issueDate: { gte: win.start, lt: win.end } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
     }),
     prisma.invoice.aggregate({
       where: { issueDate: { gte: win.start, lt: win.end } },
-      _sum: { amount: true },
+      _sum: { amountUsd: true },
     }),
     prisma.invoice.findMany({
       where: { status: "PAID", issueDate: { gte: sixMonthsAgo } },
@@ -554,8 +561,8 @@ export async function getBusinessHealth(
 
   return {
     target: Number(targetRow?.value ?? 0) || 0,
-    collectedThisMonth: Number(collectedAgg._sum.amount ?? 0),
-    invoicedThisMonth: Number(invoicedAgg._sum.amount ?? 0),
+    collectedThisMonth: Number(collectedAgg._sum.amountUsd ?? 0),
+    invoicedThisMonth: Number(invoicedAgg._sum.amountUsd ?? 0),
     trend,
     flags,
     topClients,

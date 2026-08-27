@@ -97,6 +97,7 @@ export function InvoiceForm({
       invoiceNumber: invoice?.invoiceNumber ?? "",
       title: invoice?.title ?? "",
       currency: invoice?.currency ?? "USD",
+      amountUsd: invoice?.amountUsd ?? null,
       paymentAccountId: invoice?.paymentAccountId ?? "none",
       billToCompany: invoice?.billToCompany ?? "",
       billToAddress: invoice?.billToAddress ?? "",
@@ -247,7 +248,7 @@ export function InvoiceForm({
             name="amount"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Amount (USD)</FormLabel>
+                <FormLabel>Amount ({currency})</FormLabel>
                 <FormControl>
                   <Input
                     type="number"
@@ -266,6 +267,39 @@ export function InvoiceForm({
               </FormItem>
             )}
           />
+          {/* Only for currencies that are not already USD. Hand-entered
+              because the rate that counts is the one the payment settles at,
+              which no live feed knows at invoicing time. */}
+          {currency !== "USD" && (
+            <FormField
+              control={form.control}
+              name="amountUsd"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Value in USD</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="What lands in your account"
+                      value={(field.value as number | string | null) ?? ""}
+                      onChange={(e) =>
+                        field.onChange(e.target.value === "" ? null : Number(e.target.value))
+                      }
+                    />
+                  </FormControl>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Billed to the client as {currencySymbol}
+                    {(Number(watchedAmount) || 0).toLocaleString("en-US")}. This is the
+                    figure your reports count — leave it blank and the invoice stays
+                    outside your totals.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           <FormField
             control={form.control}
             name="issueDate"

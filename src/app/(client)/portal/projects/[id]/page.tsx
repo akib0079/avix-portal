@@ -15,6 +15,7 @@ import { RequestFormDialog } from "@/components/task-requests/request-form-dialo
 import { Card, CardContent } from "@/components/ui/card";
 import { projectHealth, pendingWork } from "@/lib/project-health";
 import { projectTypeLabels, formatDate, usd } from "@/lib/format";
+import { formatCurrency } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -233,7 +234,7 @@ export default async function MyProjectPage({
                         </span>
                         <span className="flex shrink-0 items-center gap-2">
                           <span className="text-sm font-medium">
-                            {usd.format(invoice.amount)}
+                            {formatCurrency(invoice.amount, invoice.currency)}
                           </span>
                           <InvoiceStatusBadge
                             status={

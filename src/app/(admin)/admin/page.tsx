@@ -32,8 +32,10 @@ import {
   Activity,
   ArrowRight,
   Repeat,
+  TriangleAlert,
 } from "lucide-react";
 import { toneChip, toneText } from "@/lib/tone";
+import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Dashboard" };
 
@@ -133,6 +135,21 @@ export default async function AdminDashboardPage({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {data.invoicesMissingUsd > 0 && (
+        <div className={cn("mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl px-4 py-3 text-sm", toneChip.warn)}>
+          <TriangleAlert className="size-4 shrink-0" />
+          <span>
+            <strong>{data.invoicesMissingUsd}</strong>{" "}
+            {data.invoicesMissingUsd === 1 ? "invoice is" : "invoices are"} billed in
+            another currency with no USD value set, so {data.invoicesMissingUsd === 1 ? "it is" : "they are"}{" "}
+            not counted in the figures below.
+          </span>
+          <Link href="/admin/invoices" className="font-medium underline underline-offset-2">
+            Set them
+          </Link>
         </div>
       )}
 

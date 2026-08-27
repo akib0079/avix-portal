@@ -5,6 +5,7 @@ import { listActivePaymentAccounts, getPaymentGuideUrl } from "@/lib/dal/setting
 import { PaymentGuideButton } from "@/components/payments/payment-guide-button";
 import { InvoiceStatusBadge } from "@/components/status-badges";
 import { PaymentDetails } from "@/components/payments/payment-details";
+import { formatCurrency } from "@/lib/currency";
 import { ClaimPaymentButton } from "@/components/portal/claim-payment-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,7 +62,7 @@ export default async function ClientInvoiceDetailPage({
             <div>
               <p className="text-xs text-muted-foreground">Amount due</p>
               <p className="font-heading text-xl font-bold">
-                {usd.format(Number(invoice.amount))}
+                {formatCurrency(Number(invoice.amount), invoice.currency)}
               </p>
             </div>
             <div>
