@@ -531,13 +531,20 @@ model InvoicePayment {
 }
 
 model InvoiceItem {
-  id          String  @id @default(cuid())
-  invoiceId   String
-  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  description String
-  qty         Decimal @default(1) @db.Decimal(8, 2)
-  rate        Decimal @db.Decimal(10, 2)
-  sortOrder   Int     @default(0)
+  id              String  @id @default(cuid())
+  invoiceId       String
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// Plain-text projection of `descriptionRich`, kept in step on every save.
+  /// Everything that only needs words — email bodies, search, the PDF fallback
+  /// for older invoices — reads this and never has to understand Tiptap.
+  description     String
+  /// Tiptap JSON: bold, italics, bullets and numbered lists, so an invoice can
+  /// lay out what was actually delivered instead of relying on a convention
+  /// about which lines end in a colon. Null on invoices written before this.
+  descriptionRich Json?
+  qty             Decimal @default(1) @db.Decimal(8, 2)
+  rate            Decimal @db.Decimal(10, 2)
+  sortOrder       Int     @default(0)
 
   @@index([invoiceId])
   @@map("invoice_items")

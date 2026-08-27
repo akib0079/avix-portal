@@ -90,9 +90,16 @@ function totalsFor(data: {
   });
 }
 
-function itemRows(items: { description: string; qty: number; rate: number }[] | undefined) {
+function itemRows(
+  items:
+    | { description: string; descriptionRich?: unknown; qty: number; rate: number }[]
+    | undefined,
+) {
   return (items ?? []).map((i, index) => ({
     description: i.description,
+    // Prisma treats `undefined` as "leave alone" and `null` as "write null";
+    // an item with no formatting must store null, not skip the column.
+    descriptionRich: (i.descriptionRich ?? null) as never,
     qty: i.qty,
     rate: i.rate,
     sortOrder: index,

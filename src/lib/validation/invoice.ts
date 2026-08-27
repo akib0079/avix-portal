@@ -13,7 +13,14 @@ export const invoiceStatusValues = [
 export const paymentTermsOptions = [0, 7, 14, 30, 45, 60] as const;
 
 export const invoiceItemSchema = z.object({
-  description: z.string().trim().min(1, "Describe this line item").max(200),
+  /**
+   * Plain-text projection of `descriptionRich`, derived by the form. The cap is
+   * generous because a formatted line item is a small document — a title and
+   * half a dozen bullets — not the single sentence 200 characters assumed.
+   */
+  description: z.string().trim().min(1, "Describe this line item").max(2000),
+  /** Tiptap JSON. The editor owns the shape, so this stays deliberately loose. */
+  descriptionRich: z.unknown().optional(),
   qty: z.number().min(0.01, "Qty must be positive").max(9999),
   rate: z.number().min(0).max(9999999),
 });

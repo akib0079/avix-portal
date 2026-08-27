@@ -11,6 +11,9 @@ import {
 } from "@/lib/validation/invoice";
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
 import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
+import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
+import { richTextToPlain } from "@/lib/rich-text";
+import type { JSONContent } from "@tiptap/react";
 import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -568,7 +571,14 @@ export function InvoiceForm({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => append({ description: "", qty: 1, rate: "" as unknown as number })}
+                    onClick={() =>
+                      append({
+                        description: "",
+                        descriptionRich: null,
+                        qty: 1,
+                        rate: "" as unknown as number,
+                      })
+                    }
                   >
                     <Plus className="size-3.5" /> Add item
                   </Button>
@@ -580,15 +590,34 @@ export function InvoiceForm({
                       <FormField
                         control={form.control}
                         name={`items.${index}.description`}
-                        render={({ field }) => (
+                        render={() => (
                           <FormItem className="flex-1">
                             <FormControl>
-                              <Textarea
-                                rows={2}
-                                placeholder={
-                                  "Monthly Development & Design work\nZiener website :\nMegamenu development"
+                              {/* A line item is a small document — a title and
+                                  what it covered — so it gets a real editor
+                                  rather than a convention about colons. The
+                                  plain projection is written alongside it on
+                                  every keystroke, because the PDF fallback,
+                                  emails and search all read that. */}
+                              <RichTextEditor
+                                value={
+                                  (form.watch(`items.${index}.descriptionRich`) as
+                                    | JSONContent
+                                    | undefined) ?? null
                                 }
-                                {...field}
+                                onChange={(json) => {
+                                  form.setValue(`items.${index}.descriptionRich`, json, {
+                                    shouldDirty: true,
+                                  });
+                                  form.setValue(
+                                    `items.${index}.description`,
+                                    richTextToPlain(json).trim(),
+                                    { shouldDirty: true, shouldValidate: true },
+                                  );
+                                }}
+                                placeholder="Website redesign — what it covered…"
+                                allowImages={false}
+                                compact
                               />
                             </FormControl>
                             <FormMessage />
@@ -668,8 +697,8 @@ export function InvoiceForm({
                 </div>
 
                 <p className="mt-2 text-xs text-muted-foreground">
-                  First line of a description is the bold title; lines ending in
-                  &quot;:&quot; become group headings, the rest become bullets.
+                  Bold, italics, bullets and numbered lists all carry through to the
+                  PDF exactly as you write them here.
                 </p>
 
                 {/* Discount and tax live with the lines they modify. */}

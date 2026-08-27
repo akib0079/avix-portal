@@ -1,4 +1,5 @@
 import "server-only";
+import { renderRichToPdf, hasRichContent } from "./rich-to-pdf";
 import path from "path";
 import React from "react";
 import {
@@ -60,7 +61,7 @@ export type InvoicePdfData = {
   /** Footer note printed at the bottom (e.g. preferred payment method). */
   footer?: string | null;
   /** Line items; empty = legacy single-amount invoice (one fallback line). */
-  items: { description: string; qty: number; rate: number }[];
+  items: { description: string; descriptionRich?: unknown; qty: number; rate: number }[];
   /** Line-item sum before discount and tax; omit for legacy invoices. */
   subtotal?: number | null;
   discount?: number | null;
@@ -275,6 +276,23 @@ export function invoicePdfDocument(data: InvoicePdfData) {
         <View style={s.tableBody}>
           <View style={s.itemCol}>
             {rows.map((item, i) => {
+              // Formatted descriptions render as written. Invoices from before
+              // the rich editor keep the old convention — first line bold, the
+              // rest bullets — so reprinting an old invoice looks unchanged.
+              if (hasRichContent(item.descriptionRich)) {
+                return (
+                  <View key={i} style={s.itemRow}>
+                    {renderRichToPdf(item.descriptionRich, {
+                      paragraph: s.itemTitle,
+                      bold: { fontFamily: "Poppins", fontWeight: 600 },
+                      italic: { fontStyle: "italic" },
+                      bulletRow: s.bulletRow,
+                      bulletDot: s.bulletDot,
+                      bulletText: s.bulletText,
+                    })}
+                  </View>
+                );
+              }
               const { title, detail } = describe(item.description);
               return (
                 <View key={i} style={s.itemRow}>
