@@ -12,7 +12,7 @@ import {
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
 import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
-import { richTextToPlain } from "@/lib/rich-text";
+import { richTextToLines } from "@/lib/rich-text";
 import type { JSONContent } from "@tiptap/react";
 import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
@@ -107,7 +107,7 @@ export function InvoiceForm({
       billToEmail: invoice?.billToEmail ?? "",
       items: invoice?.items?.length
         ? invoice.items
-        : [{ description: "", qty: 1, rate: "" as unknown as number }],
+        : [{ description: "", descriptionRich: null, qty: 1, rate: "" as unknown as number }],
     },
   });
 
@@ -168,7 +168,16 @@ export function InvoiceForm({
       formData.append(key, String(value ?? ""));
     });
     if (docMode === "generate" && items?.length) {
-      formData.append("items", JSON.stringify(items));
+      // descriptionRich is the source of truth; the plain text is derived here
+      // rather than trusted from form state, so what is stored can never drift
+      // from what was typed even if a field failed to register.
+      const withPlain = items.map((item) => ({
+        ...item,
+        description: item.descriptionRich
+          ? richTextToLines(item.descriptionRich)
+          : item.description,
+      }));
+      formData.append("items", JSON.stringify(withPlain));
     }
     const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
@@ -589,8 +598,8 @@ export function InvoiceForm({
                     <div key={row.id} className="flex flex-col gap-2 sm:flex-row sm:items-start">
                       <FormField
                         control={form.control}
-                        name={`items.${index}.description`}
-                        render={() => (
+                        name={`items.${index}.descriptionRich`}
+                        render={({ field }) => (
                           <FormItem className="flex-1">
                             <FormControl>
                               {/* A line item is a small document — a title and
@@ -600,18 +609,18 @@ export function InvoiceForm({
                                   every keystroke, because the PDF fallback,
                                   emails and search all read that. */}
                               <RichTextEditor
-                                value={
-                                  (form.watch(`items.${index}.descriptionRich`) as
-                                    | JSONContent
-                                    | undefined) ?? null
-                                }
+                                value={(field.value as JSONContent | null) ?? null}
                                 onChange={(json) => {
-                                  form.setValue(`items.${index}.descriptionRich`, json, {
-                                    shouldDirty: true,
-                                  });
+                                  // field.onChange registers the path with the
+                                  // form; setValue alone did not survive the
+                                  // field array's reconciliation.
+                                  field.onChange(json);
+                                  // The plain projection keeps its line breaks
+                                  // so the PDF fallback and emails can still
+                                  // read the structure back.
                                   form.setValue(
                                     `items.${index}.description`,
-                                    richTextToPlain(json).trim(),
+                                    richTextToLines(json),
                                     { shouldDirty: true, shouldValidate: true },
                                   );
                                 }}

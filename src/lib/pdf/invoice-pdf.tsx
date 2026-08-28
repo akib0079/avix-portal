@@ -1,6 +1,7 @@
 import "server-only";
 import { renderRichToPdf, hasRichContent } from "./rich-to-pdf";
 import path from "path";
+import { existsSync } from "fs";
 import React from "react";
 import {
   Document,
@@ -21,9 +22,22 @@ import { currencySymbol, type CurrencyCode } from "@/lib/currency";
  */
 const FONT = "Poppins";
 let fontsRegistered = false;
+/**
+ * Whether an italic face is actually available.
+ *
+ * react-pdf does not fake a slant: asking for fontStyle "italic" with no
+ * matching face throws "Could not resolve font", which fails the whole
+ * document — so one italic word in a line item would turn Download PDF into a
+ * 500. Drop Poppins-Italic.ttf into public/fonts and italics start rendering
+ * with no code change; until then they degrade to upright text, which loses a
+ * nuance rather than the invoice.
+ */
+let italicAvailable = false;
 function ensureFonts() {
   if (fontsRegistered) return;
   const dir = path.join(process.cwd(), "public", "fonts");
+  const italic = path.join(dir, "Poppins-Italic.ttf");
+  italicAvailable = existsSync(italic);
   Font.register({
     family: FONT,
     fonts: [
@@ -31,6 +45,9 @@ function ensureFonts() {
       { src: path.join(dir, "Poppins-Medium.ttf"), fontWeight: 500 },
       { src: path.join(dir, "Poppins-SemiBold.ttf"), fontWeight: 600 },
       { src: path.join(dir, "Poppins-Bold.ttf"), fontWeight: 700 },
+      ...(italicAvailable
+        ? [{ src: italic, fontWeight: 400 as const, fontStyle: "italic" as const }]
+        : []),
     ],
   });
   // Poppins has no hyphenation data; keep long words intact rather than split.
@@ -285,7 +302,8 @@ export function invoicePdfDocument(data: InvoicePdfData) {
                     {renderRichToPdf(item.descriptionRich, {
                       paragraph: s.itemTitle,
                       bold: { fontFamily: "Poppins", fontWeight: 600 },
-                      italic: { fontStyle: "italic" },
+                      // Only when a face exists — see italicAvailable above.
+                      italic: italicAvailable ? { fontStyle: "italic" } : {},
                       bulletRow: s.bulletRow,
                       bulletDot: s.bulletDot,
                       bulletText: s.bulletText,

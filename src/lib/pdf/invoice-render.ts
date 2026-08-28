@@ -65,6 +65,10 @@ export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
     notes: invoice.notes,
     items: invoice.items.map((i) => ({
       description: i.description,
+      // Without this the document never sees the formatting and silently falls
+      // back to the plain-text convention — bullets typed in the editor simply
+      // did not appear on the PDF.
+      descriptionRich: i.descriptionRich,
       qty: Number(i.qty),
       rate: Number(i.rate),
     })),
