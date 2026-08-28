@@ -12,7 +12,7 @@ import {
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
 import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
-import { richTextToLines } from "@/lib/rich-text";
+import { richTextToLines, linesToRichDoc } from "@/lib/rich-text";
 import type { JSONContent } from "@tiptap/react";
 import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
@@ -609,7 +609,17 @@ export function InvoiceForm({
                                   every keystroke, because the PDF fallback,
                                   emails and search all read that. */}
                               <RichTextEditor
-                                value={(field.value as JSONContent | null) ?? null}
+                                // Older invoices have no rich document — their
+                                // words live in `description`. Seeding from
+                                // that is why an existing invoice no longer
+                                // opens with an empty editor, and it migrates
+                                // the item to real formatting on the next save.
+                                value={
+                                  (field.value as JSONContent | null) ??
+                                  (linesToRichDoc(
+                                    form.getValues(`items.${index}.description`) ?? "",
+                                  ) as JSONContent | null)
+                                }
                                 onChange={(json) => {
                                   // field.onChange registers the path with the
                                   // form; setValue alone did not survive the

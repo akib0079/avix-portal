@@ -77,3 +77,56 @@ export function richTextToLines(doc: unknown): string {
   walk(root.content ?? [], null);
   return lines.join("\n").trim();
 }
+
+/**
+ * The inverse of {@link richTextToLines}: plain text back into a document.
+ *
+ * Needed because an editor that only reads `descriptionRich` shows every
+ * invoice written before that column existed as an empty box — the text is
+ * right there in `description`, and the form simply wasn't looking at it.
+ *
+ * It reads the convention those older invoices were written under, the same one
+ * the PDF fallback still parses: first line is the title, a line ending in ":"
+ * is a group heading, everything else is a bullet. Existing "•" and "1."
+ * markers are stripped rather than doubled, so text this module produced
+ * survives a round trip unchanged.
+ */
+export function linesToRichDoc(text: string): unknown | null {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const para = (t: string, bold = false) => ({
+    type: "paragraph",
+    content: [{ type: "text", text: t, ...(bold ? { marks: [{ type: "bold" }] } : {}) }],
+  });
+  const listItem = (t: string) => ({ type: "listItem", content: [para(t)] });
+
+  const content: unknown[] = [];
+  let bullets: unknown[] = [];
+  const flush = () => {
+    if (bullets.length) {
+      content.push({ type: "bulletList", content: bullets });
+      bullets = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    // A marker this module wrote, or one typed by hand.
+    const stripped = line.replace(/^([•\-*]|\d+\.)\s+/, "");
+    const isMarked = stripped !== line;
+
+    if (i === 0 && !isMarked) {
+      content.push(para(stripped, true));
+      return;
+    }
+    if (!isMarked && stripped.endsWith(":")) {
+      flush();
+      content.push(para(stripped, true));
+      return;
+    }
+    bullets.push(listItem(stripped));
+  });
+  flush();
+
+  return { type: "doc", content };
+}
