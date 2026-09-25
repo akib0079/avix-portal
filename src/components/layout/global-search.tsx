@@ -53,11 +53,11 @@ export function SearchTrigger({ tone = "light" }: { tone?: "light" | "dark" }) {
         "flex w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors",
         tone === "dark"
           ? "border-sidebar-border bg-sidebar-accent/40 text-muted-foreground hover:bg-sidebar-accent hover:text-white"
-          : "bg-background text-muted-foreground hover:bg-muted/50",
+          : "border-transparent bg-card text-muted-foreground shadow-[var(--surface-shadow)] ring-1 ring-[var(--hairline)] hover:text-foreground",
       )}
     >
       <Search className="size-3.5 shrink-0" />
-      <span className="flex-1 text-left">Search…</span>
+      <span className="flex-1 truncate text-left">Search or jump to…</span>
       <kbd
         className={cn(
           "rounded border px-1.5 text-[10px] font-medium",

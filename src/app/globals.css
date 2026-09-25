@@ -299,3 +299,274 @@
 .animate-avix-float {
   animation: avix-float 2.5s ease-in-out infinite;
 }
+
+/* ==================================================================
+   Surface language — "mission control"
+   ------------------------------------------------------------------
+   Everything here derives from the existing tokens (--brand, --info,
+   --foreground, --card), so a custom branding colour set in Settings
+   flows into the glows, gauges and rings with no extra work. Motion is
+   transform/opacity only (compositor, no layout), and all of it stops
+   under prefers-reduced-motion.
+   ================================================================== */
+
+:root {
+  --canvas: #f5f6f8;
+  --hairline: color-mix(in oklab, var(--foreground) 7%, transparent);
+  --grid-dot: color-mix(in oklab, var(--foreground) 9%, transparent);
+  --glow-brand: color-mix(in oklab, var(--brand) 11%, transparent);
+  --glow-info: color-mix(in oklab, var(--info) 7%, transparent);
+  --surface-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.7) inset, 0 1px 2px rgb(15 23 42 / 0.04),
+    0 12px 32px -18px rgb(15 23 42 / 0.14);
+  /* The cockpit panel stays dark in both themes — it is the one fixed point. */
+  --deck: #0c1324;
+  --deck-2: #111b31;
+}
+
+.dark {
+  --canvas: #0a0f1c;
+  --hairline: color-mix(in oklab, var(--foreground) 9%, transparent);
+  --grid-dot: color-mix(in oklab, var(--foreground) 7%, transparent);
+  --glow-brand: color-mix(in oklab, var(--brand) 12%, transparent);
+  --glow-info: color-mix(in oklab, var(--info) 10%, transparent);
+  --surface-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.3),
+    0 16px 40px -20px rgb(0 0 0 / 0.6);
+  --deck: #0d1428;
+  --deck-2: #131d36;
+}
+
+/* These sit in a cascade layer so a Tailwind utility on the same element
+   (absolute, size-*, text-*) still wins, as it should — unlayered CSS beats
+   every layer. `base` rather than `components`: on Next 16 + Turbopack an
+   `@layer components` block with @apply inside silently dropped the whole
+   rest of this stylesheet (Tailwind alone compiles it fine). */
+@layer base {
+  /* App background: a fixed, composited layer — two soft glows over a dot
+     grid that fades out below the fold. Fixed so scrolling never repaints it. */
+  .app-canvas {
+    background-color: var(--canvas);
+    isolation: isolate;
+  }
+  .app-canvas::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        56rem 28rem at 88% -8%,
+        var(--glow-brand),
+        transparent 62%
+      ),
+      radial-gradient(
+        44rem 26rem at 18% -6%,
+        var(--glow-info),
+        transparent 60%
+      ),
+      radial-gradient(var(--grid-dot) 1px, transparent 1.2px) 0 0 / 22px 22px;
+    mask-image: linear-gradient(
+      to bottom,
+      #000 0,
+      #000 30rem,
+      transparent 60rem
+    );
+  }
+
+  /* The standard raised surface. */
+  .surface {
+    @apply relative rounded-[22px] bg-card text-card-foreground;
+    box-shadow:
+      var(--surface-shadow),
+      0 0 0 1px var(--hairline);
+  }
+  /* A surface you can click: lifts, and its edge warms toward the brand. */
+  .surface-link {
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+      box-shadow 180ms ease;
+  }
+  .surface-link:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      var(--surface-shadow),
+      0 0 0 1px color-mix(in oklab, var(--brand) 35%, transparent),
+      0 18px 40px -22px color-mix(in oklab, var(--brand) 45%, transparent);
+  }
+
+  /* Small caps label that sits above a number or a section. */
+  .eyebrow {
+    @apply text-[11px] font-semibold tracking-[0.14em] text-muted-foreground uppercase;
+  }
+  /* Any figure: display face, fixed-width digits so columns line up. */
+  .num {
+    @apply font-heading tracking-tight tabular-nums;
+  }
+
+  /* ---------- The deck: the dark cockpit panel at the top ---------- */
+  .deck {
+    @apply relative overflow-hidden rounded-[28px] text-white;
+    background:
+      radial-gradient(
+        38rem 20rem at 100% 0%,
+        color-mix(in oklab, var(--brand) 30%, transparent),
+        transparent 62%
+      ),
+      radial-gradient(
+        30rem 18rem at 0% 110%,
+        color-mix(in oklab, var(--info) 22%, transparent),
+        transparent 60%
+      ),
+      linear-gradient(160deg, var(--deck-2), var(--deck));
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.08) inset,
+      0 30px 60px -30px rgb(12 19 36 / 0.55);
+  }
+  /* Engineering grid, fading from the top-right. */
+  .deck::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px) 0 0 / 36px
+        36px,
+      linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px) 0
+        0 / 36px 36px;
+    mask-image: radial-gradient(70% 90% at 80% 0%, #000, transparent 75%);
+  }
+  .deck-edge {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--deck-spin),
+      transparent 0 64%,
+      color-mix(in oklab, var(--brand) 90%, white) 78%,
+      transparent 88%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: deck-spin 9s linear infinite;
+  }
+
+  /* Diagonal hatching — past periods in bar charts, "not yet" states. */
+  .hatch {
+    background-image: repeating-linear-gradient(
+      135deg,
+      currentColor 0 1.5px,
+      transparent 1.5px 6px
+    );
+  }
+
+  /* Live indicator: a dot with a ring that breathes out from it. */
+  .signal {
+    @apply relative inline-flex size-2 rounded-full;
+    background: currentColor;
+  }
+  .signal::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: currentColor;
+    animation: signal 2.2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  /* Entrance: content settles in, lightly staggered by --i. Short enough
+     that it never reads as waiting. */
+  .rise {
+    animation: rise 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+
+  /* Range switch in flight: the old numbers dim instead of freezing. */
+  [data-pending] .range-sensitive {
+    opacity: 0.55;
+    transition: opacity 150ms ease;
+  }
+
+  /* Sidebar: the navy panel with a faint brand glow at its crown and a hairline
+     of light on its top edge, so it reads as a lit object, not a flat fill. */
+  .sidebar-surface {
+    background:
+      radial-gradient(
+        20rem 14rem at 0% 0%,
+        color-mix(in oklab, var(--brand) 16%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        18rem 14rem at 100% 100%,
+        color-mix(in oklab, var(--info) 10%, transparent),
+        transparent 70%
+      ),
+      var(--sidebar);
+    box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.06) inset;
+  }
+}
+
+/* A single comet of light travelling the deck's edge. The angle is a
+   registered property so the gradient itself can rotate; the ring is a
+   1px masked border, so the repaint area is tiny. */
+@property --deck-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes deck-spin {
+  to {
+    --deck-spin: 360deg;
+  }
+}
+@keyframes signal {
+  75%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Skeleton shimmer: a highlight swept across by transform. */
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .deck-edge,
+  .signal::after,
+  .surface-link {
+    animation: none;
+    transition: none;
+  }
+  .surface-link:hover {
+    transform: none;
+  }
+}

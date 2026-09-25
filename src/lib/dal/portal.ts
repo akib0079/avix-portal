@@ -10,7 +10,9 @@ import { requireClient } from "@/lib/dal/session";
 
 export async function getPortalOverview() {
   const user = await requireClient();
-  const [projects, openInvoices, notifications, sentMessages, requests] =
+  // One wave: these used to be two sequential Promise.alls, though nothing in
+  // the second depended on the first.
+  const [projects, openInvoices, notifications, sentMessages, requests, settledInvoices, record] =
     await Promise.all([
       prisma.project.findMany({
         where: { clientId: user.id },
@@ -31,22 +33,19 @@ export async function getPortalOverview() {
       // Onboarding checklist signals
       prisma.message.count({ where: { clientId: user.id, senderRole: "CLIENT" } }),
       prisma.taskRequest.count({ where: { clientId: user.id } }),
+      // Ticked once they've actually paid (or told us they have).
+      prisma.invoice.count({
+        where: {
+          clientId: user.id,
+          OR: [{ status: "PAID" }, { paymentClaimedAt: { not: null } }],
+        },
+      }),
+      // The session user doesn't carry onboardedAt — read it from the DB.
+      prisma.user.findUnique({
+        where: { id: user.id },
+        select: { onboardedAt: true },
+      }),
     ]);
-
-  const [settledInvoices, record] = await Promise.all([
-    // Ticked once they've actually paid (or told us they have).
-    prisma.invoice.count({
-      where: {
-        clientId: user.id,
-        OR: [{ status: "PAID" }, { paymentClaimedAt: { not: null } }],
-      },
-    }),
-    // The session user doesn't carry onboardedAt — read it from the DB.
-    prisma.user.findUnique({
-      where: { id: user.id },
-      select: { onboardedAt: true },
-    }),
-  ]);
 
   const checklist = {
     viewedProject: projects.length > 0,

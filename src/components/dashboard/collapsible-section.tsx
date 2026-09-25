@@ -11,11 +11,14 @@ import { cn } from "@/lib/utils";
 export function CollapsibleSection({
   id,
   title,
+  index,
   children,
   defaultOpen = true,
 }: {
   id: string;
   title: string;
+  /** Section number shown as "02", reading the page like a report. */
+  index?: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
 }) {
@@ -52,23 +55,26 @@ export function CollapsibleSection({
   }
 
   return (
-    <section className="mt-6">
+    <section className="mt-10">
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="group mb-3 flex w-full items-center gap-2 text-left"
+        className="group mb-4 flex w-full items-center gap-3 text-left"
       >
-        <h2 className="font-heading text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-          {title}
-        </h2>
-        <ChevronDown
-          className={cn(
-            "size-4 text-muted-foreground transition-transform",
-            !open && "-rotate-90",
-          )}
-        />
-        <span className="h-px flex-1 bg-border" />
+        {index && (
+          <span className="num text-xs font-semibold text-primary tabular-nums">{index}</span>
+        )}
+        <h2 className="eyebrow text-foreground">{title}</h2>
+        <span className="h-px flex-1 bg-gradient-to-r from-[var(--hairline)] to-transparent" />
+        <span className="flex size-6 items-center justify-center rounded-full ring-1 ring-[var(--hairline)] transition-colors group-hover:bg-muted">
+          <ChevronDown
+            className={cn(
+              "size-3.5 text-muted-foreground transition-transform",
+              !open && "-rotate-90",
+            )}
+          />
+        </span>
       </button>
       {/* Until the stored value is read, render open to avoid a flash of hidden content. */}
       {(open || !ready) && <div>{children}</div>}

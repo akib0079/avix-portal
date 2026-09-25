@@ -161,18 +161,20 @@ function NavLinks({
         <Link
           href={item.href}
           onClick={onNavigate}
+          aria-current={active ? "page" : undefined}
           className={cn(
-            "relative flex items-center gap-3 rounded-lg py-2 pr-9 pl-3 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-white",
-            active && "bg-sidebar-accent text-white",
+            "relative flex items-center gap-3 rounded-xl py-2 pr-9 pl-3 text-sm font-medium text-sidebar-foreground/85 transition-colors hover:bg-white/[0.05] hover:text-white",
+            active &&
+              "bg-gradient-to-r from-white/[0.09] to-white/[0.03] text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.06)] ring-1 ring-white/[0.06]",
           )}
         >
           {active && (
-            <span className="absolute top-1/2 left-0 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
+            <span className="absolute top-1/2 -left-3 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary shadow-[0_0_14px_2px] shadow-primary/60" />
           )}
-          <Icon className="size-4 shrink-0" />
+          <Icon className={cn("size-4 shrink-0", active && "text-primary")} />
           <span className="flex-1 truncate">{item.label}</span>
           {count > 0 && (
-            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white shadow-[0_0_12px] shadow-primary/50">
               {count > 99 ? "99+" : count}
             </span>
           )}
@@ -278,7 +280,7 @@ function SidebarInner({
   }
 
   return (
-    <div className="flex h-full flex-col bg-sidebar">
+    <div className="sidebar-surface flex h-full flex-col">
       <div className="px-5 pt-6 pb-4">
         <Link
           href={variant === "admin" ? (isStaff ? "/admin/projects" : "/admin") : "/portal"}
@@ -299,33 +301,35 @@ function SidebarInner({
       <div className="flex-1 overflow-y-auto px-3">
         <NavLinks items={items} pathname={pathname} onNavigate={onNavigate} />
       </div>
-      <div className="border-t border-sidebar-border p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
-            {initials(user.name)}
+      <div className="p-3">
+        <div className="rounded-2xl bg-white/[0.04] p-3 ring-1 ring-white/[0.06]">
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[color-mix(in_oklab,var(--brand)_70%,white)] to-[var(--brand)] text-sm font-semibold text-white shadow-[0_6px_16px_-6px] shadow-primary/70">
+              {initials(user.name)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-white">{user.name}</p>
+              <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-white">{user.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{user.email}</p>
-          </div>
+          <button
+            onClick={signOut}
+            disabled={signingOut}
+            aria-busy={signingOut}
+            className="mt-2.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-white disabled:pointer-events-none disabled:opacity-80"
+          >
+            {signingOut ? (
+              <>
+                <Loader2 className="size-4 animate-spin text-primary" />
+                <span className="text-white">Signing out…</span>
+              </>
+            ) : (
+              <>
+                <LogOut className="size-4" /> Sign out
+              </>
+            )}
+          </button>
         </div>
-        <button
-          onClick={signOut}
-          disabled={signingOut}
-          aria-busy={signingOut}
-          className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-white disabled:pointer-events-none disabled:opacity-80"
-        >
-          {signingOut ? (
-            <>
-              <Loader2 className="size-4 animate-spin text-primary" />
-              <span className="text-white">Signing out…</span>
-            </>
-          ) : (
-            <>
-              <LogOut className="size-4" /> Sign out
-            </>
-          )}
-        </button>
       </div>
     </div>
   );
@@ -376,11 +380,11 @@ export function AppShell({
   }
 
   const shell = (
-    <div className="flex min-h-screen w-full bg-muted/60 dark:bg-background">
+    <div className="app-canvas flex min-h-screen w-full">
       {/* Desktop sidebar — floats above the canvas like the login panel */}
       <aside
         className={cn(
-          "fixed inset-y-3 left-3 z-30 hidden w-[17rem] overflow-hidden rounded-[26px] shadow-xl shadow-black/10 ring-1 ring-black/5 transition-transform duration-200 dark:ring-white/10",
+          "fixed inset-y-3 left-3 z-30 hidden w-[17rem] overflow-hidden rounded-[26px] shadow-[0_24px_60px_-24px_rgb(12_19_36/0.6)] ring-1 ring-black/5 transition-transform duration-200 dark:ring-white/10",
           collapsed ? "lg:hidden" : "lg:block",
         )}
       >
@@ -394,7 +398,7 @@ export function AppShell({
       </aside>
 
       {/* Mobile topbar */}
-      <div className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b bg-sidebar px-4 lg:hidden">
+      <div className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-sidebar/95 px-4 backdrop-blur-xl lg:hidden">
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
             <Button
@@ -435,7 +439,7 @@ export function AppShell({
         )}
       >
         {/* Desktop topbar */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center gap-2 px-6 backdrop-blur lg:flex lg:px-10">
+        <div className="sticky top-0 z-20 hidden h-16 items-center gap-2 bg-[color-mix(in_oklab,var(--canvas)_70%,transparent)] px-6 backdrop-blur-xl [mask-image:linear-gradient(to_bottom,#000_80%,transparent)] lg:flex lg:px-10">
           <Button
             variant="ghost"
             size="icon"
@@ -449,6 +453,12 @@ export function AppShell({
               <PanelLeftClose className="size-5" />
             )}
           </Button>
+          {/* With the sidebar off, the command bar comes with you. */}
+          {collapsed && variant === "admin" && !isStaff && (
+            <div className="ml-2 w-72">
+              <SearchTrigger tone="light" />
+            </div>
+          )}
           <div className="ml-auto" />
           {showQuickAdd && <QuickAdd tone="light" />}
           <ThemeToggle tone="light" />

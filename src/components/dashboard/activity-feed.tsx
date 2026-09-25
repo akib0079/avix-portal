@@ -13,7 +13,8 @@ import {
   ArrowRightLeft,
 } from "lucide-react";
 
-const META: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
+/** Icon + colour per activity type; shared with the dashboard timeline. */
+export const ACTIVITY_META: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
   "invoice.sent": { icon: Receipt, tone: "text-sky-600" },
   "invoice.paid": { icon: BadgeCheck, tone: "text-emerald-600" },
   "invoice.claimed": { icon: Receipt, tone: "text-amber-600" },
@@ -45,7 +46,7 @@ export function ActivityFeed({
   return (
     <ul className="space-y-3">
       {items.map((e) => {
-        const meta = META[e.type] ?? { icon: ActivityIcon, tone: "text-muted-foreground" };
+        const meta = ACTIVITY_META[e.type] ?? { icon: ActivityIcon, tone: "text-muted-foreground" };
         const Icon = meta.icon;
         const inner = (
           <>

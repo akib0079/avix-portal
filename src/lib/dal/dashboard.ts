@@ -1,5 +1,8 @@
 import "server-only";
+import { cache } from "react";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { formatCurrency } from "@/lib/currency";
 import { requireAdmin } from "@/lib/dal/session";
 import { rangeWindow, type DashboardRange } from "@/lib/dashboard-ranges";
 
@@ -11,141 +14,210 @@ export {
   type DashboardRange,
 } from "@/lib/dashboard-ranges";
 
-export async function getAdminDashboard(range: DashboardRange = "month") {
+/** A JS instant as a UTC `timestamp` — how Prisma stores DateTime columns. */
+function ts(d: Date) {
+  return Prisma.sql`(${d.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+}
+
+/** A JS instant as a `date`, truncated the way Prisma truncates @db.Date. */
+function day(d: Date) {
+  return Prisma.sql`${d.toISOString().slice(0, 10)}::date`;
+}
+
+type InvoiceTotalsRow = {
+  collected: Prisma.Decimal;
+  invoiced: Prisma.Decimal;
+  outstanding: Prisma.Decimal;
+  expected: Prisma.Decimal;
+  aging1Amount: Prisma.Decimal;
+  aging1Count: bigint;
+  aging2Amount: Prisma.Decimal;
+  aging2Count: bigint;
+  aging3Amount: Prisma.Decimal;
+  aging3Count: bigint;
+  missingUsd: bigint;
+};
+
+type HoursRow = { inRange: Prisma.Decimal; thisWeek: Prisma.Decimal; lastWeek: Prisma.Decimal };
+
+/**
+ * Every headline number on the dashboard.
+ *
+ * The invoice figures used to be eleven separate aggregate queries. With a
+ * five-connection pool that is three round-trip waves before the first number
+ * can render; as one FILTERed pass over `invoices` it is one. Same for the
+ * three time-entry sums. The FILTER predicates mirror the Prisma `where`s they
+ * replaced exactly — `status <> 'PAID'` is `{ not: "PAID" }`.
+ *
+ * Wrapped in cache() because several dashboard sections read it and must not
+ * each pay for it.
+ */
+export const getDashboardKpis = cache(async (range: DashboardRange = "month") => {
   await requireAdmin();
 
   const now = new Date();
   const win = rangeWindow(range, now);
-  const startOfMonth = win.start;
-  const soon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const in30Days = new Date(now.getTime() + 30 * 86_400_000);
   const days30Ago = new Date(now.getTime() - 30 * 86_400_000);
   const days60Ago = new Date(now.getTime() - 60 * 86_400_000);
+  // Week boundaries (Mon-start) for the utilisation comparison.
+  const dow = (now.getDay() + 6) % 7;
+  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+  const startOfLastWeek = new Date(startOfWeek.getTime() - 7 * 86_400_000);
+
+  const unpaid = Prisma.sql`status <> 'PAID'`;
+  const inWindow = Prisma.sql`"issueDate" >= ${ts(win.start)} AND "issueDate" < ${ts(win.end)}`;
 
   const [
-    totalClients,
-    activeProjects,
-    totalInvoices,
-    paidAgg,
-    monthPaidAgg,
-    outstandingAgg,
-    pendingRequests,
-    hoursAgg,
-    recentProjects,
+    [totals],
+    [hours],
     invoicesByStatus,
-    upcomingInvoices,
     mrrAgg,
-    agingCurrent,
-    aging30,
-    aging60,
-    expectedInvoicesAgg,
-    invoicesMissingUsd,
+    targetRow,
+    activeProjects,
+    pendingRequests,
   ] = await Promise.all([
-    prisma.user.count({ where: { role: "CLIENT" } }),
+    prisma.$queryRaw<InvoiceTotalsRow[]>`
+      SELECT
+        COALESCE(SUM("amountUsd") FILTER (WHERE status = 'PAID' AND ${inWindow}), 0) AS "collected",
+        COALESCE(SUM("amountUsd") FILTER (WHERE ${inWindow}), 0) AS "invoiced",
+        COALESCE(SUM("amountUsd") FILTER (WHERE ${unpaid}), 0) AS "outstanding",
+        COALESCE(SUM("amountUsd") FILTER (
+          WHERE ${unpaid} AND "dueDate" >= ${ts(now)} AND "dueDate" <= ${ts(in30Days)}
+        ), 0) AS "expected",
+        COALESCE(SUM("amountUsd") FILTER (
+          WHERE ${unpaid} AND "dueDate" >= ${ts(days30Ago)} AND "dueDate" < ${ts(now)}
+        ), 0) AS "aging1Amount",
+        COUNT(*) FILTER (
+          WHERE ${unpaid} AND "dueDate" >= ${ts(days30Ago)} AND "dueDate" < ${ts(now)}
+        ) AS "aging1Count",
+        COALESCE(SUM("amountUsd") FILTER (
+          WHERE ${unpaid} AND "dueDate" >= ${ts(days60Ago)} AND "dueDate" < ${ts(days30Ago)}
+        ), 0) AS "aging2Amount",
+        COUNT(*) FILTER (
+          WHERE ${unpaid} AND "dueDate" >= ${ts(days60Ago)} AND "dueDate" < ${ts(days30Ago)}
+        ) AS "aging2Count",
+        COALESCE(SUM("amountUsd") FILTER (WHERE ${unpaid} AND "dueDate" < ${ts(days60Ago)}), 0)
+          AS "aging3Amount",
+        COUNT(*) FILTER (WHERE ${unpaid} AND "dueDate" < ${ts(days60Ago)}) AS "aging3Count",
+        COUNT(*) FILTER (WHERE "amountUsd" IS NULL) AS "missingUsd"
+      FROM invoices`,
+    prisma.$queryRaw<HoursRow[]>`
+      SELECT
+        COALESCE(SUM(hours) FILTER (
+          WHERE "date" >= ${day(win.start)} AND "date" < ${day(win.end)}
+        ), 0) AS "inRange",
+        COALESCE(SUM(hours) FILTER (WHERE "date" >= ${day(startOfWeek)}), 0) AS "thisWeek",
+        COALESCE(SUM(hours) FILTER (
+          WHERE "date" >= ${day(startOfLastWeek)} AND "date" < ${day(startOfWeek)}
+        ), 0) AS "lastWeek"
+      FROM time_entries`,
+    prisma.invoice.groupBy({ by: ["status"], _count: { _all: true } }),
+    // MRR — recurring monthly value of all active retainers.
+    prisma.retainer.aggregate({ where: { active: true }, _sum: { amount: true } }),
+    prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
     prisma.project.count({ where: { status: { not: "COMPLETED" } } }),
-    prisma.invoice.count(),
-    prisma.invoice.aggregate({ where: { status: "PAID" }, _sum: { amountUsd: true } }),
-    prisma.invoice.aggregate({
-      where: { status: "PAID", issueDate: { gte: win.start, lt: win.end } },
-      _sum: { amountUsd: true },
-    }),
-    prisma.invoice.aggregate({
-      where: { status: { not: "PAID" } },
-      _sum: { amountUsd: true },
-    }),
     prisma.taskRequest.count({ where: { status: "PENDING" } }),
-    prisma.timeEntry.aggregate({
-      where: { date: { gte: win.start, lt: win.end } },
-      _sum: { hours: true },
-    }),
+  ]);
+
+  const mrr = Number(mrrAgg._sum.amount ?? 0);
+  const bucket = (amount: Prisma.Decimal, count: bigint) => ({
+    amount: Number(amount),
+    count: Number(count),
+  });
+
+  return {
+    /** Paid (USD) with an issue date inside the selected range. */
+    collected: Number(totals.collected),
+    /** Everything issued inside the selected range, paid or not (USD). */
+    invoiced: Number(totals.invoiced),
+    outstanding: Number(totals.outstanding),
+    /** Non-USD invoices awaiting a USD value; excluded from every total here. */
+    invoicesMissingUsd: Number(totals.missingUsd),
+    /** Monthly revenue goal (0 = not set). */
+    target: Number(targetRow?.value ?? 0) || 0,
+    activeProjects,
+    pendingRequests,
+    hoursInRange: Number(hours.inRange),
+    hoursThisWeek: Number(hours.thisWeek),
+    hoursLastWeek: Number(hours.lastWeek),
+    invoicesByStatus: invoicesByStatus.map((row) => ({
+      status: row.status,
+      count: row._count._all,
+    })),
+    money: {
+      mrr,
+      // Expected next 30 days = one-off invoices due soon + MRR.
+      expectedNext30: Number(totals.expected) + mrr,
+      aging: {
+        current: bucket(totals.aging1Amount, totals.aging1Count),
+        thirty: bucket(totals.aging2Amount, totals.aging2Count),
+        sixtyPlus: bucket(totals.aging3Amount, totals.aging3Count),
+      },
+    },
+  };
+});
+
+/** How many calendar months a range spans — scales a monthly target to it. */
+export function monthsInRange(range: DashboardRange, now = new Date()): number {
+  const { start, end } = rangeWindow(range, now);
+  return (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth();
+}
+
+export type DashboardKpis = Awaited<ReturnType<typeof getDashboardKpis>>;
+
+/** The two lists under the fold: newest projects and invoices falling due. */
+export const getDashboardLists = cache(async () => {
+  await requireAdmin();
+  const soon = new Date(Date.now() + 7 * 86_400_000);
+  const [recentProjects, upcomingInvoices] = await Promise.all([
     prisma.project.findMany({
       orderBy: { createdAt: "desc" },
       take: 6,
-      include: {
-        client: { select: { firstName: true, lastName: true, company: true } },
+      select: {
+        id: true,
+        projectName: true,
+        type: true,
+        status: true,
+        client: { select: { firstName: true, lastName: true } },
+        milestones: { select: { status: true } },
       },
     }),
-    prisma.invoice.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.invoice.findMany({
       where: { status: { not: "PAID" }, dueDate: { not: null, lte: soon } },
       orderBy: { dueDate: "asc" },
       take: 5,
-      include: { client: { select: { firstName: true, lastName: true } } },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        amount: true,
+        currency: true,
+        dueDate: true,
+        client: { select: { firstName: true, lastName: true } },
+      },
     }),
-    // MRR — recurring monthly value of all active retainers.
-    prisma.retainer.aggregate({ where: { active: true }, _sum: { amount: true } }),
-    // Aging: unpaid invoices past due, bucketed by how overdue.
-    prisma.invoice.aggregate({
-      where: { status: { not: "PAID" }, dueDate: { gte: days30Ago, lt: now } },
-      _sum: { amountUsd: true },
-      _count: { _all: true },
-    }),
-    prisma.invoice.aggregate({
-      where: { status: { not: "PAID" }, dueDate: { gte: days60Ago, lt: days30Ago } },
-      _sum: { amountUsd: true },
-      _count: { _all: true },
-    }),
-    prisma.invoice.aggregate({
-      where: { status: { not: "PAID" }, dueDate: { not: null, lt: days60Ago } },
-      _sum: { amountUsd: true },
-      _count: { _all: true },
-    }),
-    // Expected inflow: unpaid invoices due within the next 30 days.
-    prisma.invoice.aggregate({
-      where: { status: { not: "PAID" }, dueDate: { gte: now, lte: in30Days } },
-      _sum: { amountUsd: true },
-    }),
-    // Invoices with no USD value yet. They sit outside every figure above, so
-    // the count has to be visible: a total that quietly shrank would be worse
-    // than the face-value sum it replaced.
-    prisma.invoice.count({ where: { amountUsd: null } }),
   ]);
 
   return {
-    totalClients,
-    activeProjects,
-    totalInvoices,
-    paidRevenue: Number(paidAgg._sum.amountUsd ?? 0),
-    /** Non-USD invoices awaiting a USD value; excluded from every total here. */
-    invoicesMissingUsd,
-    revenueThisMonth: Number(monthPaidAgg._sum.amountUsd ?? 0),
-    outstanding: Number(outstandingAgg._sum.amountUsd ?? 0),
-    pendingRequests,
-    hoursThisMonth: Number(hoursAgg._sum.hours ?? 0),
-    recentProjects,
-    invoicesByStatus: invoicesByStatus.map((row) => ({
-      status: row.status,
-      count: row._count._all,
+    recentProjects: recentProjects.map((p) => ({
+      id: p.id,
+      projectName: p.projectName,
+      type: p.type,
+      status: p.status,
+      clientName: p.client ? `${p.client.firstName} ${p.client.lastName}`.trim() : null,
+      milestonesDone: p.milestones.filter((m) => m.status === "COMPLETED").length,
+      milestonesTotal: p.milestones.length,
     })),
     upcomingInvoices: upcomingInvoices.map((inv) => ({
       id: inv.id,
       invoiceNumber: inv.invoiceNumber,
       amount: Number(inv.amount),
+      currency: inv.currency,
       dueDate: inv.dueDate!.toISOString(),
       clientName: `${inv.client.firstName} ${inv.client.lastName}`.trim(),
     })),
-    money: {
-      mrr: Number(mrrAgg._sum.amount ?? 0),
-      // Recurring value expected next 30 days = one-off invoices due soon + MRR.
-      expectedNext30:
-        Number(expectedInvoicesAgg._sum.amountUsd ?? 0) + Number(mrrAgg._sum.amount ?? 0),
-      aging: {
-        current: {
-          amount: Number(agingCurrent._sum.amountUsd ?? 0),
-          count: agingCurrent._count._all,
-        },
-        thirty: {
-          amount: Number(aging30._sum.amountUsd ?? 0),
-          count: aging30._count._all,
-        },
-        sixtyPlus: {
-          amount: Number(aging60._sum.amountUsd ?? 0),
-          count: aging60._count._all,
-        },
-      },
-    },
   };
-}
+});
 
 export type TodayItem = {
   kind:
@@ -164,7 +236,7 @@ export type TodayItem = {
 };
 
 /** "What needs you today" — overdue money, overdue follow-ups, today's meetings, drafts to send. */
-export async function getTodayItems(): Promise<TodayItem[]> {
+export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
   await requireAdmin();
   const now = new Date();
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
@@ -291,7 +363,8 @@ export async function getTodayItems(): Promise<TodayItem[]> {
     items.push({
       kind: "invoice",
       label: `Chase ${inv.invoiceNumber} — ${inv.client.firstName} ${inv.client.lastName}`,
-      detail: `$${Number(inv.amount).toFixed(2)} · ${days} day${days === 1 ? "" : "s"} overdue`,
+      // In the invoice's own currency: "$1400" on a EUR invoice is a wrong number.
+      detail: `${formatCurrency(Number(inv.amount), inv.currency)} · ${days} day${days === 1 ? "" : "s"} overdue`,
       link: `/admin/invoices/${inv.id}`,
     });
   }
@@ -387,7 +460,7 @@ export async function getTodayItems(): Promise<TodayItem[]> {
     lead: 8,
   };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
-}
+});
 
 
 // ---------- Tier 2: business cockpit ----------
@@ -397,11 +470,7 @@ export const REVENUE_TARGET_KEY = "monthlyRevenueTarget";
 export type MonthPoint = { label: string; amount: number };
 
 export type BusinessHealth = {
-  /** Monthly revenue goal (0 = not set) and progress against collected. */
-  target: number;
-  collectedThisMonth: number;
-  invoicedThisMonth: number;
-  /** Paid totals for the last 6 months, oldest first (sparkline). */
+  /** Paid totals (USD) for the last 6 months, oldest first. */
   trend: MonthPoint[];
   /** Projects that look stuck or late. */
   flags: {
@@ -409,6 +478,7 @@ export type BusinessHealth = {
     name: string;
     clientName: string | null;
     reason: string;
+    kind: "late" | "stale";
   }[];
   /** Best clients by collected revenue, with how long since we last spoke. */
   topClients: {
@@ -417,49 +487,19 @@ export type BusinessHealth = {
     collected: number;
     lastContactDays: number | null;
   }[];
-  /** Hours logged this week vs the week before (Tier 3 utilisation). */
-  hoursThisWeek: number;
-  hoursLastWeek: number;
 };
 
-export async function getBusinessHealth(
-  range: DashboardRange = "month",
-): Promise<BusinessHealth> {
+/** Cached per request: the deck, the pulse tiles and the money grid all read it. */
+export const getBusinessHealth = cache(async (): Promise<BusinessHealth> => {
   await requireAdmin();
   const now = new Date();
-  const win = rangeWindow(range, now);
-  const startOfMonth = win.start;
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
   const staleCutoff = new Date(now.getTime() - 14 * 86_400_000);
 
-  // Week boundaries (Mon-start) for the utilisation comparison.
-  const dow = (now.getDay() + 6) % 7;
-  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
-  const startOfLastWeek = new Date(startOfWeek.getTime() - 7 * 86_400_000);
-
-  const [
-    targetRow,
-    collectedAgg,
-    invoicedAgg,
-    paidRows,
-    staleProjects,
-    lateProjects,
-    clientRows,
-    weekAgg,
-    lastWeekAgg,
-  ] = await Promise.all([
-    prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
-    prisma.invoice.aggregate({
-      where: { status: "PAID", issueDate: { gte: win.start, lt: win.end } },
-      _sum: { amountUsd: true },
-    }),
-    prisma.invoice.aggregate({
-      where: { issueDate: { gte: win.start, lt: win.end } },
-      _sum: { amountUsd: true },
-    }),
+  const [paidRows, staleProjects, lateProjects, topRows] = await Promise.all([
     prisma.invoice.findMany({
-      where: { status: "PAID", issueDate: { gte: sixMonthsAgo } },
-      select: { amount: true, issueDate: true },
+      where: { status: "PAID", issueDate: { gte: sixMonthsAgo }, amountUsd: { not: null } },
+      select: { amountUsd: true, issueDate: true },
     }),
     // Live projects with nothing touched in a fortnight.
     prisma.project.findMany({
@@ -485,27 +525,29 @@ export async function getBusinessHealth(
         client: { select: { firstName: true, lastName: true } },
       },
     }),
-    prisma.user.findMany({
-      where: { role: "CLIENT" },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        company: true,
-        invoices: { where: { status: "PAID" }, select: { amount: true } },
-        clientMessages: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { createdAt: true },
-        },
-      },
-    }),
-    prisma.timeEntry.aggregate({ where: { date: { gte: startOfWeek } }, _sum: { hours: true } }),
-    prisma.timeEntry.aggregate({
-      where: { date: { gte: startOfLastWeek, lt: startOfWeek } },
-      _sum: { hours: true },
+    // Ranked in the database. This used to load every client with every paid
+    // invoice and sort in JS — a query that grew with the whole ledger to
+    // show five rows. Also USD now: face value added EUR to USD.
+    prisma.invoice.groupBy({
+      by: ["clientId"],
+      where: { status: "PAID", amountUsd: { not: null } },
+      _sum: { amountUsd: true },
+      orderBy: { _sum: { amountUsd: "desc" } },
+      take: 5,
     }),
   ]);
+
+  const top = await prisma.user.findMany({
+    where: { id: { in: topRows.map((r) => r.clientId) } },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      company: true,
+      clientMessages: { orderBy: { createdAt: "desc" }, take: 1, select: { createdAt: true } },
+    },
+  });
+  const byId = new Map(top.map((u) => [u.id, u]));
 
   // Six-month paid trend, bucketed by calendar month.
   const buckets = new Map<string, number>();
@@ -515,7 +557,7 @@ export async function getBusinessHealth(
   }
   for (const inv of paidRows) {
     const key = `${inv.issueDate.getFullYear()}-${inv.issueDate.getMonth()}`;
-    if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + Number(inv.amount));
+    if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + Number(inv.amountUsd));
   }
   const trend: MonthPoint[] = [...buckets.entries()].map(([key, amount]) => {
     const [y, m] = key.split("-").map(Number);
@@ -531,42 +573,35 @@ export async function getBusinessHealth(
       name: p.projectName,
       clientName: p.client ? `${p.client.firstName} ${p.client.lastName}`.trim() : null,
       reason: `past due ${p.dueDate!.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+      kind: "late" as const,
     })),
     ...staleProjects.map((p) => ({
       id: p.id,
       name: p.projectName,
       clientName: p.client ? `${p.client.firstName} ${p.client.lastName}`.trim() : null,
       reason: `no activity in ${Math.floor((now.getTime() - p.updatedAt.getTime()) / 86_400_000)} days`,
+      kind: "stale" as const,
     })),
   ]
     // A project can be both late and stale — show it once.
     .filter((f, i, arr) => arr.findIndex((x) => x.id === f.id) === i)
     .slice(0, 6);
 
-  const topClients = clientRows
-    .map((c) => {
-      const collected = c.invoices.reduce((sum, i) => sum + Number(i.amount), 0);
-      const last = c.clientMessages[0]?.createdAt ?? null;
-      return {
+  const topClients = topRows.flatMap((row) => {
+    const c = byId.get(row.clientId);
+    if (!c) return [];
+    const last = c.clientMessages[0]?.createdAt ?? null;
+    return [
+      {
         id: c.id,
         name: c.company || `${c.firstName} ${c.lastName}`.trim() || "Client",
-        collected,
+        collected: Number(row._sum.amountUsd ?? 0),
         lastContactDays: last
           ? Math.floor((now.getTime() - last.getTime()) / 86_400_000)
           : null,
-      };
-    })
-    .sort((a, b) => b.collected - a.collected)
-    .slice(0, 5);
+      },
+    ];
+  });
 
-  return {
-    target: Number(targetRow?.value ?? 0) || 0,
-    collectedThisMonth: Number(collectedAgg._sum.amountUsd ?? 0),
-    invoicedThisMonth: Number(invoicedAgg._sum.amountUsd ?? 0),
-    trend,
-    flags,
-    topClients,
-    hoursThisWeek: Number(weekAgg._sum.hours ?? 0),
-    hoursLastWeek: Number(lastWeekAgg._sum.hours ?? 0),
-  };
-}
+  return { trend, flags, topClients };
+});
