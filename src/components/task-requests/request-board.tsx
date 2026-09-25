@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { RequestCard } from "./request-card";
+import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { TaskRequestStatus } from "@prisma/client";
@@ -109,40 +110,66 @@ export function RequestBoard({
                 <p className="mt-0.5 text-xs text-muted-foreground">{column.hint}</p>
               </header>
 
-              {items.length === 0 ? (
-                <p className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
-                  Nothing here
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {items.map((request) => {
-                    const waitingDays = Math.floor(
-                      (now - new Date(request.createdAt).getTime()) / 86_400_000,
-                    );
-                    const stale = request.status === "PENDING" && waitingDays >= SLA_DAYS;
-                    return (
-                      <div
-                        key={request.id}
-                        className={cn(
-                          "rounded-xl",
-                          stale && "ring-2 ring-amber-300 dark:ring-amber-800",
-                        )}
-                      >
-                        {stale && (
-                          <p className="flex items-center gap-1 rounded-t-xl bg-amber-100 px-3 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
-                            <Clock className="size-3" /> Waiting {waitingDays} days
-                          </p>
-                        )}
-                        <RequestCard request={request} />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <RequestColumn items={items} now={now} resetKey={search} />
             </section>
           );
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * One column, rendered a page at a time: every card carries the full rich-text
+ * description, and Approved/Declined only ever grow.
+ */
+function RequestColumn({
+  items,
+  now,
+  resetKey,
+}: {
+  items: BoardRequest[];
+  now: number;
+  resetKey: string;
+}) {
+  const page = useProgressive(items, resetKey, 15);
+  return (
+    <>
+      {items.length === 0 ? (
+        <p className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
+          Nothing here
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {page.shown.map((request) => {
+            const waitingDays = Math.floor(
+              (now - new Date(request.createdAt).getTime()) / 86_400_000,
+            );
+            const stale = request.status === "PENDING" && waitingDays >= SLA_DAYS;
+            return (
+              <div
+                key={request.id}
+                className={cn(
+                  "rounded-xl",
+                  stale && "ring-2 ring-amber-300 dark:ring-amber-800",
+                )}
+              >
+                {stale && (
+                  <p className="flex items-center gap-1 rounded-t-xl bg-amber-100 px-3 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+                    <Clock className="size-3" /> Waiting {waitingDays} days
+                  </p>
+                )}
+                <RequestCard request={request} />
+              </div>
+            );
+          })}
+          <ShowMore
+            remaining={page.remaining}
+            step={page.step}
+            onShowMore={page.showMore}
+          />
+        </div>
+      )}
+    </>
   );
 }

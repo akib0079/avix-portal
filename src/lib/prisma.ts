@@ -24,7 +24,10 @@ function createClient() {
   const needsSsl = /supabase\.(co|com)/i.test(connectionString);
   const adapter = new PrismaPg({
     connectionString,
-    max: 5,
+    // Queries beyond this wait for a free connection, so a dashboard firing
+    // 20 in parallel runs them in waves. 5 suits a small host; raise
+    // DB_POOL_MAX if the database (or its pooler) allows more connections.
+    max: Number(process.env.DB_POOL_MAX) || 5,
     ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   });
   return new PrismaClient({ adapter });

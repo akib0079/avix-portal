@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { toast } from "sonner";
 import type { TaskView } from "@/lib/dal/tasks";
 import { quickAddTask } from "@/lib/actions/tasks";
@@ -183,11 +184,7 @@ export function TaskList({
                   {bucket}
                   <span className="font-normal opacity-60">{list.length}</span>
                 </h2>
-                <div className="space-y-2">
-                  {list.map((task) => (
-                    <TaskRow key={task.id} task={task} now={now} onOpen={open} />
-                  ))}
-                </div>
+                <TaskColumn key={bucket} list={list} now={now} onOpen={open} />
               </section>
             );
           })}
@@ -231,5 +228,26 @@ function FilterToggle({
       {active ? <Check className="size-3 shrink-0" /> : <Icon className="size-3 shrink-0" />}
       {children}
     </button>
+  );
+}
+
+/** A bucket's rows, rendered a page at a time — Overdue can run to hundreds. */
+function TaskColumn({
+  list,
+  now,
+  onOpen,
+}: {
+  list: TaskView[];
+  now: number;
+  onOpen: (task: TaskView | null) => void;
+}) {
+  const page = useProgressive(list, "", 25);
+  return (
+    <div className="space-y-2">
+      {page.shown.map((task) => (
+        <TaskRow key={task.id} task={task} now={now} onOpen={onOpen} />
+      ))}
+      <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
+    </div>
   );
 }

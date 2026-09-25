@@ -12,7 +12,7 @@ import { sendEmail } from "@/lib/email/resend";
 import InvoiceSentEmail from "@/emails/invoice-sent";
 import { renderInvoicePdfById } from "@/lib/pdf/invoice-render";
 import { logActivity } from "@/lib/dal/activity";
-import { usd } from "@/lib/format";
+import { formatCurrency } from "@/lib/currency";
 import { appUrl } from "@/lib/app-url";
 import type { InvoiceStatus } from "@prisma/client";
 
@@ -318,7 +318,7 @@ export async function setInvoiceStatus(
   if (status === "PAID" && invoice.status !== "PAID") {
     await logActivity({
       type: "invoice.paid",
-      summary: `Invoice ${invoice.invoiceNumber} marked paid · ${usd.format(Number(invoice.amount))}`,
+      summary: `Invoice ${invoice.invoiceNumber} marked paid · ${formatCurrency(Number(invoice.amount), invoice.currency)}`,
       clientId: invoice.clientId,
       projectId: invoice.projectId,
       entity: "invoice",
@@ -371,7 +371,7 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
       <InvoiceSentEmail
         firstName={invoice.client.firstName || "there"}
         invoiceNumber={invoice.invoiceNumber}
-        amount={usd.format(Number(invoice.amount))}
+        amount={formatCurrency(Number(invoice.amount), invoice.currency)}
         projectName={invoice.project?.projectName}
         portalUrl={portalUrl}
         paymentAccounts={paymentAccounts}
@@ -399,7 +399,7 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
         userId: invoice.client.id,
         type: "INVOICE_SENT",
         title: `Invoice ${invoice.invoiceNumber} is ready`,
-        body: `${usd.format(Number(invoice.amount))}${invoice.project ? ` · ${invoice.project.projectName}` : ""}`,
+        body: `${formatCurrency(Number(invoice.amount), invoice.currency)}${invoice.project ? ` · ${invoice.project.projectName}` : ""}`,
         link: `/portal/invoices/${invoice.id}`,
       },
     }),
@@ -407,7 +407,7 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
 
   await logActivity({
     type: "invoice.sent",
-    summary: `Invoice ${invoice.invoiceNumber} sent · ${usd.format(Number(invoice.amount))}`,
+    summary: `Invoice ${invoice.invoiceNumber} sent · ${formatCurrency(Number(invoice.amount), invoice.currency)}`,
     clientId: invoice.client.id,
     projectId: invoice.projectId,
     entity: "invoice",
@@ -506,7 +506,7 @@ export async function recordPayment(
   await requireAdmin();
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    select: { id: true, amount: true, invoiceNumber: true, clientId: true, projectId: true },
+    select: { id: true, amount: true, currency: true, invoiceNumber: true, clientId: true, projectId: true },
   });
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if (!(input.amount > 0)) return { ok: false, error: "Enter an amount above zero." };
@@ -541,7 +541,7 @@ export async function recordPayment(
 
   await logActivity({
     type: "invoice.payment",
-    summary: `Payment recorded on ${invoice.invoiceNumber} · ${usd.format(input.amount)}`,
+    summary: `Payment recorded on ${invoice.invoiceNumber} · ${formatCurrency(input.amount, invoice.currency)}`,
     clientId: invoice.clientId,
     projectId: invoice.projectId,
     entity: "invoice",

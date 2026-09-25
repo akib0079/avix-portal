@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { InvoiceStatus } from "@prisma/client";
 import {
@@ -10,13 +10,7 @@ import {
 } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { LazySelect } from "@/components/ui/lazy-select";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +22,18 @@ import {
 import { toast } from "sonner";
 import { Send, Trash2, Loader2 } from "lucide-react";
 
+const STATUS_OPTIONS = (Object.keys(invoiceStatusLabels) as InvoiceStatus[]).map((value) => ({
+  value,
+  label: invoiceStatusLabels[value],
+}));
+
+/**
+ * Row-level status control. Moves the moment you pick — the old version sat
+ * on the previous status through the save AND a second full-page refresh.
+ * useOptimistic reverts on its own if the save fails. No router.refresh():
+ * setInvoiceStatus calls revalidatePath, so the fresh page already comes
+ * back in the action's own response.
+ */
 export function InvoiceStatusSelect({
   invoiceId,
   status,
@@ -35,27 +41,24 @@ export function InvoiceStatusSelect({
   invoiceId: string;
   status: InvoiceStatus;
 }) {
-  const router = useRouter();
+  const [shown, setShown] = useOptimistic(status);
+  const [, startTransition] = useTransition();
+
   return (
-    <Select
-      value={status}
-      onValueChange={async (value) => {
-        const result = await setInvoiceStatus(invoiceId, value as InvoiceStatus);
-        if (!result.ok) return void toast.error(result.error);
-        router.refresh();
+    <LazySelect
+      value={shown}
+      options={STATUS_OPTIONS}
+      ariaLabel="Invoice status"
+      className="w-[120px]"
+      onValueChange={(value) => {
+        if (value === shown) return;
+        startTransition(async () => {
+          setShown(value);
+          const result = await setInvoiceStatus(invoiceId, value);
+          if (!result.ok) toast.error(result.error);
+        });
       }}
-    >
-      <SelectTrigger size="sm" className="w-[120px]">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {Object.entries(invoiceStatusLabels).map(([value, label]) => (
-          <SelectItem key={value} value={value}>
-            {label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    />
   );
 }
 

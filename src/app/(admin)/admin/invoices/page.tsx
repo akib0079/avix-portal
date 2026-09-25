@@ -43,6 +43,8 @@ export default async function InvoicesPage() {
           dueDate: invoice.dueDate?.toISOString() ?? null,
           amount: Number(invoice.amount),
           amountPaid: Number(invoice.amountPaid),
+          currency: invoice.currency,
+          amountUsd: invoice.amountUsd === null ? null : Number(invoice.amountUsd),
           status: invoice.status,
           hasDocument: !!(invoice.pdfPath || invoice.pdfExternalUrl),
           paymentClaimed: !!invoice.paymentClaimedAt,

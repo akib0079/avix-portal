@@ -17,6 +17,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usd, formatDate } from "@/lib/format";
+import { formatCurrency } from "@/lib/currency";
+import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { cn } from "@/lib/utils";
 import { Search, Paperclip, FileText } from "lucide-react";
 import type { InvoiceStatus } from "@prisma/client";
@@ -32,6 +34,10 @@ export type InvoiceListRow = {
   dueDate: string | null;
   amount: number;
   amountPaid: number;
+  /** The invoice's own currency; `amount` and `amountPaid` are in it. */
+  currency: string;
+  /** USD value of `amount`, null until set for a non-USD invoice. */
+  amountUsd: number | null;
   status: InvoiceStatus;
   hasDocument: boolean;
   paymentClaimed: boolean;
@@ -84,11 +90,15 @@ export function InvoiceTable({
     balance: Math.max(i.amount - i.amountPaid, 0),
   }));
 
+  // Aging is in USD: a balance is converted at the invoice's own recorded
+  // USD value, and one without a USD value yet is left out rather than
+  // added at face value (EUR 1,400 is not $1,400).
   const aging = useMemo(() => {
     const totals: Record<Bucket, number> = { current: 0, d30: 0, d60: 0, d90: 0 };
     for (const { row, balance } of outstanding) {
       if (balance <= 0 || row.status === "CANCELLED") continue;
-      totals[bucketOf(row, now)] += balance;
+      if (row.amountUsd === null || row.amount <= 0) continue;
+      totals[bucketOf(row, now)] += balance * (row.amountUsd / row.amount);
     }
     return totals;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,6 +123,7 @@ export function InvoiceTable({
   }, [invoices, search, filter, now]);
 
   const totalOutstanding = aging.current + aging.d30 + aging.d60 + aging.d90;
+  const page = useProgressive(visible, `${filter}|${search}`);
 
   if (invoices.length === 0) {
     return (
@@ -211,7 +222,7 @@ export function InvoiceTable({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visible.map((invoice) => {
+                {page.shown.map((invoice) => {
                   const balance = Math.max(invoice.amount - invoice.amountPaid, 0);
                   const overdue =
                     !!invoice.dueDate && Date.parse(invoice.dueDate) < now && balance > 0;
@@ -255,12 +266,12 @@ export function InvoiceTable({
                         {invoice.dueDate ? formatDate(invoice.dueDate) : "—"}
                       </TableCell>
                       <TableCell className="text-sm font-medium">
-                        {usd.format(invoice.amount)}
+                        {formatCurrency(invoice.amount, invoice.currency)}
                       </TableCell>
                       <TableCell className="hidden text-sm sm:table-cell">
                         {balance > 0 ? (
                           <span className={toneText.warn}>
-                            {usd.format(balance)}
+                            {formatCurrency(balance, invoice.currency)}
                           </span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
@@ -284,6 +295,7 @@ export function InvoiceTable({
               </TableBody>
             </Table>
           )}
+          <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
         </CardContent>
       </Card>
     </div>

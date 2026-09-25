@@ -35,13 +35,7 @@ import { MilestoneStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { formatPricing, milestoneStatusLabels, formatDate, initials } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { LazySelect } from "@/components/ui/lazy-select";
 import {
   Dialog,
   DialogContent,
@@ -65,6 +59,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toneChip, toneText } from "@/lib/tone";
+
+const MILESTONE_STATUS_OPTIONS = (Object.keys(milestoneStatusLabels) as MilestoneStatus[]).map(
+  (value) => ({ value, label: milestoneStatusLabels[value] }),
+);
 
 /** Past its due date and not finished. */
 function isOverdue(milestone: MilestoneView): boolean {
@@ -218,21 +216,13 @@ function SortableRow({
             <Clock className="size-4" />
             <span className="sr-only">Log time</span>
           </Button>
-          <Select
+          <LazySelect
             value={milestone.status}
-            onValueChange={(v) => onStatusChange(v as MilestoneStatus)}
-          >
-            <SelectTrigger size="sm" className="hidden w-[130px] sm:flex">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(milestoneStatusLabels).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={MILESTONE_STATUS_OPTIONS}
+            onValueChange={onStatusChange}
+            ariaLabel="Milestone status"
+            className="hidden w-[130px] sm:flex"
+          />
           {/* Secondary actions: every row previously showed five controls at
               once. These fade in on hover or keyboard focus, and stay put on
               touch devices, which have no hover. */}

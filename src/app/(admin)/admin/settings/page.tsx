@@ -30,24 +30,28 @@ export default async function SettingsPage({
   searchParams: Promise<{ gcal?: string }>;
 }) {
   await requireAdmin();
-  const [{ gcal: gcalResult }, [accounts, whatsappUrl, branding, staff, availWindows, bookingConfig, invoiceFooter, paymentGuideUrl]] =
-    await Promise.all([
-      searchParams,
-      Promise.all([
-        listPaymentAccounts(),
-        getWhatsappSupportUrl(),
-        getBranding(),
-        listStaff(),
-        listAvailabilityWindows(),
-        getBookingConfig(),
-        getInvoiceFooter(),
-        getPaymentGuideUrl(),
-      ]),
-    ]);
-  const gcal = await calendarStatus();
-  const targetRow = await prisma.appSetting.findUnique({
-    where: { key: "monthlyRevenueTarget" },
-  });
+  // One wave: the calendar status and revenue target used to be awaited one
+  // after the other once everything else had arrived.
+  const [
+    { gcal: gcalResult },
+    [accounts, whatsappUrl, branding, staff, availWindows, bookingConfig, invoiceFooter, paymentGuideUrl],
+    gcal,
+    targetRow,
+  ] = await Promise.all([
+    searchParams,
+    Promise.all([
+      listPaymentAccounts(),
+      getWhatsappSupportUrl(),
+      getBranding(),
+      listStaff(),
+      listAvailabilityWindows(),
+      getBookingConfig(),
+      getInvoiceFooter(),
+      getPaymentGuideUrl(),
+    ]),
+    calendarStatus(),
+    prisma.appSetting.findUnique({ where: { key: "monthlyRevenueTarget" } }),
+  ]);
   const revenueTarget = Number(targetRow?.value ?? 0) || 0;
 
   const gcalBanner =

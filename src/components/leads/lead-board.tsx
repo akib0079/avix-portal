@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -247,14 +248,17 @@ function StageColumn({
   stage,
   leads,
   activeStage,
-  children,
+  renderCard,
 }: {
   stage: LeadStage;
   leads: LeadView[];
   activeStage: LeadStage | null;
-  children: React.ReactNode;
+  renderCard: (lead: LeadView) => React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
+  // Each card is a draggable with ~60 nodes; the whole board was 17k nodes.
+  // Columns render 20 at a time — WON and LOST are mostly history anyway.
+  const page = useProgressive(leads, stage, 20);
   const total = leads.reduce((sum, l) => sum + (l.estimatedValue ?? 0), 0);
   const isTarget = activeStage && activeStage !== stage;
 
@@ -288,7 +292,10 @@ function StageColumn({
             {isTarget ? "Drop here" : "Empty"}
           </div>
         ) : (
-          children
+          <>
+            {page.shown.map(renderCard)}
+            <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
+          </>
         )}
       </div>
     </div>
@@ -429,23 +436,20 @@ export function LeadBoard({
               stage={stage}
               leads={items.filter((l) => l.stage === stage)}
               activeStage={activeLead?.stage ?? null}
-            >
-              {items
-                .filter((l) => l.stage === stage)
-                .map((lead) => (
-                  <LeadCard
-                    key={lead.id}
-                    lead={lead}
-                    onEdit={() => {
-                      setEditing(lead);
-                      setFormOpen(true);
-                    }}
-                    onDelete={() => setDeleting(lead)}
-                    onConvert={() => setConverting(lead)}
-                    onProposal={() => setProposingLeadId(lead.id)}
-                  />
-                ))}
-            </StageColumn>
+              renderCard={(lead) => (
+                <LeadCard
+                  key={lead.id}
+                  lead={lead}
+                  onEdit={() => {
+                    setEditing(lead);
+                    setFormOpen(true);
+                  }}
+                  onDelete={() => setDeleting(lead)}
+                  onConvert={() => setConverting(lead)}
+                  onProposal={() => setProposingLeadId(lead.id)}
+                />
+              )}
+            />
           ))}
         </div>
 
