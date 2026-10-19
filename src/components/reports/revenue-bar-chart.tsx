@@ -30,7 +30,15 @@ export function RevenueBarChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-          <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={11} />
+          <XAxis
+            dataKey="month"
+            tickLine={false}
+            axisLine={false}
+            fontSize={11}
+            interval="preserveStartEnd"
+            minTickGap={4}
+            stroke="var(--muted-foreground)"
+          />
           <YAxis
             tickLine={false}
             axisLine={false}
@@ -44,6 +52,8 @@ export function RevenueBarChart({
               borderRadius: 8,
               border: "1px solid var(--border)",
               fontSize: 12,
+              background: "var(--popover)",
+              color: "var(--popover-foreground)",
             }}
             cursor={{ fill: "var(--muted)" }}
           />

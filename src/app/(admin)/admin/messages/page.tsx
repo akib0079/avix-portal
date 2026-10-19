@@ -1,6 +1,7 @@
 import { listConversations } from "@/lib/dal/messages";
 import { requireTeam } from "@/lib/dal/session";
 import { AdminInbox } from "@/components/messages/admin-inbox";
+import { serverNow } from "@/lib/server-now";
 
 export const metadata = { title: "Messages" };
 
@@ -23,7 +24,7 @@ export default async function AdminMessagesPage() {
         <h1 className="font-heading text-xl font-bold sm:text-2xl">Messages</h1>
         <p className="hidden text-sm text-muted-foreground sm:block">Every client conversation — project threads and general chats.</p>
       </div>
-      <AdminInbox conversations={conversations} />
+      <AdminInbox conversations={conversations} renderedAt={serverNow()} />
     </div>
   );
 }

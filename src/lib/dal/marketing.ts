@@ -17,15 +17,26 @@ export async function listCampaigns() {
     take: 100,
     include: { _count: { select: { recipients: true } } },
   });
-  const sentCounts = await prisma.campaignRecipient.groupBy({
-    by: ["campaignId"],
-    where: { sentAt: { not: null } },
-    _count: true,
-  });
+  const ids = campaigns.map((c) => c.id);
+  const [sentCounts, failedCounts] = await Promise.all([
+    prisma.campaignRecipient.groupBy({
+      by: ["campaignId"],
+      where: { campaignId: { in: ids }, sentAt: { not: null } },
+      _count: true,
+    }),
+    // Failed = gave up with an error and never sent; the board flags these.
+    prisma.campaignRecipient.groupBy({
+      by: ["campaignId"],
+      where: { campaignId: { in: ids }, sentAt: null, error: { not: null } },
+      _count: true,
+    }),
+  ]);
   const sentByCampaign = new Map(sentCounts.map((c) => [c.campaignId, c._count]));
+  const failedByCampaign = new Map(failedCounts.map((c) => [c.campaignId, c._count]));
   return campaigns.map((c) => ({
     ...c,
     sentCount: sentByCampaign.get(c.id) ?? 0,
+    failedCount: failedByCampaign.get(c.id) ?? 0,
   }));
 }
 

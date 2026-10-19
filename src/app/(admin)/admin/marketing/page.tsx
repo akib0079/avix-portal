@@ -1,52 +1,58 @@
 import Link from "next/link";
 import { listCampaigns } from "@/lib/dal/marketing";
+import { getBookingConfig } from "@/lib/dal/availability";
 import { PageHeader } from "@/components/page-header";
+import { CampaignsView } from "@/components/marketing/campaigns-view";
+import { StatTile } from "@/components/ui/stat-tile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { Megaphone, Plus, Mail, ChevronRight } from "lucide-react";
-import type { CampaignStatus } from "@prisma/client";
+import { HUE } from "@/lib/status-colors";
+import { Megaphone, Plus, Mail, Send, MailCheck, CalendarClock, TriangleAlert } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
-import { toneChip } from "@/lib/tone";
+import { serverNow } from "@/lib/server-now";
 
 export const metadata = { title: "Marketing" };
 
-const statusStyles: Record<CampaignStatus, string> = {
-  DRAFT: "bg-muted text-muted-foreground",
-  SCHEDULED: "bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-300",
-  QUEUED: toneChip.warn,
-  SENDING: "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300",
-  SENT: toneChip.good,
-  FAILED: "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-300",
-};
-
-const statusLabels: Record<CampaignStatus, string> = {
-  DRAFT: "Draft",
-  SCHEDULED: "Scheduled",
-  QUEUED: "Queued",
-  SENDING: "Sending",
-  SENT: "Sent",
-  FAILED: "Needs retry",
-};
-
 export default async function MarketingPage() {
   await requireAdmin();
-  const campaigns = await listCampaigns();
+  const [campaigns, booking] = await Promise.all([listCampaigns(), getBookingConfig()]);
+  const now = serverNow();
+  const tz = booking.agencyTimezone;
+
+  // Labels are formatted here, in the agency's zone: the board renders on a
+  // UTC host first, and a scheduled send's time must not shift on hydration.
+  const fmt = (d: Date, withTime: boolean) => {
+    const opts: Intl.DateTimeFormatOptions = withTime
+      ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+      : { month: "short", day: "numeric", year: "numeric" };
+    try {
+      return new Intl.DateTimeFormat("en-US", { ...opts, timeZone: tz }).format(d);
+    } catch {
+      return new Intl.DateTimeFormat("en-US", { ...opts, timeZone: "UTC" }).format(d);
+    }
+  };
+  const whenLabel = (c: (typeof campaigns)[number]) => {
+    if (c.status === "SCHEDULED" && c.scheduledAt) return `Goes out ${fmt(c.scheduledAt, true)}`;
+    if (c.status === "SENT" && c.sentAt) return `Sent ${fmt(c.sentAt, false)}`;
+    if ((c.status === "QUEUED" || c.status === "SENDING") && c.startedAt)
+      return `Started ${fmt(c.startedAt, true)}`;
+    if (c.status === "QUEUED" || c.status === "SENDING") return "Queued to send";
+    if (c.status === "FAILED") return `Ran ${fmt(c.sentAt ?? c.startedAt ?? c.createdAt, false)}`;
+    return `Created ${fmt(c.createdAt, false)}`;
+  };
+
+  const sent = campaigns.filter((c) => c.status === "SENT").length;
+  const delivered = campaigns.reduce((sum, c) => sum + c.sentCount, 0);
+  const nextScheduled = campaigns
+    .filter((c) => c.status === "SCHEDULED" && c.scheduledAt && c.scheduledAt.getTime() > now)
+    .sort((a, b) => a.scheduledAt!.getTime() - b.scheduledAt!.getTime())[0];
+  const needRetry = campaigns.filter((c) => c.status === "FAILED" || c.failedCount > 0).length;
 
   return (
     <div>
       <PageHeader
         title="Marketing"
-        description="Send offers and updates to your clients."
+        description="Send offers and updates to your clients and leads."
         action={
           <div className="flex items-center gap-2">
             <Button asChild variant="outline">
@@ -63,9 +69,9 @@ export default async function MarketingPage() {
         }
       />
 
-      <Card>
-        <CardContent>
-          {campaigns.length === 0 ? (
+      {campaigns.length === 0 ? (
+        <Card>
+          <CardContent>
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-muted">
                 <Megaphone className="size-6 text-muted-foreground" />
@@ -80,57 +86,51 @@ export default async function MarketingPage() {
                 </Link>
               </Button>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Subject</TableHead>
-                  <TableHead className="hidden sm:table-cell">Sent</TableHead>
-                  <TableHead>Delivered</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-10" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {campaigns.map((campaign) => (
-                  <TableRow
-                    key={campaign.id}
-                    className="group relative cursor-pointer transition-colors hover:bg-muted/50"
-                  >
-                    <TableCell className="font-medium">
-                      <Link
-                        href={`/admin/marketing/${campaign.id}`}
-                        className="block after:absolute after:inset-0"
-                      >
-                        {campaign.subject}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                      {formatDate(campaign.sentAt ?? campaign.createdAt)}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {campaign.sentCount} / {campaign._count.recipients}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-xs font-medium",
-                          statusStyles[campaign.status],
-                        )}
-                      >
-                        {statusLabels[campaign.status]}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+            <StatTile i={0} icon={Send} label="Campaigns sent" value={String(sent)} color={HUE.green} />
+            <StatTile
+              i={1}
+              icon={MailCheck}
+              label="Emails delivered"
+              value={delivered.toLocaleString("en-US")}
+              color={HUE.blue}
+            />
+            <StatTile
+              i={2}
+              icon={CalendarClock}
+              label="Next send"
+              value={nextScheduled ? fmt(nextScheduled.scheduledAt!, false).replace(/, \d{4}$/, "") : "—"}
+              sub={nextScheduled ? nextScheduled.subject : "Nothing scheduled"}
+              color={HUE.violet}
+            />
+            <StatTile
+              i={3}
+              icon={TriangleAlert}
+              label="Need a retry"
+              value={String(needRetry)}
+              sub={needRetry > 0 ? "Open one to resend the failures" : "All delivered"}
+              color={needRetry > 0 ? HUE.red : HUE.slate}
+            />
+          </div>
+
+          <CampaignsView
+            campaigns={campaigns.map((c) => ({
+              id: c.id,
+              subject: c.subject,
+              name: c.name,
+              status: c.status,
+              whenLabel: whenLabel(c),
+              recipients: c._count.recipients,
+              delivered: c.sentCount,
+              failed: c.failedCount,
+            }))}
+          />
+        </>
+      )}
     </div>
   );
 }

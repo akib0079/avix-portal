@@ -131,6 +131,9 @@ export async function getReportsData(): Promise<ReportsData> {
   // Invoices in another currency with no USD value yet. They are left out of
   // the cross-currency KPIs rather than folded in at face value.
   let missingUsd = 0;
+  // Paid invoices that made it into totalPaid — the average must divide by
+  // the same set it sums.
+  let paidCount = 0;
 
   for (const inv of invoices) {
     const amount = Number(inv.amount);
@@ -142,14 +145,21 @@ export async function getReportsData(): Promise<ReportsData> {
     // The per-currency block below still uses the invoice's own amounts —
     // that is the point of it.
     const usdTotal = usdValue({ amount, currency: inv.currency, amountUsd: inv.amountUsd == null ? null : Number(inv.amountUsd) });
+    // The same split in USD, for everything below that is drawn with a "$":
+    // the trend, top clients and sources used to add face values, so EUR 1,400
+    // showed as $1,400. Unconverted invoices sit out (and are counted).
+    let usdReceived: number | null = null;
+    let usdOwing: number | null = null;
     if (usdTotal == null) {
       missingUsd++;
     } else {
       const ratio = amount > 0 ? Math.min(1, received / amount) : 0;
-      const usdReceived = usdTotal * ratio;
+      usdReceived = usdTotal * ratio;
+      usdOwing = Math.max(usdTotal - usdReceived, 0);
       totalInvoiced += usdTotal;
       totalPaid += usdReceived;
-      outstanding += Math.max(usdTotal - usdReceived, 0);
+      outstanding += usdOwing;
+      if (received > 0) paidCount++;
       if (received > 0 && inv.issueDate >= startOfMonth) revenueThisMonth += usdReceived;
     }
 
@@ -163,22 +173,24 @@ export async function getReportsData(): Promise<ReportsData> {
     currency.outstanding += owing;
     perCurrency.set(inv.currency, currency);
 
+    if (usdReceived === null || usdOwing === null) continue;
+
     if (inv.issueDate >= startWindow) {
       const bucket = monthly[monthKey(inv.issueDate)];
       if (bucket) {
-        bucket.paid += received;
-        bucket.unpaid += owing;
+        bucket.paid += usdReceived;
+        bucket.unpaid += usdOwing;
       }
     }
 
     const client = perClient.get(inv.clientId) ?? { paid: 0, outstanding: 0 };
-    client.paid += received;
-    client.outstanding += owing;
+    client.paid += usdReceived;
+    client.outstanding += usdOwing;
     perClient.set(inv.clientId, client);
 
-    if (received > 0) {
+    if (usdReceived > 0) {
       const source = inv.project ? projectSourceLabels[inv.project.source] : "No project";
-      perSource.set(source, (perSource.get(source) ?? 0) + received);
+      perSource.set(source, (perSource.get(source) ?? 0) + usdReceived);
     }
   }
 
@@ -213,7 +225,6 @@ export async function getReportsData(): Promise<ReportsData> {
     .sort((a, b) => b.paid - a.paid)
     .slice(0, 8);
 
-  const paidCount = invoices.filter((i) => Number(i.amountPaid ?? 0) > 0).length;
 
   // ---- forward view
   // Weighting is deliberately crude and explicit: it's a planning aid, not a

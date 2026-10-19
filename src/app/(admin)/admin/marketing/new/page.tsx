@@ -3,7 +3,7 @@ import { listTemplates, listAudience, listSegments } from "@/lib/dal/marketing";
 import type { AudienceFilterInput } from "@/lib/validation/marketing";
 import { PageHeader } from "@/components/page-header";
 import { CampaignComposer } from "@/components/marketing/campaign-composer";
-import { ArrowLeft } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "New Campaign" };
@@ -23,12 +23,13 @@ export default async function NewCampaignPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link
-        href="/admin/marketing"
-        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> Back to Marketing
-      </Link>
+      <nav aria-label="Breadcrumb" className="mb-3 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+        <Link href="/admin/marketing" className="hover:text-foreground">
+          Marketing
+        </Link>
+        <ChevronRight className="size-3 shrink-0" />
+        <span className="text-foreground/80">New campaign</span>
+      </nav>
       <PageHeader
         title="New Campaign"
         description="Compose, pick recipients, preview, then send."

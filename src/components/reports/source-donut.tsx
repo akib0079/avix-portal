@@ -38,6 +38,8 @@ export function SourceDonut({ data }: { data: { name: string; value: number }[] 
                 borderRadius: 8,
                 border: "1px solid var(--border)",
                 fontSize: 12,
+                background: "var(--popover)",
+                color: "var(--popover-foreground)",
               }}
             />
           </PieChart>

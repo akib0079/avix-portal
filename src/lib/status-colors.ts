@@ -1,4 +1,5 @@
 import type {
+  CampaignStatus,
   InvoiceStatus,
   LeadStage,
   MilestoneStatus,
@@ -81,6 +82,15 @@ export const proposalStatusColor: Record<ProposalStatus, string> = {
   ACCEPTED: HUE.green,
   DECLINED: HUE.red,
   EXPIRED: HUE.amber,
+};
+
+export const campaignStatusColor: Record<CampaignStatus, string> = {
+  DRAFT: HUE.slate,
+  SCHEDULED: HUE.violet,
+  QUEUED: HUE.blue,
+  SENDING: HUE.blue,
+  SENT: HUE.green,
+  FAILED: HUE.red,
 };
 
 /** Matches PRIORITY_META on the board, so a flag and a pill agree. */

@@ -57,11 +57,15 @@ export function LocalTime({
         asleep ? "text-amber-500" : "text-muted-foreground",
         className,
       )}
-      title={`${timezone} — the client's local time`}
+      title={`${timezone} — the client's local time${asleep ? ", likely asleep" : ""}`}
     >
       {asleep ? <MoonStar className="size-3" /> : <Clock className="size-3" />}
-      Local time {now.time} · {city}
-      {asleep && " — likely asleep"}
+      {/* A phone header has room for the time, not the sentence; the moon
+          still says "asleep", and the title carries the rest. */}
+      <span className="hidden sm:inline">Local time </span>
+      <span className="whitespace-nowrap tabular-nums">{now.time}</span>
+      <span className="hidden sm:inline"> · {city}</span>
+      {asleep && <span className="hidden sm:inline"> — likely asleep</span>}
     </span>
   );
 }

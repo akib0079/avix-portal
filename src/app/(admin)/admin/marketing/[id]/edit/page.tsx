@@ -5,7 +5,7 @@ import { getCampaign, listTemplates, listAudience, listSegments } from "@/lib/da
 import type { AudienceFilterInput } from "@/lib/validation/marketing";
 import { PageHeader } from "@/components/page-header";
 import { CampaignComposer } from "@/components/marketing/campaign-composer";
-import { ArrowLeft } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Edit Campaign" };
@@ -31,12 +31,17 @@ export default async function EditCampaignPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link
-        href={`/admin/marketing/${id}`}
-        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> Back to campaign
-      </Link>
+      <nav aria-label="Breadcrumb" className="mb-3 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+        <Link href="/admin/marketing" className="hover:text-foreground">
+          Marketing
+        </Link>
+        <ChevronRight className="size-3 shrink-0" />
+        <Link href={`/admin/marketing/${id}`} className="max-w-[16rem] truncate hover:text-foreground">
+          {campaign.subject}
+        </Link>
+        <ChevronRight className="size-3 shrink-0" />
+        <span className="text-foreground/80">Edit</span>
+      </nav>
       <PageHeader
         title="Edit campaign"
         description="Change the copy or the audience, then save, schedule or send."

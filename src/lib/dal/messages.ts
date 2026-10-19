@@ -150,6 +150,8 @@ export type ConversationSummary = {
   lastMessageAt: string;
   preview: string;
   unread: number;
+  /** Who wrote the latest message — whose move it is. */
+  lastFrom: "ADMIN" | "CLIENT";
 };
 
 /**
@@ -224,6 +226,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
         m.bodyText ? clipPreview(m.bodyText) : richTextPreview(m.body)
       }`,
       unread: unreadByThread.get(key) ?? 0,
+      lastFrom: m.senderRole,
     });
   }
 
