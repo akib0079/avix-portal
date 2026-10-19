@@ -14,15 +14,26 @@ export function ProjectAttention({
   pending,
   projectId,
   overdue,
+  boardHelp = 0,
   className,
 }: {
   pending: PendingWork;
   projectId: string;
   overdue: boolean;
+  /** Board cards where the client asked for help and nobody has answered. */
+  boardHelp?: number;
   className?: string;
 }) {
   const base = `/admin/projects/${projectId}`;
   const items: Item[] = [];
+
+  if (boardHelp > 0) {
+    items.push({
+      label: `Client needs help on ${boardHelp} task${boardHelp === 1 ? "" : "s"}`,
+      href: `${base}?tab=board`,
+      tone: "bad",
+    });
+  }
 
   if (overdue) {
     items.push({ label: "Past its due date", href: `${base}?tab=milestones`, tone: "bad" });

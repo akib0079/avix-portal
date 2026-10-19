@@ -39,6 +39,7 @@ export async function getProject(id: string) {
           firstName: true,
           lastName: true,
           company: true,
+          status: true,
           email: true,
           timezone: true,
         },

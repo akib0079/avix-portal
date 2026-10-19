@@ -229,7 +229,8 @@ export type TodayItem = {
     | "approval"
     | "changes"
     | "request"
-    | "proposal";
+    | "proposal"
+    | "help";
   label: string;
   detail: string;
   link: string;
@@ -256,6 +257,7 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     staleRequests,
     expiringProposals,
     undraftedRetainers,
+    helpRequests,
   ] = await Promise.all([
       prisma.invoice.findMany({
         where: { status: { not: "PAID" }, dueDate: { not: null, lt: now } },
@@ -355,9 +357,30 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
         take: 5,
         select: { id: true, title: true, dayOfMonth: true },
       }),
+      // A client asked for help on a board card and nobody has answered.
+      prisma.projectTaskComment.findMany({
+        where: { kind: "HELP", authorRole: "CLIENT", resolvedAt: null },
+        orderBy: { createdAt: "asc" },
+        take: 5,
+        select: {
+          createdAt: true,
+          task: { select: { id: true, title: true, projectId: true } },
+          author: { select: { firstName: true, lastName: true } },
+        },
+      }),
     ]);
 
   const items: TodayItem[] = [];
+  for (const h of helpRequests) {
+    const hours = Math.floor((now.getTime() - h.createdAt.getTime()) / 3_600_000);
+    const who = h.author ? `${h.author.firstName} ${h.author.lastName}`.trim() : "Client";
+    items.push({
+      kind: "help",
+      label: `${who} needs help — ${h.task.title}`,
+      detail: hours >= 24 ? `waiting ${Math.floor(hours / 24)} day${hours >= 48 ? "s" : ""}` : "asked on the board",
+      link: `/admin/projects/${h.task.projectId}?tab=board&task=${h.task.id}`,
+    });
+  }
   for (const inv of overdueInvoices) {
     const days = Math.floor((now.getTime() - inv.dueDate!.getTime()) / 86_400_000);
     items.push({
@@ -449,6 +472,7 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
   }
   // Most time-critical first: client messages, money, then the rest.
   const order: Record<TodayItem["kind"], number> = {
+    help: 0,
     message: 0,
     invoice: 1,
     meeting: 2,

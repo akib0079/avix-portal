@@ -13,7 +13,7 @@ export default async function ActionCenterPage() {
     <div>
       <PageHeader
         title="Action Center"
-        description="Everything waiting on you — approvals and invoices to pay, in one place."
+        description="Everything waiting on you — tasks to review, approvals and invoices to pay, in one place."
       />
       <ActionCenter items={items} />
     </div>

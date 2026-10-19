@@ -20,18 +20,23 @@ import { ArrowLeft } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
 import { listTeamOptions } from "@/lib/dal/users";
 import { getBillableWork } from "@/lib/dal/billable";
+import { getBoardCards } from "@/lib/dal/project-board";
+import { ProjectBoard } from "@/components/board/project-board";
+import { serverNow } from "@/lib/server-now";
 
 export const metadata = { title: "Project" };
 
 export default async function ProjectDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ task?: string }>;
 }) {
-  const { id } = await params;
+  const [{ id }, { task: taskParam }] = await Promise.all([params, searchParams]);
   // One round trip for everything the page needs — getBillableWork used to run
   // after this block, adding a serial query to every load.
-  const [viewer, project, messages, deliverables, workspace, team, billableOrNull] =
+  const [viewer, project, messages, deliverables, workspace, team, billableOrNull, boardCards] =
     await Promise.all([
       requireTeam(),
       getProject(id),
@@ -41,8 +46,29 @@ export default async function ProjectDetailPage({
       listTeamOptions(),
       // Money-bearing: getBillableWork requires admin, so staff skip it.
       getBillableWork(id).catch(() => null),
+      // No access check inside; requireTeam above is the check, and nothing
+      // is rendered unless getProject finds the project.
+      getBoardCards(id),
     ]);
   if (!project) notFound();
+  // People and milestones are already loaded for this page; the board reuses
+  // them rather than asking the database twice.
+  const board = {
+    cards: boardCards,
+    people: [
+      ...team,
+      ...(project.client && project.client.status === "ACTIVE"
+        ? [
+            {
+              id: project.client.id,
+              name: `${project.client.firstName} ${project.client.lastName}`.trim() || "Client",
+              role: "CLIENT" as const,
+            },
+          ]
+        : []),
+    ],
+    milestones: project.milestones.map((m) => ({ id: m.id, title: m.title })),
+  };
   // Staff are money-blind. getProject already strips prices server-side; this
   // just avoids rendering empty money shells and the billing editor for them.
   const isAdmin = viewer.role === "ADMIN";
@@ -70,10 +96,32 @@ export default async function ProjectDetailPage({
     invoices: project.invoices,
   });
 
+  const clientHelp = board.cards.filter((c) => c.helpFrom === "CLIENT").length;
   const tabs = [
+    {
+      value: "board",
+      label: "Board",
+      icon: "board" as const,
+      count: board.cards.filter((c) => c.status !== "DONE").length,
+      alert: clientHelp > 0,
+      content: (
+        <ProjectBoard
+          projectId={project.id}
+          viewer={{
+            id: viewer.id,
+            side: "ADMIN",
+            name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
+          }}
+          initial={board}
+          renderedAt={serverNow()}
+          initialTaskId={taskParam ?? null}
+        />
+      ),
+    },
     {
       value: "milestones",
       label: "Milestones",
+      icon: "milestones" as const,
       count: milestones.length,
       content: (
         <Card>
@@ -92,6 +140,7 @@ export default async function ProjectDetailPage({
     {
       value: "deliverables",
       label: "Deliverables",
+      icon: "files" as const,
       count: deliverables.length,
       alert: pending.deliverablesNeedingChanges > 0,
       content: isAdmin ? (
@@ -107,6 +156,7 @@ export default async function ProjectDetailPage({
     {
       value: "requests",
       label: "Requests",
+      icon: "requests" as const,
       count: workspace.requests.length,
       alert: pending.openRequests > 0,
       content: (
@@ -118,6 +168,7 @@ export default async function ProjectDetailPage({
           {
             value: "money",
             label: "Money",
+            icon: "money" as const,
             count: project.invoices.length,
             alert: pending.unpaidInvoices > 0,
             content: (
@@ -150,6 +201,7 @@ export default async function ProjectDetailPage({
     {
       value: "activity",
       label: "Activity",
+      icon: "activity" as const,
       content: (
         <Card>
           <CardContent className="pt-6">
@@ -218,9 +270,10 @@ export default async function ProjectDetailPage({
             pending={pending}
             projectId={project.id}
             overdue={health.overdue}
+            boardHelp={clientHelp}
             className="mb-4"
           />
-          <ProjectTabs tabs={tabs} defaultTab="milestones" />
+          <ProjectTabs tabs={tabs} defaultTab="board" />
         </div>
       </div>
 

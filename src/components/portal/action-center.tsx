@@ -15,6 +15,9 @@ import {
   Milestone as MilestoneIcon,
   Receipt,
   ExternalLink,
+  KanbanSquare,
+  LifeBuoy,
+  ArrowRight,
 } from "lucide-react";
 
 function money(amount: number, currency: string) {
@@ -59,8 +62,8 @@ export function ActionCenter({ items }: { items: ClientActionItems }) {
           <CircleCheckBig className="size-10 text-emerald-500" />
           <p className="font-heading text-lg font-semibold">You&apos;re all caught up</p>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Nothing needs your attention right now. Approvals and invoices to
-            pay will show up here.
+            Nothing needs your attention right now. Approvals, tasks to review
+            and invoices to pay will show up here.
           </p>
         </CardContent>
       </Card>
@@ -69,6 +72,40 @@ export function ActionCenter({ items }: { items: ClientActionItems }) {
 
   return (
     <div className="space-y-6">
+      {items.tasks.length > 0 && (
+        <section>
+          <h2 className="font-heading mb-3 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+            <KanbanSquare className="size-4" /> Tasks waiting on you ({items.tasks.length})
+          </h2>
+          <div className="space-y-2">
+            {items.tasks.map((t) => (
+              <Link
+                key={t.id}
+                href={`/portal/projects/${t.projectId}?view=board&task=${t.id}`}
+                className="group flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3.5 transition-colors hover:border-primary/40"
+              >
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2">
+                    {t.inReview ? (
+                      <span className="rounded-full bg-violet-500/12 px-2 py-0.5 text-[10px] font-semibold text-violet-700 uppercase dark:text-violet-300">
+                        Review
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-600 uppercase dark:text-red-400">
+                        <LifeBuoy className="size-3" /> Question
+                      </span>
+                    )}
+                    <span className="truncate font-medium">{t.title}</span>
+                  </span>
+                  <span className="mt-0.5 block text-sm text-muted-foreground">{t.projectName}</span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       {items.milestones.length > 0 && (
         <section>
           <h2 className="font-heading mb-3 flex items-center gap-2 text-sm font-semibold text-muted-foreground">

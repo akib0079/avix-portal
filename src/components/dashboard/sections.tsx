@@ -31,6 +31,7 @@ import {
   Hourglass,
   Inbox,
   MessagesSquare,
+  LifeBuoy,
   Receipt,
   Repeat,
   RotateCcw,
@@ -178,6 +179,7 @@ const KIND: Record<
   TodayItem["kind"],
   { icon: React.ComponentType<{ className?: string }>; severity: Severity }
 > = {
+  help: { icon: LifeBuoy, severity: "urgent" },
   message: { icon: MessagesSquare, severity: "urgent" },
   invoice: { icon: Receipt, severity: "urgent" },
   meeting: { icon: CalendarDays, severity: "today" },

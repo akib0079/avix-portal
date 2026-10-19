@@ -11,36 +11,53 @@ import { CheckCircle2, ArrowRight } from "lucide-react";
 export function ProjectNeedsYou({
   pending,
   projectId,
+  board,
   className,
 }: {
   pending: PendingWork;
   projectId: string;
+  /** Board cards waiting on the client: in Review, or with a question from us. */
+  board?: { review: number; help: number };
   className?: string;
 }) {
   const items: { label: string; href: string }[] = [];
+  const view = (v: string) => `/portal/projects/${projectId}?view=${v}`;
+
+  if (board && board.help > 0) {
+    items.push({
+      label: `Answer ${board.help} question${board.help === 1 ? "" : "s"} from the team`,
+      href: view("board"),
+    });
+  }
+  if (board && board.review > 0) {
+    items.push({
+      label: `Review ${board.review} finished task${board.review === 1 ? "" : "s"}`,
+      href: view("board"),
+    });
+  }
 
   if (pending.deliverablesAwaitingReview > 0) {
     items.push({
       label: `Review ${pending.deliverablesAwaitingReview} deliverable${pending.deliverablesAwaitingReview === 1 ? "" : "s"}`,
-      href: `/portal/projects/${projectId}#deliverables`,
+      href: view("files"),
     });
   }
   if (pending.milestonesAwaitingApproval > 0) {
     items.push({
       label: `Approve ${pending.milestonesAwaitingApproval} completed milestone${pending.milestonesAwaitingApproval === 1 ? "" : "s"}`,
-      href: `/portal/projects/${projectId}#timeline`,
+      href: view("timeline"),
     });
   }
   if (pending.milestonesAwaitingRating > 0) {
     items.push({
       label: `Rate ${pending.milestonesAwaitingRating} finished milestone${pending.milestonesAwaitingRating === 1 ? "" : "s"}`,
-      href: `/portal/projects/${projectId}#timeline`,
+      href: view("timeline"),
     });
   }
   if (pending.unpaidInvoices > 0) {
     items.push({
       label: `Settle ${pending.unpaidInvoices} open invoice${pending.unpaidInvoices === 1 ? "" : "s"}`,
-      href: "/portal/invoices",
+      href: view("billing"),
     });
   }
 

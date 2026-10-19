@@ -124,6 +124,29 @@ enum NotificationType {
   PROPOSAL_ACCEPTED
   DELIVERABLE_POSTED
   DELIVERABLE_REVIEWED
+  PROJECT_TASK_CREATED
+  PROJECT_TASK_ASSIGNED
+  PROJECT_TASK_COMMENT
+  PROJECT_TASK_MENTION
+  PROJECT_TASK_HELP
+  PROJECT_TASK_REVIEW
+}
+
+/// Columns of the shared project board. Fixed rather than user-defined: the
+/// client and the team have to read the same five words the same way.
+enum ProjectTaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum ProjectTaskCommentKind {
+  COMMENT
+  /// "Ask for help" — needs an answer from the other side and stays open on
+  /// the card until someone marks it resolved.
+  HELP
 }
 
 enum DeliverableReview {
@@ -225,26 +248,29 @@ model User {
   /// browser on portal load, editable by the admin.
   timezone        String?
 
-  sessions           Session[]
-  accounts           Account[]
-  projects           Project[]
-  invoices           Invoice[]
-  taskRequests       TaskRequest[]
-  notifications      Notification[]
-  imageUploads       ImageUpload[]
-  messages           Message[]
-  clientMessages     Message[]           @relation("ClientMessages")
-  campaignRecipients CampaignRecipient[]
-  meetings           Meeting[]           @relation("ClientMeetings")
-  retainers          Retainer[]          @relation("ClientRetainers")
-  leadsOwned         Lead[]              @relation("LeadOwner")
-  projectsOwned      Project[]           @relation("ProjectOwner")
-  milestonesAssigned Milestone[]         @relation("MilestoneAssignee")
-  timeEntries        TimeEntry[]         @relation("TimeEntryUser")
-  leadEntries        LeadEntry[]         @relation("LeadEntryAuthor")
-  tasksAssigned      Task[]              @relation("TaskAssignee")
-  tasksCreated       Task[]              @relation("TaskCreator")
-  tasksAbout         Task[]              @relation("TaskClient")
+  sessions             Session[]
+  accounts             Account[]
+  projects             Project[]
+  invoices             Invoice[]
+  taskRequests         TaskRequest[]
+  notifications        Notification[]
+  imageUploads         ImageUpload[]
+  messages             Message[]
+  clientMessages       Message[]            @relation("ClientMessages")
+  campaignRecipients   CampaignRecipient[]
+  meetings             Meeting[]            @relation("ClientMeetings")
+  retainers            Retainer[]           @relation("ClientRetainers")
+  leadsOwned           Lead[]               @relation("LeadOwner")
+  projectsOwned        Project[]            @relation("ProjectOwner")
+  milestonesAssigned   Milestone[]          @relation("MilestoneAssignee")
+  timeEntries          TimeEntry[]          @relation("TimeEntryUser")
+  leadEntries          LeadEntry[]          @relation("LeadEntryAuthor")
+  tasksAssigned        Task[]               @relation("TaskAssignee")
+  tasksCreated         Task[]               @relation("TaskCreator")
+  tasksAbout           Task[]               @relation("TaskClient")
+  projectTasksAssigned ProjectTask[]        @relation("ProjectTaskAssignee")
+  projectTasksCreated  ProjectTask[]        @relation("ProjectTaskCreator")
+  projectTaskComments  ProjectTaskComment[] @relation("ProjectTaskCommentAuthor")
 
   @@index([role, status])
   @@map("users")
@@ -327,6 +353,7 @@ model Project {
   meetings     Meeting[]
   retainers    Retainer[]
   tasks        Task[]
+  boardTasks   ProjectTask[]
 
   @@index([clientId])
   @@index([status])
@@ -365,6 +392,7 @@ model Milestone {
   updatedAt           DateTime        @updatedAt
 
   timeEntries TimeEntry[]
+  boardTasks  ProjectTask[]
 
   @@index([projectId, position])
   @@index([assigneeId, dueDate])
@@ -1011,6 +1039,72 @@ model Task {
   @@index([status, dueDate])
   @@index([assigneeId, status])
   @@map("tasks")
+}
+
+/// A card on a project's shared board: work both sides can see, add, move and
+/// talk about. It sits between the two kinds of work that already exist —
+/// Milestone (priced, on the timeline, moved only by the team) and Task
+/// (internal, never shown to a client). A card can hang off a milestone, but
+/// needn't.
+model ProjectTask {
+  id            String            @id @default(cuid())
+  projectId     String
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title         String
+  description   Json?
+  status        ProjectTaskStatus @default(TODO)
+  /// Order inside a column. Fractional, so a drag writes one row: the card
+  /// takes the midpoint of its new neighbours.
+  position      Float             @default(0)
+  /// Null = no priority set.
+  priority      Priority?
+  dueDate       DateTime?
+  milestoneId   String?
+  milestone     Milestone?        @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  /// The team member on point — who a client "pins" when they add a card.
+  assigneeId    String?
+  assignee      User?             @relation("ProjectTaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdById   String?
+  createdBy     User?             @relation("ProjectTaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Which side added it. Kept on the row so "added by the client" survives
+  /// the author's account being removed.
+  createdByRole MessageSenderRole
+  completedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  comments ProjectTaskComment[]
+
+  @@index([projectId, status, position])
+  @@index([assigneeId])
+  @@map("project_tasks")
+}
+
+/// The conversation on a board card. Plain text rather than Tiptap JSON: these
+/// are quick notes, and plain text keeps @mentions simple to write, store and
+/// highlight. Screenshots ride along as attachments.
+model ProjectTaskComment {
+  id           String                 @id @default(cuid())
+  taskId       String
+  task         ProjectTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId     String?
+  author       User?                  @relation("ProjectTaskCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  authorRole   MessageSenderRole
+  kind         ProjectTaskCommentKind @default(COMMENT)
+  /// Mentions are written inline as "@Name" and listed in `mentions`.
+  body         String
+  /// [{id, name}] — the people @mentioned, who get notified.
+  mentions     Json?
+  /// [{url, name}] — images uploaded through /api/uploads/images.
+  attachments  Json?
+  /// HELP only: when the other side marked it answered.
+  resolvedAt   DateTime?
+  resolvedById String?
+  createdAt    DateTime               @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([kind, resolvedAt])
+  @@map("project_task_comments")
 }
 
 /// A checklist line inside a task. Intentionally not a Task itself — subtasks

@@ -4,6 +4,28 @@ import { useState } from "react";
 import { useSearchParams, usePathname } from "next/navigation";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import {
+  KanbanSquare,
+  ListChecks,
+  FolderOpen,
+  ReceiptText,
+  Inbox,
+  Activity,
+  Flag,
+} from "lucide-react";
+
+/** Icons by name: the tabs are built on the server, and components don't cross the wire. */
+const TAB_ICONS = {
+  board: KanbanSquare,
+  timeline: ListChecks,
+  files: FolderOpen,
+  money: ReceiptText,
+  requests: Inbox,
+  activity: Activity,
+  milestones: Flag,
+} as const;
+
+export type ProjectTabIcon = keyof typeof TAB_ICONS;
 
 export type ProjectTab = {
   value: string;
@@ -12,6 +34,7 @@ export type ProjectTab = {
   count?: number;
   /** Draws attention: something on this tab is waiting on someone. */
   alert?: boolean;
+  icon?: ProjectTabIcon;
   content: React.ReactNode;
 };
 
@@ -29,17 +52,27 @@ export type ProjectTab = {
 export function ProjectTabs({
   tabs,
   defaultTab,
+  param = "tab",
 }: {
   tabs: ProjectTab[];
   defaultTab: string;
+  /** The query parameter that names the open tab ("view" on the portal). */
+  param?: string;
 }) {
   const pathname = usePathname();
   const params = useSearchParams();
 
-  const fromUrl = params.get("tab");
+  const fromUrl = params.get(param);
   const [active, setActive] = useState(() =>
     tabs.some((t) => t.value === fromUrl) ? fromUrl! : defaultTab,
   );
+  // A link elsewhere on the page ("3 tasks need your review") changes the
+  // query string; follow it. Adjusted during render, not in an effect.
+  const [seenUrl, setSeenUrl] = useState(fromUrl);
+  if (fromUrl !== seenUrl) {
+    setSeenUrl(fromUrl);
+    if (fromUrl && fromUrl !== active && tabs.some((t) => t.value === fromUrl)) setActive(fromUrl);
+  }
 
   function select(value: string) {
     // Paint first: this is the only thing the click needs to do.
@@ -47,8 +80,10 @@ export function ProjectTabs({
 
     if (typeof window === "undefined") return;
     const next = new URLSearchParams(window.location.search);
-    if (value === defaultTab) next.delete("tab");
-    else next.set("tab", value);
+    if (value === defaultTab) next.delete(param);
+    else next.set(param, value);
+    // An open card belongs to the board; leaving the board closes it.
+    if (value !== "board") next.delete("task");
     const query = next.toString();
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   }
@@ -64,6 +99,10 @@ export function ProjectTabs({
             value={tab.value}
             className="shrink-0 gap-1.5 data-[state=active]:shadow-sm"
           >
+            {tab.icon && (() => {
+              const Icon = TAB_ICONS[tab.icon];
+              return <Icon className="size-3.5 opacity-70" />;
+            })()}
             {tab.label}
             {tab.count ? (
               <span
