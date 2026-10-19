@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireTeam } from "@/lib/dal/session";
+import { usdValue } from "@/lib/invoice-usd";
 
 export type ClientHealth = "green" | "amber" | "red";
 
@@ -9,6 +10,7 @@ export type ClientHealth = "green" | "amber" | "red";
  *  red   — an unpaid invoice more than 7 days overdue
  *  amber — any overdue invoice, or an active project with no messages
  *          either way in 21+ days (relationship going quiet)
+ *  Cancelled invoices are never overdue.
  *  green — everything current
  */
 export async function listClients() {
@@ -17,46 +19,93 @@ export async function listClients() {
   const sevenDaysAgo = new Date(now.getTime() - 7 * 86_400_000);
   const staleCutoff = new Date(now.getTime() - 21 * 86_400_000);
 
-  const [clients, overdueInvoices, activeProjects, recentMessages] =
-    await Promise.all([
-      prisma.user.findMany({
-        where: { role: "CLIENT" },
-        orderBy: { createdAt: "desc" },
-        // Bounded — the table is client-side filtered, so this is the ceiling.
-        take: 300,
-        include: { _count: { select: { projects: true, invoices: true } } },
-      }),
-      prisma.invoice.findMany({
-        where: { status: { not: "PAID" }, dueDate: { not: null, lt: now } },
-        select: { clientId: true, dueDate: true },
-      }),
-      prisma.project.findMany({
-        where: { status: { in: ["IN_PROGRESS", "REVIEW"] }, clientId: { not: null } },
-        select: { clientId: true },
-      }),
-      prisma.message.findMany({
-        where: { createdAt: { gte: staleCutoff } },
-        select: { clientId: true },
-        distinct: ["clientId"],
-      }),
-    ]);
+  const [clients, openInvoices, activeProjects, lastMessages] = await Promise.all([
+    prisma.user.findMany({
+      where: { role: "CLIENT" },
+      orderBy: { createdAt: "desc" },
+      // Bounded — the table is client-side filtered, so this is the ceiling.
+      take: 300,
+      include: { _count: { select: { projects: true, invoices: true } } },
+    }),
+    // Everything still owed. CANCELLED is not owed: it used to count here, so
+    // a voided invoice past its due date turned the client red for good.
+    prisma.invoice.findMany({
+      where: { status: { notIn: ["PAID", "CANCELLED"] } },
+      select: {
+        clientId: true,
+        dueDate: true,
+        amount: true,
+        amountPaid: true,
+        currency: true,
+        amountUsd: true,
+      },
+    }),
+    prisma.project.findMany({
+      where: { status: { in: ["IN_PROGRESS", "REVIEW"] }, clientId: { not: null } },
+      select: { clientId: true },
+    }),
+    // Last message either way, per client — one grouped read.
+    prisma.message.groupBy({ by: ["clientId"], _max: { createdAt: true } }),
+  ]);
 
-  const badlyOverdue = new Set(
-    overdueInvoices.filter((i) => i.dueDate! < sevenDaysAgo).map((i) => i.clientId),
-  );
-  const anyOverdue = new Set(overdueInvoices.map((i) => i.clientId));
-  const hasActiveProject = new Set(activeProjects.map((p) => p.clientId!));
-  const recentlyTalked = new Set(recentMessages.map((m) => m.clientId));
+  const badlyOverdue = new Set<string>();
+  const anyOverdue = new Set<string>();
+  const owed = new Map<string, { usd: number; missing: number }>();
+  for (const inv of openInvoices) {
+    if (inv.dueDate && inv.dueDate < now) {
+      anyOverdue.add(inv.clientId);
+      if (inv.dueDate < sevenDaysAgo) badlyOverdue.add(inv.clientId);
+    }
+    const amount = Number(inv.amount);
+    const balance = Math.max(amount - Number(inv.amountPaid), 0);
+    if (balance <= 0) continue;
+    const entry = owed.get(inv.clientId) ?? { usd: 0, missing: 0 };
+    // In USD at the invoice's own recorded value — EUR 1,400 is not $1,400.
+    const worth = usdValue({
+      amount,
+      currency: inv.currency,
+      amountUsd: inv.amountUsd == null ? null : Number(inv.amountUsd),
+    });
+    if (worth === null || amount <= 0) entry.missing++;
+    else entry.usd += balance * (worth / amount);
+    owed.set(inv.clientId, entry);
+  }
+
+  const liveProjects = new Map<string, number>();
+  for (const p of activeProjects) {
+    liveProjects.set(p.clientId!, (liveProjects.get(p.clientId!) ?? 0) + 1);
+  }
+  const lastContact = new Map(lastMessages.map((m) => [m.clientId, m._max.createdAt]));
 
   return clients.map((client) => {
+    const last = lastContact.get(client.id) ?? null;
+    const quiet = !last || last < staleCutoff;
+    const live = liveProjects.get(client.id) ?? 0;
+
     let health: ClientHealth = "green";
-    if (badlyOverdue.has(client.id)) health = "red";
-    else if (
-      anyOverdue.has(client.id) ||
-      (hasActiveProject.has(client.id) && !recentlyTalked.has(client.id))
-    )
+    let healthReason: string | null = null;
+    if (badlyOverdue.has(client.id)) {
+      health = "red";
+      healthReason = "Invoice 7+ days overdue";
+    } else if (anyOverdue.has(client.id)) {
       health = "amber";
-    return { ...client, health };
+      healthReason = "Invoice overdue";
+    } else if (live > 0 && quiet) {
+      health = "amber";
+      healthReason = "Live project, quiet for 3+ weeks";
+    }
+
+    const balance = owed.get(client.id);
+    return {
+      ...client,
+      health,
+      healthReason,
+      liveProjects: live,
+      owedUsd: Math.round((balance?.usd ?? 0) * 100) / 100,
+      /** Open balances with no USD value yet — not in owedUsd. */
+      owedUnconverted: balance?.missing ?? 0,
+      lastContactAt: last,
+    };
   });
 }
 

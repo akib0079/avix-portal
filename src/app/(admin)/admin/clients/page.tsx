@@ -1,32 +1,25 @@
 import Link from "next/link";
 import { listClients } from "@/lib/dal/users";
 import { PageHeader } from "@/components/page-header";
-import { ClientActions } from "@/components/clients/client-actions";
-import { UserStatusBadge, InviteBadge } from "@/components/status-badges";
+import { ClientsView } from "@/components/clients/clients-view";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Plus, Building2 } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
+import { serverNow } from "@/lib/server-now";
 
 export const metadata = { title: "Clients" };
 
 export default async function ClientsPage() {
   await requireAdmin();
   const clients = await listClients();
+  const now = serverNow();
 
   return (
     <div>
       <PageHeader
         title="Clients"
-        description="Manage your client accounts."
+        description="Who owes, who has gone quiet, who hasn't signed in yet."
         action={
           <Button asChild>
             <Link href="/admin/clients/new">
@@ -36,9 +29,9 @@ export default async function ClientsPage() {
         }
       />
 
-      <Card>
-        <CardContent>
-          {clients.length === 0 ? (
+      {clients.length === 0 ? (
+        <Card>
+          <CardContent>
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-muted">
                 <Building2 className="size-6 text-muted-foreground" />
@@ -48,78 +41,31 @@ export default async function ClientsPage() {
                 Add your first client to get started.
               </p>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Client</TableHead>
-                  <TableHead className="hidden md:table-cell">Company</TableHead>
-                  <TableHead className="hidden md:table-cell">Phone</TableHead>
-                  <TableHead className="hidden sm:table-cell">Projects</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-12" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {clients.map((client) => (
-                  <TableRow key={client.id}>
-                    <TableCell>
-                      <Link
-                        href={`/admin/clients/${client.id}`}
-                        className="flex items-center gap-2 font-medium hover:text-primary"
-                      >
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${
-                            client.health === "red"
-                              ? "bg-red-500"
-                              : client.health === "amber"
-                                ? "bg-amber-400"
-                                : "bg-emerald-500"
-                          }`}
-                          title={
-                            client.health === "red"
-                              ? "Invoice 7+ days overdue"
-                              : client.health === "amber"
-                                ? "Overdue invoice or gone quiet"
-                                : "All good"
-                          }
-                        />
-                        {client.firstName} {client.lastName}
-                      </Link>
-                      <p className="pl-4 text-xs text-muted-foreground">{client.email}</p>
-                    </TableCell>
-                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                      {client.company ?? "—"}
-                    </TableCell>
-                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                      {client.phone ?? "—"}
-                    </TableCell>
-                    <TableCell className="hidden text-sm sm:table-cell">
-                      {client._count.projects}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1.5">
-                        <UserStatusBadge status={client.status} />
-                        <InviteBadge emailVerified={client.emailVerified} />
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <ClientActions
-                        client={{
-                          id: client.id,
-                          name: `${client.firstName} ${client.lastName}`,
-                          status: client.status,
-                          emailVerified: client.emailVerified,
-                        }}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <ClientsView
+          clients={clients.map((c) => ({
+            id: c.id,
+            firstName: c.firstName,
+            lastName: c.lastName,
+            email: c.email,
+            company: c.company,
+            phone: c.phone,
+            status: c.status,
+            emailVerified: c.emailVerified,
+            projects: c._count.projects,
+            liveProjects: c.liveProjects,
+            health: c.health,
+            healthReason: c.healthReason,
+            owedUsd: c.owedUsd,
+            owedUnconverted: c.owedUnconverted,
+            lastContactDays: c.lastContactAt
+              ? Math.max(0, Math.floor((now - c.lastContactAt.getTime()) / 86_400_000))
+              : null,
+          }))}
+        />
+      )}
     </div>
   );
 }
