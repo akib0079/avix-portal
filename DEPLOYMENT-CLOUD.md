@@ -43,7 +43,12 @@ first upload.
    - Node version: **22**
    - Build command: `npm run build:cloud`
      (runs the database migrations, then builds — so every deploy migrates
-     automatically)
+     automatically). It builds with **webpack**, not Next 16's default
+     Turbopack: Turbopack compiles CSS in a separate PostCSS worker process,
+     and on Hostinger's build machines that worker can exit before it ever
+     connects (`TurbopackInternalError` on `src/app/globals.css`, build
+     failed). webpack runs PostCSS in-process, so there is nothing to spawn.
+     Same output; the build takes about a minute longer. Leave Node on 22.
    - Start command: `npm run start`
 5. **Environment variables** — add ALL of these before the first deploy:
 
