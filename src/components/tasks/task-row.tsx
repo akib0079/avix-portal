@@ -82,9 +82,13 @@ export function TaskRow({
   return (
     <div
       className={cn(
-        "group @container flex items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+        // The board card's surface: white on the tinted lane, warming toward
+        // the lane's hue on hover.
+        "group @container relative flex items-start gap-3 overflow-hidden sm:gap-2.5 rounded-xl border bg-card px-3 py-2.5 shadow-[0_1px_2px_rgb(15_23_42/0.05)] transition-[box-shadow,border-color] duration-150",
         done && "opacity-50",
-        overdue ? "border-red-500/30 bg-red-500/[0.03]" : "hover:bg-muted/40",
+        overdue
+          ? "border-red-500/35"
+          : "hover:border-[color-mix(in_oklab,var(--col,var(--border))_45%,var(--border))] hover:shadow-[0_6px_20px_-10px_rgb(15_23_42/0.25)]",
         pending && "opacity-60",
       )}
     >
@@ -95,8 +99,8 @@ export function TaskRow({
         className={cn(
           // The box stays 18px, but the tap area grows to ~42px via a
           // pseudo-element. An 18px target is fine for a mouse and far below
-          // the ~44px a thumb needs; -inset-3 exactly fills the flex gap, so
-          // nothing overlaps the title button beside it.
+          // the ~44px a thumb needs; -inset-3 exactly fills the phone-width
+          // flex gap, so nothing overlaps the title button beside it.
           "relative mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors",
           "before:absolute before:-inset-3 before:content-[''] sm:before:hidden",
           done
@@ -112,16 +116,28 @@ export function TaskRow({
         onClick={() => onOpen(task)}
         className="min-w-0 flex-1 text-left"
       >
-        <span className="flex items-center gap-2">
-          <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[task.priority])} />
-          <span className={cn("truncate text-sm font-medium", done && "line-through")}>
+        <span className="flex items-start gap-2">
+          <span
+            className={cn("mt-[7px] size-1.5 shrink-0 rounded-full", PRIORITY_DOT[task.priority])}
+          />
+          {/* Wraps, not one line: in a board lane a one-line title cut most
+              tasks off after three words. */}
+          <span
+            className={cn(
+              "line-clamp-3 text-sm leading-snug font-medium [overflow-wrap:anywhere]",
+              done && "line-through",
+            )}
+          >
             {task.title}
           </span>
           {task.origin === "SYSTEM" && (
-            <Sparkles className="size-3 shrink-0 text-primary" aria-label="Created automatically" />
+            <Sparkles
+              className="mt-1 size-3 shrink-0 text-primary"
+              aria-label="Created automatically"
+            />
           )}
           {task.recurrence !== "NONE" && (
-            <Repeat className="size-3 shrink-0 text-muted-foreground" aria-label="Repeats" />
+            <Repeat className="mt-1 size-3 shrink-0 text-muted-foreground" aria-label="Repeats" />
           )}
         </span>
 

@@ -15,6 +15,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
+import { ViewToggle, VIEW_MODES } from "@/components/ui/lanes";
+import { todayKey } from "@/components/board/board-bits";
+import { useLocalChoice } from "@/lib/use-local-pref";
+import { ProjectLanes } from "./project-lanes";
 import { cn } from "@/lib/utils";
 import { Search } from "lucide-react";
 
@@ -27,6 +32,14 @@ export type ProjectListRow = {
   clientName: string | null;
   priority: Priority;
   status: ProjectStatus;
+  milestonesDone: number;
+  /** Board cards not yet done. */
+  openTasks: number;
+  /** Board cards where the client asked for help and nobody answered. */
+  openHelp: number;
+  /** "YYYY-MM-DD", or null when the project has no due date. */
+  dueDay: string | null;
+  owner: { id: string; name: string } | null;
 };
 
 const FILTERS = [
@@ -44,10 +57,15 @@ const FILTERS = [
 export function ProjectTable({
   projects,
   canDelete,
+  canMove,
 }: {
   projects: ProjectListRow[];
   canDelete: boolean;
+  /** Admins can drag projects between status lanes. */
+  canMove: boolean;
 }) {
+  const [view, setView] = useLocalChoice("avix.projects.view", "board", VIEW_MODES);
+  const [today] = useState(todayKey);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["value"]>("all");
 
@@ -84,17 +102,17 @@ export function ProjectTable({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search project, client or type"
-            className="h-9 pl-8 text-sm"
+            className="h-9 bg-card pl-8 text-sm"
           />
         </div>
-        <div className="inline-flex rounded-lg border bg-card p-0.5">
+        <div className="inline-flex max-w-full overflow-x-auto rounded-lg border bg-card p-0.5">
           {FILTERS.map((f) => (
             <button
               key={f.value}
               type="button"
               onClick={() => setFilter(f.value)}
               className={cn(
-                "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                "shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors",
                 filter === f.value
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground",
@@ -105,62 +123,75 @@ export function ProjectTable({
             </button>
           ))}
         </div>
+        <ViewToggle value={view} onChange={setView} />
       </div>
 
       {visible.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-dashed bg-card/60 py-10 text-center text-sm text-muted-foreground">
           Nothing matches those filters.
         </p>
+      ) : view === "board" ? (
+        <ProjectLanes projects={visible} canMove={canMove} today={today} />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Project</TableHead>
-              <TableHead className="hidden md:table-cell">Client</TableHead>
-              <TableHead className="hidden sm:table-cell">Type</TableHead>
-              <TableHead className="hidden lg:table-cell">Priority</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {page.shown.map((project) => (
-              <TableRow key={project.id}>
-                <TableCell>
-                  <Link
-                    href={`/admin/projects/${project.id}`}
-                    className="font-medium hover:text-primary"
-                  >
-                    {project.projectName}
-                  </Link>
-                  <p className="text-xs text-muted-foreground">
-                    {project.sourceLabel} · {project.milestoneCount} milestones
-                  </p>
-                </TableCell>
-                <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                  {project.clientName ?? "—"}
-                </TableCell>
-                <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                  {project.typeLabel}
-                </TableCell>
-                <TableCell className="hidden lg:table-cell">
-                  <PriorityBadge priority={project.priority} />
-                </TableCell>
-                <TableCell>
-                  <ProjectStatusBadge status={project.status} />
-                </TableCell>
-                <TableCell>
-                  <ProjectRowActions
-                    project={{ id: project.id, projectName: project.projectName }}
-                    canDelete={canDelete}
-                  />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Project</TableHead>
+                  <TableHead className="hidden md:table-cell">Client</TableHead>
+                  <TableHead className="hidden sm:table-cell">Type</TableHead>
+                  <TableHead className="hidden lg:table-cell">Priority</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-20" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {page.shown.map((project) => (
+                  <TableRow key={project.id}>
+                    <TableCell>
+                      <Link
+                        href={`/admin/projects/${project.id}`}
+                        className="font-medium hover:text-primary"
+                      >
+                        {project.projectName}
+                      </Link>
+                      <p className="text-xs text-muted-foreground">
+                        {project.sourceLabel} · {project.milestonesDone}/{project.milestoneCount}{" "}
+                        milestones
+                        {project.openHelp > 0 && (
+                          <span className="ml-1.5 font-medium text-red-600 dark:text-red-400">
+                            · client needs help
+                          </span>
+                        )}
+                      </p>
+                    </TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
+                      {project.clientName ?? "—"}
+                    </TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
+                      {project.typeLabel}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      <PriorityBadge priority={project.priority} />
+                    </TableCell>
+                    <TableCell>
+                      <ProjectStatusBadge status={project.status} />
+                    </TableCell>
+                    <TableCell>
+                      <ProjectRowActions
+                        project={{ id: project.id, projectName: project.projectName }}
+                        canDelete={canDelete}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
+          </CardContent>
+        </Card>
       )}
-      <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/dal/session";
+import { getSession, requireTeam } from "@/lib/dal/session";
 import type { SessionUser } from "@/lib/auth";
 import type { JSONContent } from "@tiptap/react";
 import type { Prisma } from "@prisma/client";
@@ -308,4 +308,25 @@ export async function countOpenClientHelp(projectId?: string): Promise<number> {
       ...(projectId ? { task: { projectId } } : {}),
     },
   });
+}
+
+/**
+ * Per project: how many cards have a client's help request nobody has
+ * answered. For the projects board, where a card needs to say "your client
+ * is stuck" without opening the project. Two grouped queries, whatever the
+ * number of projects.
+ */
+export async function openClientHelpByProject(): Promise<Map<string, number>> {
+  await requireTeam();
+  const asks = await prisma.projectTaskComment.groupBy({
+    by: ["taskId"],
+    where: { kind: "HELP", resolvedAt: null, authorRole: "CLIENT" },
+  });
+  if (asks.length === 0) return new Map();
+  const perProject = await prisma.projectTask.groupBy({
+    by: ["projectId"],
+    where: { id: { in: asks.map((a) => a.taskId) } },
+    _count: { _all: true },
+  });
+  return new Map(perProject.map((g) => [g.projectId, g._count._all]));
 }

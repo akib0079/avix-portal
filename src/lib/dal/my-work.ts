@@ -14,9 +14,25 @@ export type MyWorkMilestone = {
   estimatedHours: number | null;
 };
 
+/** A card on a project's Kanban board with this person's name on it. */
+export type MyWorkTask = {
+  id: string;
+  title: string;
+  /** Board column: BACKLOG | TODO | IN_PROGRESS | REVIEW. */
+  status: string;
+  priority: "LOW" | "MEDIUM" | "HIGH" | null;
+  dueDate: string | null;
+  projectId: string;
+  projectName: string;
+  clientName: string | null;
+  /** The client asked for help on it and nobody has answered. */
+  clientNeedsHelp: boolean;
+};
+
 export type MyWork = {
   userId: string;
   milestones: MyWorkMilestone[];
+  tasks: MyWorkTask[];
   ownedProjects: { id: string; projectName: string; status: string; dueDate: string | null }[];
   hoursThisWeek: number;
   hoursLastWeek: number;
@@ -44,7 +60,7 @@ export async function getMyWork(of?: string): Promise<MyWork> {
   const lastWeek = new Date(thisWeek);
   lastWeek.setDate(lastWeek.getDate() - 7);
 
-  const [milestones, ownedProjects, weekEntries] = await Promise.all([
+  const [milestones, tasks, ownedProjects, weekEntries] = await Promise.all([
     prisma.milestone.findMany({
       where: { assigneeId: userId, status: { not: "COMPLETED" } },
       orderBy: [{ dueDate: "asc" }, { position: "asc" }],
@@ -63,6 +79,32 @@ export async function getMyWork(of?: string): Promise<MyWork> {
           },
         },
         timeEntries: { select: { hours: true } },
+      },
+    }),
+    // Board cards were invisible here: "My Work" only knew about milestones,
+    // so a card pinned on you by a client never reached your list.
+    prisma.projectTask.findMany({
+      where: { assigneeId: userId, status: { not: "DONE" } },
+      orderBy: [{ dueDate: "asc" }, { updatedAt: "desc" }],
+      take: 150,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        dueDate: true,
+        project: {
+          select: {
+            id: true,
+            projectName: true,
+            client: { select: { firstName: true, lastName: true, company: true } },
+          },
+        },
+        comments: {
+          where: { kind: "HELP", resolvedAt: null, authorRole: "CLIENT" },
+          select: { id: true },
+          take: 1,
+        },
       },
     }),
     prisma.project.findMany({
@@ -97,6 +139,21 @@ export async function getMyWork(of?: string): Promise<MyWork> {
         : null,
       loggedHours: m.timeEntries.reduce((total, e) => total + Number(e.hours), 0),
       estimatedHours: m.estimatedHours == null ? null : Number(m.estimatedHours),
+    })),
+    tasks: tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      // Board due dates are calendar days; keep them as the day they name.
+      dueDate: t.dueDate?.toISOString() ?? null,
+      projectId: t.project.id,
+      projectName: t.project.projectName,
+      clientName: t.project.client
+        ? t.project.client.company ||
+          `${t.project.client.firstName} ${t.project.client.lastName}`.trim()
+        : null,
+      clientNeedsHelp: t.comments.length > 0,
     })),
     ownedProjects: ownedProjects.map((p) => ({
       id: p.id,

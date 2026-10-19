@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -58,6 +58,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { milestoneStatusColor } from "@/lib/status-colors";
 import { toneChip, toneText } from "@/lib/tone";
 
 const MILESTONE_STATUS_OPTIONS = (Object.keys(milestoneStatusLabels) as MilestoneStatus[]).map(
@@ -103,12 +104,21 @@ function SortableRow({
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      style={
+        {
+          transform: CSS.Transform.toString(transform),
+          transition,
+          "--col": milestoneStatusColor[milestone.status],
+        } as CSSProperties
+      }
       className={cn(
-        "group/row rounded-xl border bg-card transition-colors hover:border-primary/30",
-        isDragging && "z-10 opacity-80 shadow-lg ring-2 ring-primary/30",
+        "group/row relative overflow-hidden rounded-xl border bg-card shadow-[0_1px_2px_rgb(15_23_42/0.05)] transition-[box-shadow,border-color] duration-150 hover:border-[color-mix(in_oklab,var(--col)_45%,var(--border))] hover:shadow-[0_6px_20px_-10px_rgb(15_23_42/0.25)]",
+        isDragging &&
+          "z-10 border-[color-mix(in_oklab,var(--col)_55%,var(--border))] shadow-[0_22px_45px_-18px_rgb(15_23_42/0.45)]",
       )}
     >
+      {/* Status colour on the leading edge, as on the project board. */}
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
       <div className="flex items-start gap-2 p-3 sm:items-center sm:gap-3 sm:p-4">
         <button
           className="mt-1 shrink-0 cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-muted active:cursor-grabbing sm:mt-0"
@@ -119,7 +129,7 @@ function SortableRow({
           <GripVertical className="size-4" />
         </button>
 
-        <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-tint text-xs font-semibold text-primary sm:mt-0">
+        <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[var(--col)] text-xs font-semibold text-white shadow-sm sm:mt-0">
           {index + 1}
         </span>
 

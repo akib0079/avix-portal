@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { useRouter } from "next/navigation";
 import {
@@ -34,6 +34,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { usd, formatDate, initials } from "@/lib/format";
+import { leadStageColor } from "@/lib/status-colors";
+import { useLocalSet } from "@/lib/use-local-pref";
+import { Lane, LaneEmpty, LaneScroller } from "@/components/ui/lanes";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
@@ -54,14 +57,6 @@ import {
 } from "lucide-react";
 
 const STAGES: LeadStage[] = ["NEW", "CONTACTED", "PROPOSAL", "WON", "LOST"];
-
-const stageStyle: Record<LeadStage, { bar: string; dot: string; ring: string }> = {
-  NEW: { bar: "bg-sky-400", dot: "bg-sky-400", ring: "ring-sky-300" },
-  CONTACTED: { bar: "bg-amber-400", dot: "bg-amber-400", ring: "ring-amber-300" },
-  PROPOSAL: { bar: "bg-violet-400", dot: "bg-violet-400", ring: "ring-violet-300" },
-  WON: { bar: "bg-emerald-400", dot: "bg-emerald-400", ring: "ring-emerald-300" },
-  LOST: { bar: "bg-slate-300", dot: "bg-slate-300", ring: "ring-slate-300" },
-};
 
 function isOverdue(date: string | null): boolean {
   if (!date) return false;
@@ -89,12 +84,18 @@ function LeadCard({
   return (
     <div
       ref={setNodeRef}
+      style={{ "--col": leadStageColor[lead.stage] } as CSSProperties}
       className={cn(
-        "group rounded-xl border bg-card p-3 shadow-sm transition-shadow",
-        isDragging && "opacity-40",
-        dragging && "rotate-2 shadow-xl ring-2 ring-primary/40",
+        "group relative overflow-hidden rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(15_23_42/0.05)] transition-[box-shadow,border-color] duration-150",
+        !dragging &&
+          "hover:border-[color-mix(in_oklab,var(--col)_45%,var(--border))] hover:shadow-[0_6px_20px_-10px_rgb(15_23_42/0.25)]",
+        isDragging && "border-dashed opacity-35 shadow-none",
+        dragging &&
+          "rotate-[1.5deg] border-[color-mix(in_oklab,var(--col)_55%,var(--border))] shadow-[0_22px_45px_-18px_rgb(15_23_42/0.45)]",
       )}
     >
+      {/* Stage colour as a hairline on the leading edge, as on the project board. */}
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
       <div className="flex items-start gap-2">
         <button
           className="mt-0.5 shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
@@ -104,12 +105,7 @@ function LeadCard({
         >
           <GripVertical className="size-4" />
         </button>
-        <span
-          className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white",
-            stageStyle[lead.stage].dot,
-          )}
-        >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--col)] text-xs font-semibold text-white">
           {initials(lead.name)}
         </span>
         <div className="min-w-0 flex-1">
@@ -118,14 +114,6 @@ function LeadCard({
             <p className="truncate text-xs text-muted-foreground">{lead.company}</p>
           )}
         </div>
-        <span
-          className={cn(
-            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium text-white",
-            stageStyle[lead.stage].dot,
-          )}
-        >
-          {leadStageLabels[lead.stage]}
-        </span>
       </div>
 
       <div className="mt-2.5 space-y-1 pl-6">
@@ -248,11 +236,15 @@ function StageColumn({
   stage,
   leads,
   activeStage,
+  folded,
+  onToggle,
   renderCard,
 }: {
   stage: LeadStage;
   leads: LeadView[];
   activeStage: LeadStage | null;
+  folded: boolean;
+  onToggle: () => void;
   renderCard: (lead: LeadView) => React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
@@ -260,45 +252,26 @@ function StageColumn({
   // Columns render 20 at a time — WON and LOST are mostly history anyway.
   const page = useProgressive(leads, stage, 20);
   const total = leads.reduce((sum, l) => sum + (l.estimatedValue ?? 0), 0);
-  const isTarget = activeStage && activeStage !== stage;
+  const isTarget = !!activeStage && activeStage !== stage;
 
   return (
-    <div className="flex w-[300px] shrink-0 flex-col">
-      <div className="mb-2 rounded-lg border bg-card px-3 py-2">
-        <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5 text-sm font-semibold">
-            <span className={cn("size-2 rounded-full", stageStyle[stage].dot)} />
-            {leadStageLabels[stage]}
-          </span>
-          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground">
-            {leads.length}
-          </span>
-        </div>
-        {total > 0 && (
-          <p className="mt-0.5 pl-3.5 text-xs text-muted-foreground">{usd.format(total)}</p>
-        )}
-      </div>
-      <div
-        ref={setNodeRef}
-        className={cn(
-          "min-h-24 flex-1 space-y-2.5 rounded-xl p-1.5 transition-colors",
-          isOver && "bg-primary/5 ring-2",
-          isOver && stageStyle[stage].ring,
-          isTarget && !isOver && "bg-muted/40",
-        )}
-      >
-        {leads.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
-            {isTarget ? "Drop here" : "Empty"}
-          </div>
-        ) : (
-          <>
-            {page.shown.map(renderCard)}
-            <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
-          </>
-        )}
-      </div>
-    </div>
+    <Lane
+      color={leadStageColor[stage]}
+      title={leadStageLabels[stage]}
+      count={leads.length}
+      meta={total > 0 ? usd.format(total) : undefined}
+      collapsed={folded}
+      onToggle={onToggle}
+      bodyRef={setNodeRef}
+      highlight={isOver || activeStage === stage}
+      className="lg:min-w-[230px]"
+      empty={
+        leads.length === 0 ? <LaneEmpty>{isTarget ? "Drop here" : "Empty"}</LaneEmpty> : undefined
+      }
+    >
+      {page.shown.map(renderCard)}
+      <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
+    </Lane>
   );
 }
 
@@ -322,6 +295,7 @@ export function LeadBoard({
   const [lostReason, setLostReason] = useState("");
   const [proposingLeadId, setProposingLeadId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [folded, toggleFold] = useLocalSet("avix.leads.folded", ["LOST"]);
 
   const [prevLeads, setPrevLeads] = useState(leads);
   if (leads !== prevLeads) {
@@ -429,13 +403,15 @@ export function LeadBoard({
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-3">
+        <LaneScroller>
           {STAGES.map((stage) => (
             <StageColumn
               key={stage}
               stage={stage}
               leads={items.filter((l) => l.stage === stage)}
               activeStage={activeLead?.stage ?? null}
+              folded={folded.has(stage)}
+              onToggle={() => toggleFold(stage)}
               renderCard={(lead) => (
                 <LeadCard
                   key={lead.id}
@@ -451,9 +427,9 @@ export function LeadBoard({
               )}
             />
           ))}
-        </div>
+        </LaneScroller>
 
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0.7, 0.2, 1)" }}>
           {activeLead ? <LeadCard lead={activeLead} dragging /> : null}
         </DragOverlay>
       </DndContext>

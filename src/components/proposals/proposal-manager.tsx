@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProposalView } from "@/lib/dal/proposals";
@@ -27,7 +27,11 @@ import {
 } from "@/components/ui/dialog";
 import { usd } from "@/lib/format";
 import { proposalStatusLabels } from "@/lib/validation/proposal";
-import { cn } from "@/lib/utils";
+import { proposalStatusColor } from "@/lib/status-colors";
+import { SoftPill } from "@/components/ui/status-pill";
+import { Lane, LaneEmpty, LaneScroller, ViewToggle, VIEW_MODES } from "@/components/ui/lanes";
+import { useLocalChoice, useLocalSet } from "@/lib/use-local-pref";
+import type { ProposalStatus } from "@prisma/client";
 import { toast } from "sonner";
 import {
   Plus,
@@ -41,13 +45,14 @@ import {
   Paperclip,
 } from "lucide-react";
 
-const statusStyles: Record<string, string> = {
-  DRAFT: "bg-muted text-muted-foreground",
-  SENT: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300",
-  ACCEPTED: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300",
-  DECLINED: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300",
-  EXPIRED: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
-};
+/** Board lanes, in the order a proposal travels. */
+const LANES: { status: ProposalStatus; hint: string }[] = [
+  { status: "DRAFT", hint: "Not sent yet" },
+  { status: "SENT", hint: "Waiting on a reply" },
+  { status: "ACCEPTED", hint: "Won — client, project and deposit created" },
+  { status: "DECLINED", hint: "They said no" },
+  { status: "EXPIRED", hint: "Lapsed unanswered" },
+];
 
 function formatDate(iso: string | null) {
   if (!iso) return null;
@@ -75,6 +80,9 @@ export function ProposalManager({
   const [acceptName, setAcceptName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useLocalChoice("avix.proposals.view", "board", VIEW_MODES);
+  // Lost causes only grow; they start folded.
+  const [folded, toggleFold] = useLocalSet("avix.proposals.folded", ["DECLINED", "EXPIRED"]);
 
   const accepted = proposals.filter((p) => p.status === "ACCEPTED");
   const outstanding = proposals.filter((p) => p.status === "SENT");
@@ -97,6 +105,180 @@ export function ProposalManager({
     toast.success("Public link copied to clipboard.");
   }
 
+  /**
+   * One proposal. The same card serves the list and a lane: it lays out side
+   * by side when it has the room and stacks when it doesn't, so the lane
+   * version is not a second design to keep in step.
+   */
+  function renderCard(p: ProposalView, inLane: boolean) {
+    return (
+      <div
+        key={p.id}
+        style={{ "--col": proposalStatusColor[p.status] } as CSSProperties}
+        className="@container relative overflow-hidden rounded-xl border bg-card p-4 shadow-[0_1px_2px_rgb(15_23_42/0.05)] transition-[box-shadow,border-color] duration-150 hover:border-[color-mix(in_oklab,var(--col)_45%,var(--border))] hover:shadow-[0_6px_20px_-10px_rgb(15_23_42/0.25)]"
+      >
+        <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
+        <div className="flex flex-col gap-3 @[36rem]:flex-row @[36rem]:items-start @[36rem]:justify-between">
+          <div className="min-w-0">
+            <p className="flex flex-wrap items-center gap-2 text-sm font-semibold [overflow-wrap:anywhere]">
+              {p.status === "ACCEPTED" ? (
+                <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-300" />
+              ) : (
+                <FileSignature className="size-4 shrink-0 text-primary" />
+              )}
+              {p.title}
+              {!inLane && (
+                <SoftPill color={proposalStatusColor[p.status]}>
+                  {proposalStatusLabels[p.status]}
+                </SoftPill>
+              )}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {p.contactName}
+              {p.contactCompany ? ` · ${p.contactCompany}` : ""}
+              {!p.leadId ? " · manual" : ""}
+              {(p.invoicePdfPath || p.invoicePdfExternalUrl) && (
+                <>
+                  {" · "}
+                  <a
+                    href={`/api/files/proposal-invoice/${p.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    <Paperclip className="size-3" />
+                    {p.invoicePdfExternalUrl ? "invoice link" : "invoice PDF"}
+                  </a>
+                </>
+              )}
+              {p.status === "SENT" && p.expiresAt ? ` · valid until ${formatDate(p.expiresAt)}` : ""}
+              {p.status === "DRAFT" ? " · not sent yet" : ""}
+            </p>
+
+            {p.status === "ACCEPTED" && (
+              <p className="mt-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+                {p.acceptedByAdmin ? "Recorded as agreed by " : "Signed by "}
+                <strong>{p.acceptedName}</strong> on {formatDate(p.acceptedAt)}
+                {p.acceptedByAdmin ? " (marked by you)" : ""}
+                {p.convertedProjectId && (
+                  <>
+                    {" · "}
+                    <Link
+                      href={`/admin/projects/${p.convertedProjectId}`}
+                      className="underline hover:text-emerald-800 dark:text-emerald-300"
+                    >
+                      View project
+                    </Link>
+                  </>
+                )}
+                {p.convertedInvoiceId && (
+                  <>
+                    {" · "}
+                    <Link
+                      href={`/admin/invoices/${p.convertedInvoiceId}`}
+                      className="underline hover:text-emerald-800 dark:text-emerald-300"
+                    >
+                      Deposit invoice
+                    </Link>
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-t pt-3 @[36rem]:border-t-0 @[36rem]:pt-0">
+            <span className="num mr-auto text-lg font-bold text-primary @[36rem]:mr-0">
+              {usd.format(p.total)}
+            </span>
+
+            {p.status === "DRAFT" && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyId === p.id}
+                  onClick={() => onSend(p)}
+                >
+                  {busyId === p.id ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Send className="size-4" />
+                  )}
+                  Send
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => {
+                    setEditing(p);
+                    setFormOpen(true);
+                  }}
+                >
+                  <Pencil className="size-4" />
+                  <span className="sr-only">Edit</span>
+                </Button>
+              </>
+            )}
+
+            {(p.status === "SENT" || p.status === "DECLINED") && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyId === p.id}
+                  onClick={() => onCopyLink(p)}
+                >
+                  {busyId === p.id ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Link2 className="size-4" />
+                  )}
+                  Copy link
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busyId === p.id}
+                  onClick={() => onSend(p)}
+                >
+                  Resend
+                </Button>
+              </>
+            )}
+
+            {p.status !== "ACCEPTED" && p.status !== "DECLINED" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-emerald-600 dark:text-emerald-300 hover:text-emerald-700 dark:text-emerald-300"
+                title="They agreed by call or chat — close it yourself"
+                onClick={() => {
+                  setAcceptName(p.contactName);
+                  setAccepting(p);
+                }}
+              >
+                <CheckCircle2 className="size-4" /> Mark accepted
+              </Button>
+            )}
+
+            {p.status !== "ACCEPTED" && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive"
+                onClick={() => setDeleting(p)}
+              >
+                <Trash2 className="size-4" />
+                <span className="sr-only">Delete</span>
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -107,14 +289,17 @@ export function ProposalManager({
           </span>{" "}
           won from {accepted.length} accepted
         </p>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus /> New proposal
-        </Button>
+        <div className="flex items-center gap-2">
+          <ViewToggle value={view} onChange={setView} />
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus /> New proposal
+          </Button>
+        </div>
       </div>
 
       {proposals.length === 0 ? (
@@ -129,175 +314,31 @@ export function ProposalManager({
             deposit invoice are created for you.
           </p>
         </div>
+      ) : view === "board" ? (
+        <LaneScroller>
+          {LANES.map((lane) => {
+            const items = proposals.filter((p) => p.status === lane.status);
+            const total = items.reduce((sum, p) => sum + p.total, 0);
+            return (
+              <Lane
+                key={lane.status}
+                color={proposalStatusColor[lane.status]}
+                title={proposalStatusLabels[lane.status]}
+                count={items.length}
+                meta={total > 0 ? usd.format(total) : undefined}
+                hint={lane.hint}
+                collapsed={folded.has(lane.status)}
+                onToggle={() => toggleFold(lane.status)}
+                className="lg:min-w-[260px]"
+                empty={items.length === 0 ? <LaneEmpty>Nothing here</LaneEmpty> : undefined}
+              >
+                {items.map((p) => renderCard(p, true))}
+              </Lane>
+            );
+          })}
+        </LaneScroller>
       ) : (
-        <div className="space-y-3">
-          {proposals.map((p) => (
-            <div key={p.id} className="rounded-xl border bg-card p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="flex flex-wrap items-center gap-2 font-medium">
-                    {p.status === "ACCEPTED" ? (
-                      <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-300" />
-                    ) : (
-                      <FileSignature className="size-4 text-primary" />
-                    )}
-                    {p.title}
-                    <span
-                      className={cn(
-                        "rounded-full px-2 py-0.5 text-xs font-medium",
-                        statusStyles[p.status],
-                      )}
-                    >
-                      {proposalStatusLabels[p.status]}
-                    </span>
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {p.contactName}
-                    {p.contactCompany ? ` · ${p.contactCompany}` : ""}
-                    {!p.leadId ? " · manual" : ""}
-                    {(p.invoicePdfPath || p.invoicePdfExternalUrl) && (
-                      <>
-                        {" · "}
-                        <a
-                          href={`/api/files/proposal-invoice/${p.id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                        >
-                          <Paperclip className="size-3" />
-                          {p.invoicePdfExternalUrl ? "invoice link" : "invoice PDF"}
-                        </a>
-                      </>
-                    )}
-                    {p.status === "SENT" && p.expiresAt
-                      ? ` · valid until ${formatDate(p.expiresAt)}`
-                      : ""}
-                    {p.status === "DRAFT" ? " · not sent yet" : ""}
-                  </p>
-
-                  {p.status === "ACCEPTED" && (
-                    <p className="mt-1.5 text-sm text-emerald-700 dark:text-emerald-300">
-                      {p.acceptedByAdmin ? "Recorded as agreed by " : "Signed by "}
-                      <strong>{p.acceptedName}</strong> on {formatDate(p.acceptedAt)}
-                      {p.acceptedByAdmin ? " (marked by you)" : ""}
-                      {p.convertedProjectId && (
-                        <>
-                          {" · "}
-                          <Link
-                            href={`/admin/projects/${p.convertedProjectId}`}
-                            className="underline hover:text-emerald-800 dark:text-emerald-300"
-                          >
-                            View project
-                          </Link>
-                        </>
-                      )}
-                      {p.convertedInvoiceId && (
-                        <>
-                          {" · "}
-                          <Link
-                            href={`/admin/invoices/${p.convertedInvoiceId}`}
-                            className="underline hover:text-emerald-800 dark:text-emerald-300"
-                          >
-                            Deposit invoice
-                          </Link>
-                        </>
-                      )}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <span className="font-heading text-lg font-bold text-primary">
-                    {usd.format(p.total)}
-                  </span>
-
-                  {p.status === "DRAFT" && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busyId === p.id}
-                        onClick={() => onSend(p)}
-                      >
-                        {busyId === p.id ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <Send className="size-4" />
-                        )}
-                        Send
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        onClick={() => {
-                          setEditing(p);
-                          setFormOpen(true);
-                        }}
-                      >
-                        <Pencil className="size-4" />
-                        <span className="sr-only">Edit</span>
-                      </Button>
-                    </>
-                  )}
-
-                  {(p.status === "SENT" || p.status === "DECLINED") && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busyId === p.id}
-                        onClick={() => onCopyLink(p)}
-                      >
-                        {busyId === p.id ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <Link2 className="size-4" />
-                        )}
-                        Copy link
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busyId === p.id}
-                        onClick={() => onSend(p)}
-                      >
-                        Resend
-                      </Button>
-                    </>
-                  )}
-
-                  {p.status !== "ACCEPTED" && p.status !== "DECLINED" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-emerald-600 dark:text-emerald-300 hover:text-emerald-700 dark:text-emerald-300"
-                      title="They agreed by call or chat — close it yourself"
-                      onClick={() => {
-                        setAcceptName(p.contactName);
-                        setAccepting(p);
-                      }}
-                    >
-                      <CheckCircle2 className="size-4" /> Mark accepted
-                    </Button>
-                  )}
-
-                  {p.status !== "ACCEPTED" && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-8 text-destructive hover:text-destructive"
-                      onClick={() => setDeleting(p)}
-                    >
-                      <Trash2 className="size-4" />
-                      <span className="sr-only">Delete</span>
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <div className="space-y-3">{proposals.map((p) => renderCard(p, false))}</div>
       )}
 
       <ProposalFormDialog

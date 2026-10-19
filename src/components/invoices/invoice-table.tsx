@@ -18,7 +18,12 @@ import {
 } from "@/components/ui/table";
 import { usd, formatDate } from "@/lib/format";
 import { formatCurrency } from "@/lib/currency";
+import { usdValue } from "@/lib/invoice-usd";
 import { ShowMore, useProgressive } from "@/components/ui/progressive";
+import { ViewToggle, VIEW_MODES } from "@/components/ui/lanes";
+import { todayKey } from "@/components/board/board-bits";
+import { useLocalChoice } from "@/lib/use-local-pref";
+import { InvoiceLanes } from "./invoice-lanes";
 import { cn } from "@/lib/utils";
 import { Search, Paperclip, FileText } from "lucide-react";
 import type { InvoiceStatus } from "@prisma/client";
@@ -82,6 +87,8 @@ export function InvoiceTable({
   /** Server-rendered timestamp — keeps "overdue" stable across re-renders. */
   now: number;
 }) {
+  const [view, setView] = useLocalChoice("avix.invoices.view", "list", VIEW_MODES);
+  const [today] = useState(todayKey);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["value"]>("all");
 
@@ -97,8 +104,10 @@ export function InvoiceTable({
     const totals: Record<Bucket, number> = { current: 0, d30: 0, d60: 0, d90: 0 };
     for (const { row, balance } of outstanding) {
       if (balance <= 0 || row.status === "CANCELLED") continue;
-      if (row.amountUsd === null || row.amount <= 0) continue;
-      totals[bucketOf(row, now)] += balance * (row.amountUsd / row.amount);
+      // usdValue covers a USD invoice whose amountUsd was never filled in.
+      const worth = usdValue(row);
+      if (worth === null || row.amount <= 0) continue;
+      totals[bucketOf(row, now)] += balance * (worth / row.amount);
     }
     return totals;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,135 +178,140 @@ export function InvoiceTable({
         ))}
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <div className="relative min-w-[200px] flex-1">
-              <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search number, client or project"
-                className="h-9 pl-8 text-sm"
-              />
-            </div>
-            <div className="inline-flex rounded-lg border bg-card p-0.5">
-              {FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  onClick={() => setFilter(f.value)}
-                  className={cn(
-                    "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-                    filter === f.value
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-            <span className="text-xs text-muted-foreground">
-              {visible.length} of {invoices.length} · {usd.format(totalOutstanding)} outstanding
-            </span>
-          </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search number, client or project"
+            className="h-9 bg-card pl-8 text-sm"
+          />
+        </div>
+        <div className="inline-flex max-w-full overflow-x-auto rounded-lg border bg-card p-0.5">
+          {FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setFilter(f.value)}
+              className={cn(
+                "shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                filter === f.value
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {visible.length} of {invoices.length} · {usd.format(totalOutstanding)} outstanding
+        </span>
+        <ViewToggle value={view} onChange={setView} className="ml-auto" />
+      </div>
 
-          {visible.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              Nothing matches those filters.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice</TableHead>
-                  <TableHead className="hidden md:table-cell">Client</TableHead>
-                  <TableHead className="hidden lg:table-cell">Project</TableHead>
-                  <TableHead className="hidden sm:table-cell">Due</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead className="hidden sm:table-cell">Balance</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-12" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {page.shown.map((invoice) => {
-                  const balance = Math.max(invoice.amount - invoice.amountPaid, 0);
-                  const overdue =
-                    !!invoice.dueDate && Date.parse(invoice.dueDate) < now && balance > 0;
-                  return (
-                    <TableRow key={invoice.id}>
-                      <TableCell>
-                        <Link
-                          href={`/admin/invoices/${invoice.id}`}
-                          className="flex items-center gap-1.5 font-medium hover:text-primary"
-                        >
-                          {invoice.invoiceNumber}
-                          {invoice.hasDocument && (
-                            <Paperclip className="size-3 text-muted-foreground" />
+      {view === "board" && visible.length > 0 ? (
+        <InvoiceLanes invoices={visible} now={now} today={today} />
+      ) : (
+        <Card>
+          <CardContent className="pt-6">
+            {visible.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                Nothing matches those filters.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice</TableHead>
+                    <TableHead className="hidden md:table-cell">Client</TableHead>
+                    <TableHead className="hidden lg:table-cell">Project</TableHead>
+                    <TableHead className="hidden sm:table-cell">Due</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead className="hidden sm:table-cell">Balance</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-12" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {page.shown.map((invoice) => {
+                    const balance = Math.max(invoice.amount - invoice.amountPaid, 0);
+                    const overdue =
+                      !!invoice.dueDate && Date.parse(invoice.dueDate) < now && balance > 0;
+                    return (
+                      <TableRow key={invoice.id}>
+                        <TableCell>
+                          <Link
+                            href={`/admin/invoices/${invoice.id}`}
+                            className="flex items-center gap-1.5 font-medium hover:text-primary"
+                          >
+                            {invoice.invoiceNumber}
+                            {invoice.hasDocument && (
+                              <Paperclip className="size-3 text-muted-foreground" />
+                            )}
+                            {invoice.paymentClaimed && invoice.status !== "PAID" && (
+                              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                Client says paid
+                              </span>
+                            )}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
+                          <Link
+                            href={`/admin/clients/${invoice.clientId}`}
+                            className="hover:text-primary"
+                          >
+                            {invoice.clientName}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                          {invoice.projectName ?? "—"}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "hidden text-sm sm:table-cell",
+                            overdue
+                              ? cn("font-medium", toneText.bad)
+                              : "text-muted-foreground",
                           )}
-                          {invoice.paymentClaimed && invoice.status !== "PAID" && (
-                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                              Client says paid
+                        >
+                          {invoice.dueDate ? formatDate(invoice.dueDate) : "—"}
+                        </TableCell>
+                        <TableCell className="text-sm font-medium">
+                          {formatCurrency(invoice.amount, invoice.currency)}
+                        </TableCell>
+                        <TableCell className="hidden text-sm sm:table-cell">
+                          {balance > 0 ? (
+                            <span className={toneText.warn}>
+                              {formatCurrency(balance, invoice.currency)}
                             </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
                           )}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                        <Link
-                          href={`/admin/clients/${invoice.clientId}`}
-                          className="hover:text-primary"
-                        >
-                          {invoice.clientName}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
-                        {invoice.projectName ?? "—"}
-                      </TableCell>
-                      <TableCell
-                        className={cn(
-                          "hidden text-sm sm:table-cell",
-                          overdue
-                            ? cn("font-medium", toneText.bad)
-                            : "text-muted-foreground",
-                        )}
-                      >
-                        {invoice.dueDate ? formatDate(invoice.dueDate) : "—"}
-                      </TableCell>
-                      <TableCell className="text-sm font-medium">
-                        {formatCurrency(invoice.amount, invoice.currency)}
-                      </TableCell>
-                      <TableCell className="hidden text-sm sm:table-cell">
-                        {balance > 0 ? (
-                          <span className={toneText.warn}>
-                            {formatCurrency(balance, invoice.currency)}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <InvoiceStatusSelect
-                          invoiceId={invoice.id}
-                          status={invoice.status}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <DeleteInvoiceButton
-                          invoiceId={invoice.id}
-                          invoiceNumber={invoice.invoiceNumber}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-          <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
-        </CardContent>
-      </Card>
+                        </TableCell>
+                        <TableCell>
+                          <InvoiceStatusSelect
+                            invoiceId={invoice.id}
+                            status={invoice.status}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <DeleteInvoiceButton
+                            invoiceId={invoice.id}
+                            invoiceNumber={invoice.invoiceNumber}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+            <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

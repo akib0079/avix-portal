@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import { RequestCard } from "./request-card";
 import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { Lane, LaneEmpty, LaneScroller } from "@/components/ui/lanes";
+import { taskRequestStatusColor } from "@/lib/status-colors";
+import { useLocalSet } from "@/lib/use-local-pref";
 import type { TaskRequestStatus } from "@prisma/client";
 import { Search, Inbox, Clock } from "lucide-react";
 
@@ -43,6 +45,8 @@ export function RequestBoard({
   now: number;
 }) {
   const [search, setSearch] = useState("");
+  // Declined only grows and is rarely reopened; it starts folded.
+  const [folded, toggleFold] = useLocalSet("avix.requests.folded", ["REJECTED"]);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -84,7 +88,7 @@ export function RequestBoard({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search title, client or project"
-            className="h-9 pl-8 text-sm"
+            className="h-9 bg-card pl-8 text-sm"
           />
         </div>
         {overdue > 0 && (
@@ -95,26 +99,26 @@ export function RequestBoard({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <LaneScroller>
         {COLUMNS.map((column) => {
           const items = byStatus(column.status);
           return (
-            <section key={column.status} className="min-w-0">
-              <header className="mb-3">
-                <h2 className="font-heading flex items-center gap-2 text-sm font-semibold">
-                  {column.label}
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                    {items.length}
-                  </span>
-                </h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{column.hint}</p>
-              </header>
-
+            <Lane
+              key={column.status}
+              color={taskRequestStatusColor[column.status]}
+              title={column.label}
+              count={items.length}
+              hint={column.hint}
+              collapsed={folded.has(column.status)}
+              onToggle={() => toggleFold(column.status)}
+              className="lg:min-w-[280px]"
+              empty={items.length === 0 ? <LaneEmpty>Nothing here</LaneEmpty> : undefined}
+            >
               <RequestColumn items={items} now={now} resetKey={search} />
-            </section>
+            </Lane>
           );
         })}
-      </div>
+      </LaneScroller>
     </div>
   );
 }
@@ -135,41 +139,18 @@ function RequestColumn({
   const page = useProgressive(items, resetKey, 15);
   return (
     <>
-      {items.length === 0 ? (
-        <p className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
-          Nothing here
-        </p>
-      ) : (
-        <div className="space-y-3">
-          {page.shown.map((request) => {
-            const waitingDays = Math.floor(
-              (now - new Date(request.createdAt).getTime()) / 86_400_000,
-            );
-            const stale = request.status === "PENDING" && waitingDays >= SLA_DAYS;
-            return (
-              <div
-                key={request.id}
-                className={cn(
-                  "rounded-xl",
-                  stale && "ring-2 ring-amber-300 dark:ring-amber-800",
-                )}
-              >
-                {stale && (
-                  <p className="flex items-center gap-1 rounded-t-xl bg-amber-100 px-3 py-1 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
-                    <Clock className="size-3" /> Waiting {waitingDays} days
-                  </p>
-                )}
-                <RequestCard request={request} />
-              </div>
-            );
-          })}
-          <ShowMore
-            remaining={page.remaining}
-            step={page.step}
-            onShowMore={page.showMore}
+      {page.shown.map((request) => {
+        const waitingDays = Math.floor((now - new Date(request.createdAt).getTime()) / 86_400_000);
+        return (
+          <RequestCard
+            key={request.id}
+            request={request}
+            waitingDays={waitingDays}
+            stale={request.status === "PENDING" && waitingDays >= SLA_DAYS}
           />
-        </div>
-      )}
+        );
+      })}
+      <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
     </>
   );
 }

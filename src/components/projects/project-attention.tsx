@@ -76,15 +76,15 @@ export function ProjectAttention({
 
   if (items.length === 0) {
     return (
-      <div
+      <p
         className={cn(
-          "flex items-center gap-2 rounded-xl border bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
+          "flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300",
           className,
         )}
       >
         <CheckCircle2 className="size-4 shrink-0" />
         Nothing is waiting — everything here is up to date.
-      </div>
+      </p>
     );
   }
 

@@ -16,7 +16,15 @@ export async function listProjects() {
     take: 200,
     include: {
       client: { select: { id: true, firstName: true, lastName: true, company: true } },
-      _count: { select: { milestones: true } },
+      owner: { select: { id: true, firstName: true, lastName: true } },
+      // Statuses only — enough for a progress bar on each board card.
+      milestones: { select: { status: true } },
+      _count: {
+        select: {
+          milestones: true,
+          boardTasks: { where: { status: { not: "DONE" } } },
+        },
+      },
     },
   });
   if (viewer.role === "STAFF") {

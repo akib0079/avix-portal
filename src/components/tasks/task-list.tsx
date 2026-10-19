@@ -10,6 +10,8 @@ import { TaskRow } from "./task-row";
 import { TaskDialog, type TaskTargets } from "./task-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Lane, LaneScroller } from "@/components/ui/lanes";
+import { HUE } from "@/lib/status-colors";
 import { cn } from "@/lib/utils";
 import { Plus, Sparkles, CheckCircle2, SlidersHorizontal, BellOff, Check } from "lucide-react";
 
@@ -23,6 +25,15 @@ import { Plus, Sparkles, CheckCircle2, SlidersHorizontal, BellOff, Check } from 
  */
 const COLUMNS = ["No date", "Today", "Overdue", "This week", "Later"] as const;
 type Bucket = (typeof COLUMNS)[number];
+
+/** Lane colours, in the board's vocabulary: late is red, today is the brand. */
+const BUCKET_COLOR: Record<Bucket, string> = {
+  "No date": HUE.slate,
+  Today: HUE.brand,
+  Overdue: HUE.red,
+  "This week": HUE.blue,
+  Later: HUE.sky,
+};
 
 function bucketOf(task: TaskView, now: number): Bucket {
   if (!task.dueDate) return "No date";
@@ -161,34 +172,22 @@ export function TaskList({
       ) : (
         // Empty buckets are dropped rather than rendered as blank columns, so
         // the board stays dense whatever the filters leave behind.
-        <div
-          className={cn(
-            "grid items-start gap-4",
-            liveColumns.length >= 2 && "md:grid-cols-2",
-            liveColumns.length >= 3 && "xl:grid-cols-3",
-            liveColumns.length >= 4 && "2xl:grid-cols-4",
-          )}
-        >
+        <LaneScroller>
           {liveColumns.map((bucket) => {
             const list = grouped.get(bucket)!;
             return (
-              <section key={bucket} className="min-w-0">
-                <h2
-                  className={cn(
-                    "mb-2 flex items-baseline gap-1.5 text-xs font-semibold tracking-wide uppercase",
-                    bucket === "Overdue"
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {bucket}
-                  <span className="font-normal opacity-60">{list.length}</span>
-                </h2>
+              <Lane
+                key={bucket}
+                color={BUCKET_COLOR[bucket]}
+                title={bucket}
+                count={list.length}
+                className="lg:min-w-[200px]"
+              >
                 <TaskColumn key={bucket} list={list} now={now} onOpen={open} />
-              </section>
+              </Lane>
             );
           })}
-        </div>
+        </LaneScroller>
       )}
 
       <TaskDialog
@@ -243,11 +242,11 @@ function TaskColumn({
 }) {
   const page = useProgressive(list, "", 25);
   return (
-    <div className="space-y-2">
+    <>
       {page.shown.map((task) => (
         <TaskRow key={task.id} task={task} now={now} onOpen={onOpen} />
       ))}
       <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
-    </div>
+    </>
   );
 }

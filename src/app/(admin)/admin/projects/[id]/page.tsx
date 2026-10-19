@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProject, getProjectWorkspace } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
@@ -7,7 +6,7 @@ import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
 import { MilestoneBoard } from "@/components/boards-lazy";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
-import { ProjectRail } from "@/components/projects/project-rail";
+import { ProjectHeader } from "@/components/projects/project-header";
 import { ProjectTabs } from "@/components/projects/project-tabs";
 import { ProjectAttention } from "@/components/projects/project-attention";
 import { ProjectMoney } from "@/components/projects/project-money";
@@ -16,7 +15,7 @@ import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { Card, CardContent } from "@/components/ui/card";
 import { projectHealth, pendingWork } from "@/lib/project-health";
-import { ArrowLeft } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
 import { listTeamOptions } from "@/lib/dal/users";
 import { getBillableWork } from "@/lib/dal/billable";
@@ -51,6 +50,8 @@ export default async function ProjectDetailPage({
       getBoardCards(id),
     ]);
   if (!project) notFound();
+  // Read once: the board and the header's "due in N days" agree on what now is.
+  const renderedAt = serverNow();
   // People and milestones are already loaded for this page; the board reuses
   // them rather than asking the database twice.
   const board = {
@@ -113,7 +114,7 @@ export default async function ProjectDetailPage({
             name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
           }}
           initial={board}
-          renderedAt={serverNow()}
+          renderedAt={renderedAt}
           initialTaskId={taskParam ?? null}
         />
       ),
@@ -215,67 +216,73 @@ export default async function ProjectDetailPage({
     },
   ];
 
+  const hoursLogged = Object.values(workspace.loggedHoursByMilestone).reduce(
+    (sum, h) => sum + h,
+    0,
+  );
+
   return (
-    <div>
-      <Link
-        href="/admin/projects"
-        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> Back to Projects
-      </Link>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px_1fr]">
-        {/* Context rail — sticks while you work in the tabs beside it. */}
-        <div className="xl:sticky xl:top-16 xl:self-start">
-          <ProjectRail
-            project={{
-              id: project.id,
-              projectName: project.projectName,
-              status: project.status,
-              priority: project.priority,
-              type: project.type,
-              source: project.source,
-              startDate: project.startDate?.toISOString() ?? null,
-              dueDate: project.dueDate?.toISOString() ?? null,
-              ownerId: project.ownerId,
-              billingType: project.billingType,
-              contractPrice:
-                project.contractPrice == null ? null : Number(project.contractPrice),
-              client: project.client
-                ? {
-                    id: project.client.id,
-                    firstName: project.client.firstName,
-                    lastName: project.client.lastName,
-                    company: project.client.company,
-                  }
-                : null,
-            }}
-            milestones={milestones}
-            team={team}
-            canEdit={isAdmin}
-          />
-
-          {hasRichTextContent(project.description) && (
-            <Card className="mt-4">
-              <CardContent className="pt-6">
-                <h2 className="font-heading mb-2 text-sm font-semibold">Brief</h2>
-                <RichTextViewer content={project.description} />
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        <div className="min-w-0">
+    <div className="space-y-5">
+      {/* Full width: the header is a band, and the workspace below it gets
+          the whole page — the board needs every column visible at once. */}
+      <ProjectHeader
+        project={{
+          id: project.id,
+          projectName: project.projectName,
+          status: project.status,
+          priority: project.priority,
+          type: project.type,
+          source: project.source,
+          startDate: project.startDate?.toISOString() ?? null,
+          dueDate: project.dueDate?.toISOString() ?? null,
+          ownerId: project.ownerId,
+          billingType: project.billingType,
+          contractPrice:
+            project.contractPrice == null ? null : Number(project.contractPrice),
+          client: project.client
+            ? {
+                id: project.client.id,
+                firstName: project.client.firstName,
+                lastName: project.client.lastName,
+                company: project.client.company,
+              }
+            : null,
+        }}
+        milestones={milestones}
+        team={team}
+        canEdit={isAdmin}
+        renderedAt={renderedAt}
+        stats={{
+          openTasks: board.cards.filter((c) => c.status !== "DONE").length,
+          doneTasks: board.cards.filter((c) => c.status === "DONE").length,
+          helpRequests: clientHelp,
+          hoursLogged,
+          unbilled: isAdmin && billable ? billable.unbilled : null,
+        }}
+        attention={
           <ProjectAttention
             pending={pending}
             projectId={project.id}
             overdue={health.overdue}
             boardHelp={clientHelp}
-            className="mb-4"
           />
-          <ProjectTabs tabs={tabs} defaultTab="board" />
-        </div>
-      </div>
+        }
+        brief={
+          hasRichTextContent(project.description) ? (
+            <details className="group">
+              <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+                Project brief
+              </summary>
+              <div className="mt-2 rounded-xl border bg-card p-4">
+                <RichTextViewer content={project.description} />
+              </div>
+            </details>
+          ) : null
+        }
+      />
+
+      <ProjectTabs tabs={tabs} defaultTab="board" />
 
       {project.client && (
         <ChatWidget
