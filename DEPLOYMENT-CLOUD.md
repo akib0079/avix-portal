@@ -43,12 +43,20 @@ first upload.
    - Node version: **22**
    - Build command: `npm run build:cloud`
      (runs the database migrations, then builds — so every deploy migrates
-     automatically). It builds with **webpack**, not Next 16's default
-     Turbopack: Turbopack compiles CSS in a separate PostCSS worker process,
-     and on Hostinger's build machines that worker can exit before it ever
-     connects (`TurbopackInternalError` on `src/app/globals.css`, build
-     failed). webpack runs PostCSS in-process, so there is nothing to spawn.
-     Same output; the build takes about a minute longer. Leave Node on 22.
+     automatically). Leave Node on 22.
+
+     Why the build command looks unusual: Hostinger's build machine reports
+     64 CPU cores but caps how many threads an account may run. Next sizes
+     its build worker pool from the core count, so a default build starts
+     63 workers, each with native thread pools sized to 64 cores. That's
+     thousands of threads, and the build dies with `OS can't spawn worker
+     thread: Resource temporarily unavailable (os error 11)` (or, under
+     Turbopack, a `TurbopackInternalError` on `globals.css`). `build:cloud`
+     therefore builds with one worker (`NEXT_BUILD_CPUS=1`, read in
+     next.config.ts), caps the native pools (`TOKIO_WORKER_THREADS=2
+     RAYON_NUM_THREADS=2`), and uses webpack (`--webpack`). Peak is about
+     50 threads, and the build is verified to pass under a 100-thread cap.
+     Don't remove these settings.
    - Start command: `npm run start`
 5. **Environment variables** — add ALL of these before the first deploy:
 

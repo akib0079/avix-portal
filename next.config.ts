@@ -16,6 +16,13 @@ const nextConfig: NextConfig = {
     // body cap is 1 MB, which silently fails larger files. Match the 25 MB
     // upload limit.
     serverActions: { bodySizeLimit: "25mb" },
+    // Build parallelism. Next sizes its build worker pool from os.cpus(), so
+    // Hostinger's build machine (64 cores, but a low per-account thread cap)
+    // got 63 workers, each with its own native thread pool, and the build died
+    // with "Resource temporarily unavailable (os error 11)". build:cloud sets
+    // NEXT_BUILD_CPUS (and caps the native pools — see package.json); local
+    // and Docker builds keep Next's default.
+    ...(process.env.NEXT_BUILD_CPUS ? { cpus: Number(process.env.NEXT_BUILD_CPUS) } : {}),
   },
   async headers() {
     return [

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
-    "build:cloud": "node scripts/migrate.mjs && next build --webpack"
+    "build:cloud": "node scripts/migrate.mjs && NEXT_BUILD_CPUS=1 TOKIO_WORKER_THREADS=2 RAYON_NUM_THREADS=2 next build --webpack"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
