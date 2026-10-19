@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { ConversationSummary, ThreadPage } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
@@ -45,21 +46,31 @@ export function AdminInbox({
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [mobilePane, setMobilePane] = useState<"list" | "thread">("list");
   const keyboard = useKeyboardInset();
+  const router = useRouter();
+  // Opened this visit = read, immediately; the refresh after the server-side
+  // mark brings the real counts. Keyed to the thread's latest message, so a
+  // new message after you looked brings the badge back.
+  const [opened, setOpened] = useState<Map<string, string>>(
+    () =>
+      new Map(conversations[0] ? [[threadKey(conversations[0]), conversations[0].lastMessageAt]] : []),
+  );
 
   const active = conversations.find((c) => threadKey(c) === selectedKey) ?? null;
-  const totalUnread = conversations.reduce((sum, c) => sum + c.unread, 0);
+  const unreadOf = (c: ConversationSummary) =>
+    opened.get(threadKey(c)) === c.lastMessageAt ? 0 : c.unread;
+  const totalUnread = conversations.reduce((sum, c) => sum + unreadOf(c), 0);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return conversations.filter((c) => {
-      if (unreadOnly && c.unread === 0) return false;
+      if (unreadOnly && c.unread === 0 && !opened.has(threadKey(c))) return false;
       if (!needle) return true;
       const hay = `${c.clientName} ${c.company ?? ""} ${
         c.projectName ?? "general chat"
       } ${c.preview}`.toLowerCase();
       return hay.includes(needle);
     });
-  }, [conversations, search, unreadOnly]);
+  }, [conversations, search, unreadOnly, opened]);
 
   // Fetch the selected thread's first page; MessageThread polls onwards from
   // there, so the thread is never fetched twice on a timer.
@@ -103,7 +114,7 @@ export function AdminInbox({
           with the page. */}
       <aside
         className={cn(
-          "flex min-h-0 flex-col rounded-2xl border bg-card",
+          "surface flex min-h-0 flex-col overflow-hidden",
           mobilePane === "thread" && "hidden lg:flex",
         )}
       >
@@ -145,6 +156,7 @@ export function AdminInbox({
             visible.map((c) => {
               const key = threadKey(c);
               const isActive = key === selectedKey;
+              const unread = unreadOf(c);
               return (
                 <button
                   key={key}
@@ -152,12 +164,11 @@ export function AdminInbox({
                   onClick={() => {
                     setSelectedKey(key);
                     setMobilePane("thread");
+                    setOpened((prev) => new Map(prev).set(key, c.lastMessageAt));
                   }}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors",
-                    isActive
-                      ? "border-primary/40 bg-brand-tint"
-                      : "border-transparent bg-muted/40 hover:bg-muted",
+                    "flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition-colors",
+                    isActive ? "bg-brand-tint ring-1 ring-primary/30" : "hover:bg-muted",
                   )}
                 >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-foreground dark:bg-slate-700 dark:text-white">
@@ -187,16 +198,16 @@ export function AdminInbox({
                       <span
                         className={cn(
                           "min-w-0 flex-1 truncate text-xs",
-                          c.unread > 0
+                          unread > 0
                             ? "font-medium text-foreground"
                             : "text-muted-foreground",
                         )}
                       >
                         {c.preview}
                       </span>
-                      {c.unread > 0 && (
-                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-white">
-                          {c.unread}
+                      {unread > 0 && (
+                        <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
+                          {unread}
                         </span>
                       )}
                     </span>
@@ -211,7 +222,7 @@ export function AdminInbox({
       {/* Active thread — header pinned, messages scroll, composer docked. */}
       <section
         className={cn(
-          "flex min-h-0 flex-col rounded-2xl border bg-card",
+          "surface flex min-h-0 flex-col overflow-hidden",
           mobilePane === "list" && "hidden lg:flex",
         )}
       >
@@ -241,7 +252,7 @@ export function AdminInbox({
               <LocalTime timezone={active.timezone} className="ml-auto shrink-0" />
             </div>
 
-            <div className="min-h-0 flex-1 px-4 pt-2 pb-4">
+            <div className="min-h-0 flex-1 bg-[var(--chat-canvas)] px-4 pt-2 pb-4">
               {isLoading ? (
                 <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" /> Loading conversation…
@@ -256,6 +267,7 @@ export function AdminInbox({
                   initialHasMore={page.hasMore}
                   variant="fill"
                   canWriteInternal
+                  onActivity={() => router.refresh()}
                 />
               )}
             </div>

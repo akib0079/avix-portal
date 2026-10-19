@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/dal/session";
 import { messageSchema, type MessageInput } from "@/lib/validation/message";
@@ -171,10 +171,6 @@ export async function sendMessage(
 
   // An internal note is a team memo — nobody outside the team hears about it.
   if (created.visibility === "INTERNAL") {
-    if (projectId) {
-      revalidatePath(`/admin/projects/${projectId}`);
-    }
-    revalidatePath("/admin/messages");
     return {
       ok: true,
       data: {
@@ -194,96 +190,107 @@ export async function sendMessage(
     };
   }
 
-  if (senderRole === "CLIENT") {
-    // Client replies ping the whole team (admins + staff).
-    const admins = await prisma.user.findMany({
-      where: { role: { in: ["ADMIN", "STAFF"] }, status: "ACTIVE" },
-      select: { id: true },
-    });
-    // Ask BEFORE writing this message's own notification rows. alreadyNotified
-    // looks for a MESSAGE_RECEIVED row for this admin inside the quiet window,
-    // so creating one first means it always finds the row we just wrote, quiet
-    // is always true, and the admin email below never sends — for any message,
-    // ever. The client branch below already gets this order right.
-    const quiet = admins[0]
-      ? await alreadyNotified({
-          recipientId: admins[0].id,
-          clientId: client.id,
-          projectId,
-          readField: "readByAdminAt",
-          threadLink: adminLink,
-        })
-      : false;
-    if (admins.length > 0) {
-      await prisma.notification.createMany({
-        data: admins.map((a) => ({
-          userId: a.id,
-          type: "MESSAGE_RECEIVED" as const,
-          title: `New message from ${user.name}`,
-          body: `${where}: ${preview}`,
-          link: adminLink,
-        })),
+  // Who hears about it, and how, runs after the response has gone (below):
+  // the email provider's latency used to sit inside every send.
+  const notifyRecipients = async () => {
+    if (senderRole === "CLIENT") {
+      // Client replies ping the whole team (admins + staff).
+      const admins = await prisma.user.findMany({
+        where: { role: { in: ["ADMIN", "STAFF"] }, status: "ACTIVE" },
+        select: { id: true },
       });
-    }
-    const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
-    if (adminEmail && !quiet) {
-      await sendEmail({
-        to: adminEmail,
+      // Ask BEFORE writing this message's own notification rows. alreadyNotified
+      // looks for a MESSAGE_RECEIVED row for this admin inside the quiet window,
+      // so creating one first means it always finds the row we just wrote, quiet
+      // is always true, and the admin email below never sends — for any message,
+      // ever. The client branch below already gets this order right.
+      const quiet = admins[0]
+        ? await alreadyNotified({
+            recipientId: admins[0].id,
+            clientId: client.id,
+            projectId,
+            readField: "readByAdminAt",
+            threadLink: adminLink,
+          })
+        : false;
+      if (admins.length > 0) {
+        await prisma.notification.createMany({
+          data: admins.map((a) => ({
+            userId: a.id,
+            type: "MESSAGE_RECEIVED" as const,
+            title: `New message from ${user.name}`,
+            body: `${where}: ${preview}`,
+            link: adminLink,
+          })),
+        });
+      }
+      const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
+      if (adminEmail && !quiet) {
+        await sendEmail({
+          to: adminEmail,
+          subject: `New message — ${where}`,
+          react: (
+            <MessageReceivedEmail
+              recipientFirstName="there"
+              senderName={user.name}
+              projectName={where}
+              preview={preview}
+              url={`${appUrl()}${adminLink}`}
+            />
+          ),
+          devHint: `message → ${adminEmail}`,
+        });
+      }
+    } else if (client.status === "ACTIVE") {
+      const quiet = await alreadyNotified({
+        recipientId: client.id,
+        clientId: client.id,
+        projectId,
+        readField: "readByClientAt",
+        threadLink: clientLink,
+      });
+
+      // Admin → notify the client. The in-app row is cheap; the email is not.
+      await prisma.notification.create({
+        data: {
+          userId: client.id,
+          type: "MESSAGE_RECEIVED",
+          title: "New message from Avix Digital",
+          body: `${where}: ${preview}`,
+          link: clientLink,
+        },
+      });
+      if (!quiet) await sendEmail({
+        to: client.email,
         subject: `New message — ${where}`,
         react: (
           <MessageReceivedEmail
-            recipientFirstName="there"
-            senderName={user.name}
+            recipientFirstName={client.firstName || "there"}
+            senderName="Avix Digital"
             projectName={where}
             preview={preview}
-            url={`${appUrl()}${adminLink}`}
+            url={`${appUrl()}${clientLink}`}
           />
         ),
-        devHint: `message → ${adminEmail}`,
+        devHint: `message → ${client.email}`,
       });
     }
-  } else if (client.status === "ACTIVE") {
-    const quiet = await alreadyNotified({
-      recipientId: client.id,
-      clientId: client.id,
-      projectId,
-      readField: "readByClientAt",
-      threadLink: clientLink,
-    });
+  };
+  after(async () => {
+    try {
+      await notifyRecipients();
+    } catch (err) {
+      console.error("[messages] notify failed:", (err as Error).message);
+    }
+  });
 
-    // Admin → notify the client. The in-app row is cheap; the email is not.
-    await prisma.notification.create({
-      data: {
-        userId: client.id,
-        type: "MESSAGE_RECEIVED",
-        title: "New message from Avix Digital",
-        body: `${where}: ${preview}`,
-        link: clientLink,
-      },
-    });
-    if (!quiet) await sendEmail({
-      to: client.email,
-      subject: `New message — ${where}`,
-      react: (
-        <MessageReceivedEmail
-          recipientFirstName={client.firstName || "there"}
-          senderName="Avix Digital"
-          projectName={where}
-          preview={preview}
-          url={`${appUrl()}${clientLink}`}
-        />
-      ),
-      devHint: `message → ${client.email}`,
-    });
-  }
-
-  if (projectId) {
-    revalidatePath(`/admin/projects/${projectId}`);
-    revalidatePath(`/portal/projects/${projectId}`);
-  }
-  revalidatePath("/admin/messages");
-  revalidatePath("/portal/messages");
-
+  // No revalidatePath. Any revalidation in an action makes Next re-render the
+  // caller's whole current page into the response — 69KB and the full project
+  // page (board, milestones, everything) on every message sent from the dock.
+  // Nothing needs it: the thread swaps its optimistic entry for the row
+  // returned below, open threads poll, and the Messages pages refresh their
+  // own lists (MessageThread's onActivity).
+  //
   // Handing the saved row back lets the composer swap its optimistic entry for
   // the real one, instead of waiting for the next poll.
   return {

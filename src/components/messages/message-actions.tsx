@@ -1,15 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { Reply, Copy, Check } from "lucide-react";
+import { Reply } from "lucide-react";
 
 /**
- * Swipe-to-reply, plus reply and copy buttons.
+ * Swipe-to-reply.
  *
  * The swipe is the mobile affordance every chat app has trained people to
- * expect, and it costs nothing on desktop where the buttons do the same job.
+ * expect, and it costs nothing on desktop, where the thread's hover actions
+ * do the same job.
  *
  * Pointer events rather than touch events so one implementation covers finger,
  * stylus and trackpad. The gesture only engages once horizontal movement beats
@@ -97,68 +96,5 @@ export function SwipeToReply({
         {children}
       </div>
     </div>
-  );
-}
-
-export function MessageActions({
-  text,
-  onReply,
-  align,
-}: {
-  text: string;
-  onReply: () => void;
-  align: "left" | "right";
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
-      // Clipboard writes need a secure context and can be blocked outright.
-      toast.error("This browser wouldn't let me copy that.");
-    }
-  }
-
-  return (
-    <div
-      className={cn(
-        // Visible on touch, where there is no hover to reveal them; from sm
-        // they fade in with the bubble so the thread stays clean.
-        "mt-1 flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/msg:opacity-100 sm:group-focus-within/msg:opacity-100",
-        align === "right" && "justify-end",
-      )}
-    >
-      <ActionButton label="Reply to this message" onClick={onReply}>
-        <Reply className="size-3.5" />
-      </ActionButton>
-      <ActionButton label={copied ? "Copied" : "Copy text"} onClick={copy}>
-        {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
-      </ActionButton>
-    </div>
-  );
-}
-
-function ActionButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-    >
-      {children}
-    </button>
   );
 }

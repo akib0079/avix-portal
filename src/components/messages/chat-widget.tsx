@@ -1,24 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import type { MessageView } from "@/lib/dal/messages";
 import { MessageThread } from "./message-thread";
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import Link from "next/link";
-import { X, Maximize2 } from "lucide-react";
+import { X, Maximize2, Minimize2, ExternalLink, MessageCircle } from "lucide-react";
 import { AvixBot } from "@/components/avix-bot";
 import { LocalTime } from "@/components/local-time";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
+import { cn } from "@/lib/utils";
 
-/**
- * Floating support-style chat: a fixed launcher bubble (bottom-right) that
- * opens the project message thread in a right-side panel.
- */
 function WhatsappIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
@@ -27,6 +19,16 @@ function WhatsappIcon({ className }: { className?: string }) {
   );
 }
 
+/**
+ * The project chat, as a dock: a launcher in the corner that opens a floating
+ * window above it.
+ *
+ * Non-modal on purpose. The old version was a full-height sheet over a dimmed
+ * page, which made "check the board while you answer" impossible — and that
+ * is the normal way a project conversation goes. The dock leaves the page
+ * live: drag a card, open a task, scroll the timeline, keep typing. It can
+ * widen when a message needs room, and on a phone it simply takes the screen.
+ */
 export function ChatWidget({
   projectId,
   clientId,
@@ -50,103 +52,177 @@ export function ChatWidget({
   canWriteInternal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [wide, setWide] = useState(false);
+  const [unread, setUnread] = useState(() => {
+    const field = viewerRole === "ADMIN" ? "readByAdminAt" : "readByClientAt";
+    return initialMessages.filter((m) => m.senderRole !== viewerRole && !m[field]).length;
+  });
   const keyboard = useKeyboardInset();
-  // Somewhere to go when the panel is too small for the conversation.
+  // Somewhere to go when the dock is too small for the conversation.
   const fullThreadHref =
     viewerRole === "ADMIN"
       ? `/admin/messages${clientId ? `?client=${clientId}` : ""}`
       : "/portal/messages";
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
+    <DialogPrimitive.Root
+      open={open}
+      modal={false}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setUnread(0);
+      }}
+    >
+      <DialogPrimitive.Trigger asChild>
         <button
           type="button"
-          aria-label="Open project chat"
-          className="group fixed right-4 bottom-4 z-40 flex items-center gap-2.5 rounded-full border border-primary/20 bg-sidebar p-3 shadow-lg shadow-primary/25 transition-transform hover:scale-105 sm:right-5 sm:bottom-5 sm:py-2.5 sm:pr-5 sm:pl-3.5"
-        >
-          {open ? (
-            <X className="size-6 text-white" />
-          ) : (
-            <AvixBot size={22} />
+          aria-label={open ? "Close chat" : `Open chat${unread ? ` — ${unread} unread` : ""}`}
+          className={cn(
+            "group fixed right-4 bottom-4 z-40 flex h-14 items-center gap-2.5 rounded-full bg-[var(--deck)] pr-2 pl-2 text-white shadow-[0_18px_40px_-14px_rgb(12_19_36/0.65)] ring-1 ring-white/10 transition-[transform,padding] duration-200 hover:scale-[1.03] sm:right-6 sm:bottom-6",
+            !open && "sm:pr-5",
+            open && "max-sm:hidden",
           )}
-          {/* The strapline is helpful on a desktop margin and pure clutter
-              parked over a phone screen, so only the icon survives below sm. */}
-          <span className="hidden text-left leading-tight sm:block">
-            <span className="block text-sm font-semibold text-white">
-              {open ? "Close" : "Chat with us"}
-            </span>
-            {!open && (
-              <span className="block text-[11px] text-muted-foreground">
-                {viewerRole === "CLIENT"
-                  ? "Message the team about this project"
-                  : "Message this client"}
+        >
+          <span className="relative flex size-10 items-center justify-center rounded-full bg-white/5">
+            {open ? <X className="size-5" /> : <AvixBot size={22} float={false} />}
+            {!open && unread > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white ring-2 ring-[var(--deck)]">
+                {unread > 9 ? "9+" : unread}
               </span>
             )}
           </span>
+          {!open && (
+            <span className="hidden text-left leading-tight sm:block">
+              <span className="block text-sm font-semibold">
+                {viewerRole === "CLIENT" ? "Chat with the team" : "Message client"}
+              </span>
+              <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <span className="signal size-1.5 text-emerald-400" />
+                {viewerRole === "CLIENT" ? "Replies within a business day" : "Visible to the client"}
+              </span>
+            </span>
+          )}
         </button>
-      </SheetTrigger>
-      <SheetContent
-        side="right"
-        // Wider than the old max-w-md: briefs and links are the normal traffic
-        // here, and 28rem forced everything into a narrow column.
-        className="flex h-dvh max-h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg lg:max-w-2xl"
-        // The panel is fixed and pinned inset-y-0, so it cannot notice the
-        // keyboard on its own. Shrinking it keeps the docked composer above the
-        // keys on the browsers the viewport meta doesn't reach.
-        style={keyboard ? { height: `calc(100dvh - ${keyboard}px)` } : undefined}
-        aria-describedby={undefined}
-      >
-        <div className="flex items-center gap-3 border-b bg-sidebar px-4 py-3 sm:px-5 sm:py-4">
-          <AvixBot size={26} />
-          <div>
-            <SheetTitle className="font-heading text-base text-white">
-              {title}
-            </SheetTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {viewerRole === "CLIENT"
-                ? "We usually reply within one business day."
-                : "Messages are visible to the client."}
-            </p>
-            {viewerRole === "ADMIN" && (
-              <LocalTime timezone={clientTimezone ?? null} className="mt-0.5" />
+      </DialogPrimitive.Trigger>
+
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          // The page behind stays usable: a click on it must not close the chat.
+          onInteractOutside={(e) => e.preventDefault()}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          className={cn(
+            "dock-in fixed z-50 flex flex-col overflow-hidden bg-[var(--chat-canvas)] shadow-[0_30px_80px_-24px_rgb(12_19_36/0.55)] outline-none",
+            // Phone: the whole screen. Desktop: a window above the launcher.
+            "inset-0 h-dvh sm:inset-auto sm:right-6 sm:bottom-24 sm:h-[min(44rem,calc(100dvh-8rem))] sm:rounded-3xl sm:ring-1 sm:ring-[var(--hairline)]",
+            wide ? "sm:w-[min(46rem,calc(100vw-3rem))]" : "sm:w-[25.5rem]",
+          )}
+          style={keyboard ? { height: `calc(100dvh - ${keyboard}px)` } : undefined}
+        >
+          {/* Header — the deck, so the chat reads as part of the cockpit. */}
+          <div className="deck relative shrink-0 rounded-none px-4 pt-4 pb-3.5 sm:rounded-t-3xl sm:rounded-b-none">
+            <div className="relative z-10 flex items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+                {viewerRole === "CLIENT" ? (
+                  <AvixBot size={22} float={false} />
+                ) : (
+                  <MessageCircle className="size-5 text-white" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <DialogPrimitive.Title className="font-heading truncate text-base font-semibold text-white">
+                  {title}
+                </DialogPrimitive.Title>
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-300">
+                  {viewerRole === "CLIENT" ? (
+                    <>
+                      <span className="signal size-1.5 text-emerald-400" />
+                      Replies within a business day
+                    </>
+                  ) : (
+                    <LocalTime timezone={clientTimezone ?? null} className="text-slate-300" />
+                  )}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <HeaderButton
+                  label={wide ? "Narrow the chat" : "Widen the chat"}
+                  onClick={() => setWide((w) => !w)}
+                  className="max-sm:hidden"
+                >
+                  {wide ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                </HeaderButton>
+                <Link
+                  href={fullThreadHref}
+                  title="Open in Messages"
+                  aria-label="Open in Messages"
+                  className="rounded-lg p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <ExternalLink className="size-4" />
+                </Link>
+                <DialogPrimitive.Close asChild>
+                  <HeaderButton label="Close chat">
+                    <X className="size-4" />
+                  </HeaderButton>
+                </DialogPrimitive.Close>
+              </div>
+            </div>
+            {viewerRole === "CLIENT" && whatsappUrl && (
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="relative z-10 mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-400/25 transition-colors hover:bg-emerald-500/25"
+              >
+                <WhatsappIcon className="size-3.5" />
+                Urgent? WhatsApp us
+              </a>
             )}
           </div>
-          <Link
-            href={fullThreadHref}
-            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/10 hover:text-white"
-            title="Open the full conversation"
-          >
-            <Maximize2 className="size-3.5" />
-            <span className="hidden sm:inline">Full view</span>
-          </Link>
-        </div>
-        {viewerRole === "CLIENT" && whatsappUrl && (
-          <a
-            href={whatsappUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2.5 border-b bg-emerald-50 dark:bg-emerald-950/40 px-4 py-2.5 sm:px-5 sm:py-3 text-sm text-emerald-800 dark:text-emerald-300 transition-colors hover:bg-emerald-100 dark:bg-emerald-900/40"
-          >
-            <WhatsappIcon className="size-4.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
-            <span>
-              Urgent? <span className="font-semibold">Call or message us on WhatsApp</span>
-            </span>
-          </a>
-        )}
-        {/* min-h-0 lets the thread's own scroll area shrink; without it the
-            flex child grows to its content and the composer scrolls away. */}
-        <div className="min-h-0 flex-1 px-2 pt-2 pb-2 sm:px-4 sm:pt-3 sm:pb-4">
-          <MessageThread
-            projectId={projectId}
-            clientId={clientId}
-            viewerRole={viewerRole}
-            initialMessages={initialMessages}
-            canWriteInternal={canWriteInternal}
-            variant="fill"
-          />
-        </div>
-      </SheetContent>
-    </Sheet>
+
+          {/* min-h-0 lets the thread's own scroll area shrink; without it the
+              flex child grows to its content and the composer scrolls away. */}
+          <div className="min-h-0 flex-1 px-3 pt-1 pb-3">
+            <MessageThread
+              projectId={projectId}
+              clientId={clientId}
+              viewerRole={viewerRole}
+              initialMessages={initialMessages}
+              canWriteInternal={canWriteInternal}
+              variant="fill"
+            />
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+function HeaderButton({
+  label,
+  onClick,
+  className,
+  children,
+  ...rest
+}: {
+  label: string;
+  onClick?: () => void;
+  className?: string;
+  children: React.ReactNode;
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={cn(
+        "rounded-lg p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white",
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
   );
 }
