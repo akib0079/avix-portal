@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
+import { getBookingConfig } from "@/lib/dal/availability";
 
 /**
  * Every query here is scoped to the signed-in client's own id, taken from the
@@ -102,7 +103,7 @@ export async function getMyProjectExtras(projectId: string) {
   const user = await requireClient();
   const now = new Date();
 
-  const [invoices, meetings, hourTotals] = await Promise.all([
+  const [invoices, meetings, hourTotals, viewer] = await Promise.all([
     prisma.invoice.findMany({
       where: { projectId, clientId: user.id },
       orderBy: { issueDate: "desc" },
@@ -129,7 +130,11 @@ export async function getMyProjectExtras(projectId: string) {
       where: { milestone: { projectId } },
       _sum: { hours: true },
     }),
+    // The zone their browser reported (TimezoneSync), for rendering call times.
+    prisma.user.findUnique({ where: { id: user.id }, select: { timezone: true } }),
   ]);
+  // Not captured yet (first visit): the agency's zone beats the server's UTC.
+  const timezone = viewer?.timezone || (await getBookingConfig()).agencyTimezone;
 
   return {
     invoices: invoices.map((i) => ({
@@ -147,6 +152,7 @@ export async function getMyProjectExtras(projectId: string) {
       startsAt: m.startsAt.toISOString(),
       durationMins: m.durationMins,
     })),
+    timezone,
     loggedHoursByMilestone: Object.fromEntries(
       hourTotals.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
     ) as Record<string, number>,

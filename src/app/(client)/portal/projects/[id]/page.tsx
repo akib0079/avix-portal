@@ -143,7 +143,13 @@ export default async function MyProjectPage({
       icon: "money" as const,
       count: extras.invoices.length,
       alert: pending.unpaidInvoices > 0,
-      content: <BillingAndCalls invoices={extras.invoices} meetings={extras.meetings} />,
+      content: (
+        <BillingAndCalls
+          invoices={extras.invoices}
+          meetings={extras.meetings}
+          timezone={extras.timezone}
+        />
+      ),
     },
   ];
 
@@ -269,12 +275,37 @@ function Stat({ label, value, hot }: { label: string; value: number; hot?: boole
   );
 }
 
+/**
+ * A call's start in the client's own zone, with the zone named ("EDT") so the
+ * time can't be misread. This renders on the server: without an explicit
+ * timeZone, Intl uses the server's (UTC), and a 10:00 call in New York showed
+ * as 2:00 PM.
+ */
+function callTime(iso: string, timeZone: string): string {
+  const options: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  };
+  try {
+    return new Intl.DateTimeFormat("en-US", { ...options, timeZone }).format(new Date(iso));
+  } catch {
+    // A malformed stored zone must not take the page down; UTC, labelled.
+    return new Intl.DateTimeFormat("en-US", { ...options, timeZone: "UTC" }).format(new Date(iso));
+  }
+}
+
 function BillingAndCalls({
   invoices,
   meetings,
+  timezone,
 }: {
   invoices: Awaited<ReturnType<typeof getMyProjectExtras>>["invoices"];
   meetings: Awaited<ReturnType<typeof getMyProjectExtras>>["meetings"];
+  timezone: string;
 }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -334,14 +365,7 @@ function BillingAndCalls({
                 <li key={m.id} className="rounded-lg border p-3">
                   <p className="text-sm font-medium">{m.title}</p>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(m.startsAt).toLocaleString("en-US", {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}{" "}
-                    · {m.durationMins} min
+                    {callTime(m.startsAt, timezone)} · {m.durationMins} min
                   </p>
                 </li>
               ))}
