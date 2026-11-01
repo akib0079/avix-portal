@@ -4,7 +4,11 @@ import { pricingFields } from "@/lib/validation/milestone";
 export const taskRequestSchema = z.object({
   projectId: z.string().min(1, "Select a project"),
   title: z.string().trim().min(1, "Title is required").max(160),
-  description: z.unknown(),
+  // Optional here: an empty editor arrives at the server without the key
+  // (undefined doesn't survive the action's serialization), and zod would
+  // answer "expected nonoptional" instead of the action's own "Describe the
+  // task" message.
+  description: z.unknown().optional(),
 });
 
 export type TaskRequestInput = z.infer<typeof taskRequestSchema>;
