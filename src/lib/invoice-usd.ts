@@ -60,3 +60,18 @@ export function sumUsd(invoices: UsdSource[]): { total: number; missing: number 
   }
   return { total: Math.round(total * 100) / 100, missing };
 }
+
+/**
+ * The value to store in Invoice.amountUsd when an invoice is created or
+ * re-totalled: a USD invoice mirrors its total, any other currency keeps what
+ * the owner entered (or null until the payment settles). Every path that
+ * writes an invoice total must use this — several used to skip it.
+ */
+export function usdToStore(
+  currency: string,
+  total: number,
+  entered: number | null | undefined,
+): number | null {
+  if (currency === "USD") return total;
+  return entered ?? null;
+}

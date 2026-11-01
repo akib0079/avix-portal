@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { usdToStore } from "@/lib/invoice-usd";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { invoiceSchema } from "@/lib/validation/invoice";
@@ -133,15 +134,6 @@ async function validateRelations(clientId: string, projectId: string) {
  * has not been given — the totals then leave the invoice out and say so, which
  * is the whole point of the column.
  */
-function usdToStore(
-  currency: string,
-  total: number,
-  entered: number | null | undefined,
-): number | null {
-  if (currency === "USD") return total;
-  return entered ?? null;
-}
-
 async function handlePdf(formData: FormData): Promise<
   { ok: true; fileName: string | null; originalName: string | null } | { ok: false; error: string }
 > {
