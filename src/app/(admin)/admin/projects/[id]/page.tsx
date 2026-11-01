@@ -226,6 +226,7 @@ export default async function ProjectDetailPage({
             billingType: project.billingType,
             contractPrice:
               project.contractPrice == null ? null : Number(project.contractPrice),
+            autoAcceptClientTasks: project.autoAcceptClientTasks,
             client: project.client
               ? {
                   id: project.client.id,

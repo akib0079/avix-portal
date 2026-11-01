@@ -4,7 +4,12 @@ import { useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Priority, ProjectStatus } from "@prisma/client";
-import { setProjectStatus, setProjectPriority, setProjectOwner } from "@/lib/actions/projects";
+import {
+  setAutoAcceptClientTasks,
+  setProjectStatus,
+  setProjectPriority,
+  setProjectOwner,
+} from "@/lib/actions/projects";
 import type { TeamOption } from "@/lib/dal/users";
 import { projectHealth } from "@/lib/project-health";
 import { isPlanItem } from "@/lib/work-scope";
@@ -200,6 +205,8 @@ export function ProjectHeader({
     dueDate: string | null;
     billingType: "MILESTONE" | "CONTRACT";
     contractPrice: number | null;
+    /** Client additions skip Requested and land in To do, unpriced. */
+    autoAcceptClientTasks: boolean;
     ownerId: string | null;
     client: {
       id: string;
@@ -233,6 +240,7 @@ export function ProjectHeader({
   const [status, setStatus] = useState<ProjectStatus>(project.status);
   const [priority, setPriority] = useState<Priority>(project.priority);
   const [owner, setOwner] = useState<string>(project.ownerId ?? "none");
+  const [autoAccept, setAutoAccept] = useState(project.autoAcceptClientTasks);
   // Phones: owner, dates, billing and the stats fold away so the board is
   // reachable without scrolling past a screen of header. Wider screens show all.
   const [more, setMore] = useState(false);
@@ -283,6 +291,26 @@ export function ProjectHeader({
       return void toast.error(res.error);
     }
     router.refresh();
+  }
+
+  // Whether the client's asks wait for a decision. The action revalidates
+  // this page, so no router.refresh() on top.
+  async function changeAutoAccept(next: string) {
+    const enabled = next === "auto";
+    const previous = autoAccept;
+    setAutoAccept(enabled);
+    setBusy(true);
+    const res = await setAutoAcceptClientTasks(project.id, enabled);
+    setBusy(false);
+    if (!res.ok) {
+      setAutoAccept(previous);
+      return void toast.error(res.error);
+    }
+    toast.success(
+      enabled
+        ? "The client's asks now land in To do, at no charge."
+        : "The client's asks now wait for you to accept them.",
+    );
   }
 
   const ownerPerson = team.find((m) => m.id === owner);
@@ -462,6 +490,23 @@ export function ProjectHeader({
                         : "Fixed contract"
                       : "Per milestone"}
                   </p>
+                </Field>
+              )}
+              {canEdit && project.client && (
+                <Field label="Client requests" className={foldable}>
+                  <Select
+                    value={autoAccept ? "auto" : "ask"}
+                    onValueChange={changeAutoAccept}
+                    disabled={busy}
+                  >
+                    <SelectTrigger size="sm" className="w-full" aria-label="Client requests">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ask">Wait for approval</SelectItem>
+                      <SelectItem value="auto">Accept automatically</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Field>
               )}
             </div>
