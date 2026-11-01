@@ -66,6 +66,10 @@ export const proposalSchema = z
     recipientCompany: z.string().trim().max(160).optional().or(z.literal("")),
     title: z.string().trim().min(1, "Title is required").max(160),
     intro: z.string().trim().max(5000).optional().or(z.literal("")),
+    /** What the scope is priced in; the first invoice defaults to it. */
+    currency: z.enum(currencyCodes),
+    /** Payment terms, ownership, revisions, cancellation — plain text. */
+    terms: z.string().trim().max(10000).optional().or(z.literal("")),
     projectType: z.enum(projectTypeValues),
     timelineWeeks: z.number().int().min(1).max(104).nullable().optional(),
     depositPercent: z.number().int().min(0).max(100),
@@ -117,3 +121,29 @@ export type ProposalItemInput = z.infer<typeof proposalItemSchema>;
 export const acceptProposalSchema = z.object({
   signedName: z.string().trim().min(2, "Type your full name").max(120),
 });
+
+/** Public decline: the reason is optional, and capped because anyone with the link can post it. */
+export const declineProposalSchema = z.object({
+  reason: z.string().trim().max(1000, "Keep it under 1,000 characters").optional().or(z.literal("")),
+});
+
+/** Validity windows offered when sending or extending. */
+export const proposalValidityDays = [7, 14, 30, 60, 90] as const;
+
+export const extendProposalSchema = z.object({
+  days: z.number().int().min(1).max(120),
+});
+
+/** Who a duplicate is for: the same recipient, a pipeline lead, or someone typed in. */
+export const duplicateProposalSchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("same") }),
+  z.object({ source: z.literal("lead"), leadId: z.string().min(1, "Pick a lead") }),
+  z.object({
+    source: z.literal("manual"),
+    recipientName: z.string().trim().min(1, "Who is this proposal for?").max(160),
+    recipientEmail: z.string().trim().email("Enter a valid email").max(255),
+    recipientCompany: z.string().trim().max(160).optional().or(z.literal("")),
+  }),
+]);
+
+export type DuplicateProposalInput = z.infer<typeof duplicateProposalSchema>;

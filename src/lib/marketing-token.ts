@@ -1,5 +1,10 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  mintProposalToken,
+  readProposalToken,
+  type ProposalTokenClaims,
+} from "@/lib/proposal-token";
 
 /**
  * Signed unsubscribe tokens: `<subject>.<base64url HMAC-SHA256(subject)>`.
@@ -43,32 +48,28 @@ export function verifyMeetingIcsToken(meetingId: string, token: string): boolean
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function signProposal(proposalId: string, expiresAtMs: number): string {
-  return createHmac("sha256", secret())
-    .update(`proposal:${proposalId}:${expiresAtMs}`)
-    .digest("base64url");
+/**
+ * Signed, expiring token for a proposal's public link. Lets a prospect view,
+ * accept or decline without an account. The expiry and the link version are
+ * bound into the signature, so neither can be tampered with, and bumping
+ * Proposal.linkVersion retires every older link (format in proposal-token.ts).
+ */
+export function createProposalToken(
+  proposalId: string,
+  expiresAtMs: number,
+  linkVersion: number,
+): string {
+  return mintProposalToken(secret(), proposalId, expiresAtMs, linkVersion);
 }
 
 /**
- * Signed, expiring token for a proposal's public accept link:
- * `<expiresAtMs>.<base64url HMAC>`. Lets a prospect view + accept without an
- * account. The expiry is bound into the signature so it can't be tampered with.
+ * The expiry and version a proposal link was minted for, when its signature
+ * is genuine; null otherwise. Cheap and database-free, so pages and public
+ * actions run it BEFORE touching proposal data, then compare the claims with
+ * the row (proposalLinkState).
  */
-export function createProposalToken(proposalId: string, expiresAtMs: number): string {
-  return `${expiresAtMs}.${signProposal(proposalId, expiresAtMs)}`;
-}
-
-export function verifyProposalToken(proposalId: string, token: string): boolean {
-  const dot = token.indexOf(".");
-  if (dot <= 0) return false;
-  const expiresAtMs = Number(token.slice(0, dot));
-  if (!Number.isFinite(expiresAtMs)) return false;
-  const provided = token.slice(dot + 1);
-  const expected = signProposal(proposalId, expiresAtMs);
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
-  return Date.now() < expiresAtMs;
+export function readProposalLink(proposalId: string, token: string): ProposalTokenClaims | null {
+  return readProposalToken(secret(), proposalId, token);
 }
 
 /** Returns the signed subject (user id, or `lead:<id>`) when valid, else null. */
