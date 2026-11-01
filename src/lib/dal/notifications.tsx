@@ -19,9 +19,9 @@ export async function getNotificationsForUser(userId: string) {
 /**
  * Which admin notifications are worth an email as well as a bell row.
  *
- * The bell is free and can carry everything; an inbox cannot. These three are
- * the ones where a delay costs something real — money won, money claimed, and
- * a meeting you are expected to attend. Milestone approvals, thumbs ratings,
+ * The bell is free and can carry everything; an inbox cannot. These are the
+ * ones where a delay costs something real — money won or turned down, money
+ * claimed, and a meeting you are expected to attend. Milestone approvals, thumbs ratings,
  * deliverable reviews and generated retainer drafts stay in-app: they are
  * routine project churn, and mailing every one of them trains you to ignore
  * the whole channel.
@@ -34,6 +34,9 @@ export async function getNotificationsForUser(userId: string) {
  */
 const EMAILED_TYPES = new Set([
   "PROPOSAL_ACCEPTED",
+  // A "no" is worth hearing the same day: there may still be time to save it.
+  // PROPOSAL_VIEWED stays in-app — an open is a hint, not news.
+  "PROPOSAL_DECLINED",
   "PAYMENT_CLAIMED",
   "MEETING_SCHEDULED",
 ]);
@@ -44,6 +47,8 @@ export async function notifyAllAdmins(input: {
     | "MILESTONE_APPROVED"
     | "MILESTONE_UPDATED"
     | "MEETING_SCHEDULED"
+    | "PROPOSAL_VIEWED"
+    | "PROPOSAL_DECLINED"
     | "DELIVERABLE_REVIEWED"
     | "PAYMENT_CLAIMED"
     | "RETAINER_GENERATED"
