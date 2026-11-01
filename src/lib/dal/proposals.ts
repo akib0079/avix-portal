@@ -17,6 +17,21 @@ import type {
   ProjectType,
 } from "@prisma/client";
 import type { CurrencyCode } from "@/lib/currency";
+import {
+  buildProposalSnapshot,
+  documentFromSnapshot,
+  snapshotHash,
+  type ProposalDocumentView,
+  type ProposalSnapshot,
+} from "@/lib/proposal-snapshot";
+import { AGENCY_NAME } from "@/lib/signature-rules";
+import {
+  AUDIT_EVENTS,
+  CLIENT_SIGNATURE,
+  signedRecordOf,
+  type SignatureCertificateView,
+  type SignedProposalView,
+} from "@/lib/dal/proposal-signatures";
 
 export type ProposalItemView = {
   id: string;
@@ -153,17 +168,16 @@ export type ProposalDetail = ProposalCard & {
   removal: ProposalRemovalPlan;
   /** What the client is told they will be invoiced first. */
   firstInvoice: FirstInvoicePromise;
+  /** The signature certificate, once signed (or recorded). */
+  certificate: SignatureCertificateView | null;
+  /** The proof attached to an acceptance the admin recorded, if any. */
+  evidenceName: string | null;
 };
 
 /** Read-only slice safe to render on the public page (no admin data). */
 export type PublicProposalView = {
   id: string;
   title: string;
-  intro: string | null;
-  terms: string | null;
-  currency: CurrencyCode;
-  timelineWeeks: number | null;
-  depositPercent: number;
   status: ProposalStatus;
   linkVersion: number;
   archived: boolean;
@@ -171,13 +185,18 @@ export type PublicProposalView = {
   acceptedAt: string | null;
   acceptedName: string | null;
   declinedAt: string | null;
-  total: number;
   firstInvoice: FirstInvoicePromise;
   /** The client already has a portal login (so no invite email after accepting). */
   portalReady: boolean;
-  items: ProposalItemView[];
   contactName: string;
+  contactEmail: string | null;
   contactCompany: string | null;
+  /** The proposal as it stands, laid out from the snapshot a signature would cover. */
+  document: ProposalDocumentView;
+  /** That snapshot's SHA-256: the page posts it back with the signature. */
+  documentHash: string;
+  /** Once signed: the document exactly as signed, and its certificate. */
+  signed: SignedProposalView | null;
 };
 
 type ItemRow = { id: string; description: string; amount: Prisma.Decimal; sortOrder: number };
@@ -188,6 +207,64 @@ function toItemView(i: ItemRow): ProposalItemView {
 
 function sumItems(items: { amount: Prisma.Decimal }[]): number {
   return Math.round(items.reduce((acc, i) => acc + Number(i.amount), 0) * 100) / 100;
+}
+
+/** The proposal columns a signature snapshot is built from. */
+type SnapshotRow = {
+  id: string;
+  linkVersion: number;
+  title: string;
+  intro: string | null;
+  terms: string | null;
+  currency: string;
+  depositPercent: number;
+  timelineWeeks: number | null;
+  sentAt: Date | null;
+  expiresAt: Date | null;
+  recipientName: string | null;
+  recipientEmail: string | null;
+  recipientCompany: string | null;
+  lead: { name: string; email: string | null; company: string | null } | null;
+  items: { id: string; description: string; amount: Prisma.Decimal; sortOrder: number }[];
+};
+
+/**
+ * The canonical document a signature on this proposal covers, from the
+ * database row and the invoice it is wired to (what the client is told they
+ * will be invoiced first is part of the deal). The public page and the sign
+ * action both build it here, from the same columns, which is what lets the
+ * hash the page rendered be compared with the one the server computes.
+ */
+export function proposalSnapshotOf(
+  p: SnapshotRow,
+  invoice: ProposalInvoiceSummary | null,
+): ProposalSnapshot {
+  const total = sumItems(p.items);
+  return buildProposalSnapshot({
+    proposalId: p.id,
+    linkVersion: p.linkVersion,
+    title: p.title,
+    intro: p.intro,
+    terms: p.terms,
+    currency: p.currency,
+    // The Decimal's own digits, never a float.
+    items: p.items.map((i) => ({
+      id: i.id,
+      description: i.description,
+      amount: i.amount.toString(),
+      sortOrder: i.sortOrder,
+    })),
+    depositPercent: p.depositPercent,
+    firstInvoice: firstInvoicePromise(
+      { total, currency: p.currency, depositPercent: p.depositPercent },
+      invoice,
+    ),
+    timelineWeeks: p.timelineWeeks,
+    recipient: proposalContact(p),
+    agencyName: AGENCY_NAME,
+    sentAt: p.sentAt,
+    expiresAt: p.expiresAt,
+  });
 }
 
 type RecipientSource = {
@@ -466,7 +543,7 @@ export function invoiceFacts(invoice: ProposalInvoiceSummary | null): DraftInvoi
 /** One proposal for the detail sheet and the delete / accept dialogs. */
 export async function getProposalDetail(id: string): Promise<ProposalDetail | null> {
   await requireAdmin();
-  const [p, links] = await Promise.all([
+  const [p, links, audit] = await Promise.all([
     prisma.proposal.findUnique({
       where: { id },
       select: {
@@ -482,13 +559,23 @@ export async function getProposalDetail(id: string): Promise<ProposalDetail | nu
           take: 60,
           select: { id: true, type: true, createdAt: true, meta: true },
         },
+        signatures: CLIENT_SIGNATURE,
       },
     }),
     proposalLinks(id),
+    // The certificate's trail, oldest first: the history above is the newest
+    // 60 of everything, which a busy proposal's views can push the send out of.
+    prisma.proposalEvent.findMany({ ...AUDIT_EVENTS, where: { ...AUDIT_EVENTS.where, proposalId: id } }),
   ]);
   if (!p || !links) return null;
 
   const card = toCard(p);
+  const signed = signedRecordOf(p.signatures[0], audit, p.firstViewedAt);
+  const signedEvent = p.events.find((e) => e.type === "SIGNED");
+  const evidence =
+    signedEvent?.meta && typeof signedEvent.meta === "object" && !Array.isArray(signedEvent.meta)
+      ? (signedEvent.meta as Record<string, unknown>).evidenceName
+      : null;
   return {
     ...card,
     intro: p.intro,
@@ -518,6 +605,8 @@ export async function getProposalDetail(id: string): Promise<ProposalDetail | nu
       : null,
     removal: proposalRemovalPlan(p, invoiceFacts(links.invoice)),
     firstInvoice: firstInvoicePromise(card, links.invoice),
+    certificate: signed?.certificate ?? null,
+    evidenceName: typeof evidence === "string" ? evidence : null,
   };
 }
 
@@ -579,7 +668,8 @@ export async function getProposalDraft(id: string): Promise<ProposalDraft | null
 
 /**
  * No auth — the public page calls this only AFTER the link's signature has
- * checked out. The invoice is read beside the proposal (see proposalLinks), so
+ * checked out. The invoice is read beside the proposal (see proposalLinks), and
+ * the signature and its audit trail come in the proposal's own statement, so
  * the page costs one wave however the proposal is wired.
  */
 export async function getPublicProposal(id: string): Promise<PublicProposalView | null> {
@@ -589,21 +679,19 @@ export async function getPublicProposal(id: string): Promise<PublicProposalView 
       include: {
         items: { orderBy: { sortOrder: "asc" } },
         lead: { select: { name: true, company: true, email: true } },
+        signatures: CLIENT_SIGNATURE,
+        events: AUDIT_EVENTS,
       },
     }),
     proposalLinks(id),
   ]);
   if (!p) return null;
-  const total = sumItems(p.items);
   const contact = proposalContact(p);
+  const invoice = links?.invoice ?? null;
+  const snapshot = proposalSnapshotOf(p, invoice);
   return {
     id: p.id,
     title: p.title,
-    intro: p.intro,
-    terms: p.terms,
-    currency: p.currency,
-    timelineWeeks: p.timelineWeeks,
-    depositPercent: p.depositPercent,
     status: p.status,
     linkVersion: p.linkVersion,
     archived: p.archivedAt != null,
@@ -611,14 +699,16 @@ export async function getPublicProposal(id: string): Promise<PublicProposalView 
     acceptedAt: p.acceptedAt?.toISOString() ?? null,
     acceptedName: p.acceptedName,
     declinedAt: p.declinedAt?.toISOString() ?? null,
-    total,
     firstInvoice: firstInvoicePromise(
-      { total, currency: p.currency, depositPercent: p.depositPercent },
-      links?.invoice ?? null,
+      { total: sumItems(p.items), currency: p.currency, depositPercent: p.depositPercent },
+      invoice,
     ),
     portalReady: links?.client?.emailVerified ?? false,
-    items: p.items.map(toItemView),
     contactName: contact.name,
+    contactEmail: contact.email,
     contactCompany: contact.company,
+    document: documentFromSnapshot(snapshot),
+    documentHash: snapshotHash(snapshot),
+    signed: signedRecordOf(p.signatures[0], p.events, p.firstViewedAt),
   };
 }

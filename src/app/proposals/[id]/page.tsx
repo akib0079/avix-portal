@@ -4,9 +4,10 @@ import { getPublicProposal, type PublicProposalView } from "@/lib/dal/proposals"
 import { getSession } from "@/lib/dal/session";
 import { readProposalLink } from "@/lib/marketing-token";
 import { proposalLinkState } from "@/lib/proposal-token";
-import { formatCurrency } from "@/lib/currency";
 import { serverNow } from "@/lib/server-now";
-import { PublicProposalAccept } from "@/components/proposals/public-proposal";
+import { ProposalDocument, formatLongDate as formatDate } from "@/components/proposals/proposal-document";
+import { ProposalSignPanel } from "@/components/proposals/public-proposal";
+import { SignatureCertificate } from "@/components/proposals/signature-certificate";
 import { ProposalViewBeacon } from "@/components/proposals/proposal-view-beacon";
 
 export const dynamic = "force-dynamic";
@@ -18,14 +19,6 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   referrer: "no-referrer",
 };
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -62,113 +55,18 @@ function InvalidLink() {
   );
 }
 
-/** What the client is told they will be invoiced first (see firstInvoicePromise). */
-function firstInvoiceLine(proposal: PublicProposalView): React.ReactNode {
-  const first = proposal.firstInvoice;
-  if (!first) return null;
-  if (first.kind === "invoice") {
-    return (
-      <span>
-        First invoice to get started:{" "}
-        <strong className="text-foreground">{formatCurrency(first.amount, first.currency)}</strong>
-      </span>
-    );
-  }
-  return (
-    <span>
-      {first.percent}% deposit to start:{" "}
-      <strong className="text-foreground">{formatCurrency(first.amount, first.currency)}</strong>
-    </span>
-  );
-}
-
-/** The proposal itself: header, intro, scope and terms. Shared by every state that shows it. */
-function ProposalDocument({
-  proposal,
-  validUntil,
-}: {
-  proposal: PublicProposalView;
-  validUntil: string | null;
-}) {
-  return (
-    <>
-      <div className="mb-6 text-center">
-        <p className="font-heading text-sm font-bold tracking-[0.2em] text-muted-foreground uppercase">
-          Avix Digital
-        </p>
-        <h1 className="mt-3 font-heading text-3xl font-bold [overflow-wrap:anywhere] text-foreground">
-          {proposal.title}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Prepared for {proposal.contactCompany ?? proposal.contactName}
-          {validUntil ? ` · valid until ${formatDate(validUntil)}` : ""}
-        </p>
-      </div>
-
-      {proposal.intro && (
-        <div className="mb-4 rounded-2xl border bg-card p-6">
-          <p className="text-sm leading-7 whitespace-pre-wrap text-muted-foreground">
-            {proposal.intro}
-          </p>
-        </div>
-      )}
-
-      <div className="mb-4 rounded-2xl border bg-card p-6">
-        <p className="font-heading text-lg font-bold text-foreground">Scope</p>
-        <ul className="mt-4 divide-y">
-          {proposal.items.map((item) => (
-            <li key={item.id} className="flex items-start justify-between gap-4 py-3">
-              <span className="min-w-0 text-sm [overflow-wrap:anywhere] text-foreground">
-                {item.description}
-              </span>
-              <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
-                {formatCurrency(item.amount, proposal.currency)}
-              </span>
-            </li>
-          ))}
-        </ul>
-
-        <div className="mt-4 flex items-center justify-between gap-4 border-t pt-4">
-          <span className="font-heading text-base font-bold text-foreground">Total</span>
-          <span className="font-heading text-2xl font-bold text-[#F65D0B] tabular-nums">
-            {formatCurrency(proposal.total, proposal.currency)}
-          </span>
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
-          {firstInvoiceLine(proposal)}
-          {proposal.timelineWeeks && (
-            <span>
-              Estimated timeline:{" "}
-              <strong className="text-foreground">
-                {proposal.timelineWeeks} week{proposal.timelineWeeks === 1 ? "" : "s"}
-              </strong>
-            </span>
-          )}
-        </div>
-      </div>
-
-      {proposal.terms && (
-        <div className="mb-4 rounded-2xl border bg-card p-6">
-          <p className="font-heading text-lg font-bold text-foreground">Terms</p>
-          <p className="mt-3 text-sm leading-6 whitespace-pre-wrap text-muted-foreground">
-            {proposal.terms}
-          </p>
-        </div>
-      )}
-    </>
-  );
-}
-
 function AcceptedBanner({ proposal }: { proposal: PublicProposalView }) {
+  const method = proposal.signed?.certificate.method;
+  const when = proposal.acceptedAt ? ` on ${formatDate(proposal.acceptedAt)}` : "";
   return (
-    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900 dark:bg-emerald-950/40">
+    <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900 dark:bg-emerald-950/40">
       <p className="font-heading text-lg font-bold text-emerald-900 dark:text-emerald-200">
-        Accepted ✅
+        {method === "DRAWN" || method === "TYPED" ? "Signed ✅" : "Accepted ✅"}
       </p>
       <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-300">
-        {proposal.acceptedName} accepted this proposal
-        {proposal.acceptedAt ? ` on ${formatDate(proposal.acceptedAt)}` : ""}.{" "}
+        {method === "DRAWN" || method === "TYPED"
+          ? `${proposal.acceptedName} signed this proposal${when}.`
+          : `${proposal.acceptedName} accepted this proposal${when}.`}{" "}
         {proposal.portalReady ? (
           <>
             Your project and first invoice are in your{" "}
@@ -182,6 +80,21 @@ function AcceptedBanner({ proposal }: { proposal: PublicProposalView }) {
         )}
       </p>
     </div>
+  );
+}
+
+/**
+ * An accepted proposal: the document exactly as signed (from the signature's
+ * own snapshot) with its certificate, or, for one accepted before signatures
+ * were recorded, the proposal as it stands.
+ */
+function AcceptedView({ proposal, pdfHref }: { proposal: PublicProposalView; pdfHref: string }) {
+  return (
+    <>
+      <ProposalDocument document={proposal.signed?.document ?? proposal.document} validUntil={null} />
+      <AcceptedBanner proposal={proposal} />
+      {proposal.signed && <SignatureCertificate certificate={proposal.signed.certificate} pdfHref={pdfHref} />}
+    </>
   );
 }
 
@@ -229,22 +142,28 @@ export default async function PublicProposalPage({
             ? " This proposal is archived: its link shows as withdrawn."
             : ""}
         </div>
-        <ProposalDocument proposal={proposal} validUntil={proposal.expiresAt} />
         {proposal.status === "ACCEPTED" ? (
-          <AcceptedBanner proposal={proposal} />
-        ) : proposal.status === "DECLINED" ? (
-          <DeclinedPanel proposal={proposal} />
-        ) : proposal.status === "EXPIRED" ? (
-          <div className="rounded-2xl border bg-card p-6 text-center text-sm text-muted-foreground">
-            The client sees &ldquo;This proposal has expired&rdquo; instead of this page.
-          </div>
+          <AcceptedView proposal={proposal} pdfHref={`/api/files/proposal-signed/${proposal.id}`} />
         ) : (
-          <PublicProposalAccept
-            proposalId={proposal.id}
-            token=""
-            firstInvoice={proposal.firstInvoice}
-            preview
-          />
+          <>
+            <ProposalDocument document={proposal.document} validUntil={proposal.document.expiresAt} />
+            {proposal.status === "DECLINED" ? (
+              <DeclinedPanel proposal={proposal} />
+            ) : proposal.status === "EXPIRED" ? (
+              <div className="rounded-2xl border bg-card p-6 text-center text-sm text-muted-foreground">
+                The client sees &ldquo;This proposal has expired&rdquo; instead of this page.
+              </div>
+            ) : (
+              <ProposalSignPanel
+                proposalId={proposal.id}
+                token=""
+                documentHash={proposal.documentHash}
+                firstInvoice={proposal.firstInvoice}
+                recipient={{ email: proposal.contactEmail, company: proposal.contactCompany }}
+                preview
+              />
+            )}
+          </>
         )}
         <Footer />
       </Shell>
@@ -279,13 +198,15 @@ export default async function PublicProposalPage({
     );
   }
 
-  // An accepted proposal stays readable after its link's expiry: it is the
-  // client's own agreement. Anything else past expiry is closed.
+  // An accepted proposal stays readable after its link's expiry, view-only:
+  // it is the client's own agreement. Anything else past expiry is closed.
   if (proposal.status === "ACCEPTED") {
     return (
       <Shell>
-        <ProposalDocument proposal={proposal} validUntil={null} />
-        <AcceptedBanner proposal={proposal} />
+        <AcceptedView
+          proposal={proposal}
+          pdfHref={`/api/files/proposal-signed/${proposal.id}?token=${encodeURIComponent(token)}`}
+        />
         <Footer />
       </Shell>
     );
@@ -304,7 +225,7 @@ export default async function PublicProposalPage({
   if (proposal.status === "DECLINED") {
     return (
       <Shell>
-        <ProposalDocument proposal={proposal} validUntil={null} />
+        <ProposalDocument document={proposal.document} validUntil={null} />
         <DeclinedPanel proposal={proposal} />
         <Footer />
       </Shell>
@@ -314,11 +235,13 @@ export default async function PublicProposalPage({
   return (
     <Shell>
       <ProposalViewBeacon proposalId={proposal.id} token={token} />
-      <ProposalDocument proposal={proposal} validUntil={proposal.expiresAt} />
-      <PublicProposalAccept
+      <ProposalDocument document={proposal.document} validUntil={proposal.document.expiresAt} />
+      <ProposalSignPanel
         proposalId={proposal.id}
         token={token}
+        documentHash={proposal.documentHash}
         firstInvoice={proposal.firstInvoice}
+        recipient={{ email: proposal.contactEmail, company: proposal.contactCompany }}
       />
       <Footer />
     </Shell>

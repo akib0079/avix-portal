@@ -208,7 +208,15 @@ export function ProposalRemoveDialog({
   );
 }
 
-/** "They agreed by call or chat": the same hand-off as the client accepting online. */
+/** Proof of an agreement made elsewhere: an email saved as PDF, or a screenshot. */
+const EVIDENCE_TYPES = "application/pdf,image/png,image/jpeg,image/webp";
+const EVIDENCE_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * "They agreed by call or chat": the same hand-off as the client signing
+ * online, recorded as exactly that. The signature row says Avix Digital
+ * recorded it on their behalf, and can carry the proof.
+ */
 export function ProposalAcceptDialog({
   proposal,
   onClose,
@@ -218,6 +226,7 @@ export function ProposalAcceptDialog({
 }) {
   const { detail, loading } = useProposalDetail(proposal.id);
   const [name, setName] = useState(proposal.contactName);
+  const [evidence, setEvidence] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const first = detail?.firstInvoice;
 
@@ -268,7 +277,30 @@ export function ProposalAcceptDialog({
             placeholder="e.g. Nadia Rahman"
           />
           <p className="text-xs text-muted-foreground">
-            Recorded on the proposal, flagged as marked by you rather than signed online.
+            Their certificate will say it was recorded by Avix Digital on their behalf, not
+            signed online, with your address and browser as the record of who recorded it.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="accept-evidence">Proof (optional)</Label>
+          <Input
+            id="accept-evidence"
+            type="file"
+            accept={EVIDENCE_TYPES}
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              if (file && file.size > EVIDENCE_MAX_BYTES) {
+                toast.error("That file is over 25 MB.");
+                e.target.value = "";
+                return setEvidence(null);
+              }
+              setEvidence(file);
+            }}
+          />
+          <p className="text-xs text-muted-foreground">
+            The email saved as a PDF, or a screenshot of the chat. Kept with the acceptance, for
+            you only.
           </p>
         </div>
 
@@ -280,7 +312,10 @@ export function ProposalAcceptDialog({
             disabled={busy || name.trim().length < 2}
             onClick={async () => {
               setBusy(true);
-              const result = await markProposalAccepted(proposal.id, name);
+              const form = new FormData();
+              form.set("signedName", name);
+              if (evidence) form.set("evidence", evidence);
+              const result = await markProposalAccepted(proposal.id, form);
               setBusy(false);
               if (!result.ok) return void toast.error(result.error);
               toast.success(

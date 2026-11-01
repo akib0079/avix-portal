@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ProposalStatus } from "@prisma/client";
 import { projectTypeValues } from "@/lib/validation/project";
 import { currencyCodes } from "@/lib/currency";
+import { SIGNATURE_DATA_URL_MAX } from "@/lib/signature-rules";
 
 export const proposalStatusValues = [
   "DRAFT",
@@ -117,10 +118,60 @@ export const proposalSchema = z
 export type ProposalInput = z.infer<typeof proposalSchema>;
 export type ProposalItemInput = z.infer<typeof proposalItemSchema>;
 
-/** Public accept step: the prospect types their full name as an e-signature. */
+/** Who agreed, for an acceptance the admin records on the client's behalf. */
 export const acceptProposalSchema = z.object({
   signedName: z.string().trim().min(2, "Type your full name").max(120),
 });
+
+/** No line breaks, tabs or other control characters: these go onto a certificate. */
+const plainLine = (value: string) => !/[\u0000-\u001f\u007f]/.test(value);
+
+/**
+ * Public signing. Anyone with the link can post this, so every field is
+ * capped, and nothing in it is trusted beyond what it is: the server rebuilds
+ * the document from the database and only compares documentHash with it, and
+ * checks the PNG byte by byte (src/lib/signature-png.ts).
+ */
+export const signProposalSchema = z
+  .object({
+    signerName: z
+      .string()
+      .trim()
+      .min(2, "Type your full name")
+      .max(120, "Keep your name under 120 characters")
+      .refine(plainLine, "Type your name on one line"),
+    signerEmail: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .email("Enter a valid email for your signed copy")
+      .max(255),
+    signerTitle: z.string().trim().max(120).refine(plainLine).optional().or(z.literal("")),
+    signerCompany: z.string().trim().max(160).refine(plainLine).optional().or(z.literal("")),
+    method: z.enum(["DRAWN", "TYPED"]),
+    /** DRAWN only: the trimmed PNG as a data URL. */
+    imagePng: z.string().max(SIGNATURE_DATA_URL_MAX, "Your signature image is too large").optional(),
+    consent: z.literal(true, { message: "Tick the box to agree to sign electronically" }),
+    consentVersion: z.string().max(64),
+    /** The hash of the document the page rendered. */
+    documentHash: z.string().regex(/^[0-9a-f]{64}$/, "Reload the proposal and sign again"),
+    /** The signer's browser zone, for their local time on the certificate. */
+    timeZone: z.string().max(64).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.method === "DRAWN" && !value.imagePng) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["imagePng"],
+        message: "Draw your signature in the box, or choose Type.",
+      });
+    }
+    if (value.method === "TYPED" && value.imagePng) {
+      ctx.addIssue({ code: "custom", path: ["imagePng"], message: "A typed signature has no drawing." });
+    }
+  });
+
+export type SignProposalInput = z.input<typeof signProposalSchema>;
 
 /** Public decline: the reason is optional, and capped because anyone with the link can post it. */
 export const declineProposalSchema = z.object({

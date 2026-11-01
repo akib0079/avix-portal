@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getSession, requireAdmin } from "@/lib/dal/session";
@@ -20,6 +20,7 @@ import {
   invoiceFacts,
   proposalContact,
   proposalLinks,
+  proposalSnapshotOf,
   type ProposalDetail,
   type ProposalDraft,
   type ProposalLinks,
@@ -35,17 +36,37 @@ import {
   proposalRemovalPlan,
 } from "@/lib/proposal-rules";
 import { readProposalLink } from "@/lib/marketing-token";
-import { emailProposal, proposalUrl } from "@/lib/proposal-mail";
+import { emailProposal, emailSignedProposal, proposalUrl } from "@/lib/proposal-mail";
+import { appUrl } from "@/lib/app-url";
+import { snapshotHash, type ProposalSnapshot } from "@/lib/proposal-snapshot";
+import { readSignatureDataUrl } from "@/lib/signature-png";
+import {
+  ADMIN_RECORD_VERSION,
+  SIGNATURE_CONSENT_VERSION,
+  SIGNATURE_FONT,
+  adminRecordText,
+  signatureConsentText,
+} from "@/lib/signature-rules";
+import { createRateLimiter } from "@/lib/rate-limit";
+import { signedPdfFileName, storeSignedProposalPdf } from "@/lib/pdf/proposal-render";
 import {
   proposalSchema,
   acceptProposalSchema,
   declineProposalSchema,
   duplicateProposalSchema,
   extendProposalSchema,
+  signProposalSchema,
   type DuplicateProposalInput,
   type ProposalInput,
+  type SignProposalInput,
 } from "@/lib/validation/proposal";
-import type { LeadSource, Prisma, ProjectSource, ProposalStatus } from "@prisma/client";
+import type {
+  LeadSource,
+  Prisma,
+  ProjectSource,
+  ProposalStatus,
+  SignatureMethod,
+} from "@prisma/client";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -1216,42 +1237,80 @@ const HANDOFF_INCLUDE = {
 /** The proposal as the hand-off read it, just before claiming it. */
 type HandoffProposal = Prisma.ProposalGetPayload<{ include: typeof HANDOFF_INCLUDE }>;
 
+type Loaded = { proposal: HandoffProposal; links: ProposalLinks };
+
+/**
+ * What a hand-off works from, in one wave: the proposal with its scope and
+ * lead, and the references it keeps without foreign keys (proposalLinks). The
+ * sign action reads it once and builds its snapshot from the same rows the
+ * hand-off then uses, so nothing is read twice.
+ */
+async function loadHandoff(id: string): Promise<Loaded | null> {
+  const [proposal, links] = await Promise.all([
+    prisma.proposal.findUnique({ where: { id }, include: HANDOFF_INCLUDE }),
+    proposalLinks(id),
+  ]);
+  return proposal && links ? { proposal, links } : null;
+}
+
+/**
+ * The evidence row every acceptance writes (ProposalSignature): who signed
+ * and how, the consent or statement they were given, and the snapshot of
+ * exactly what was agreed with its hash. Written in the hand-off's own
+ * transaction, so a signature can never exist without its hand-off, or the
+ * other way round.
+ */
+type SignatureEvidence = {
+  method: SignatureMethod;
+  signerName: string;
+  signerEmail: string;
+  signerTitle: string | null;
+  signerCompany: string | null;
+  imagePng: Buffer | null;
+  typedFont: string | null;
+  consentText: string;
+  consentVersion: string;
+  snapshot: ProposalSnapshot;
+  documentHash: string;
+  tokenFingerprint: string | null;
+  recordedById: string | null;
+};
+
 type Acceptance = {
   signedName: string;
   /** The admin recorded an agreement made elsewhere (call, chat, email). */
   byAdmin: boolean;
   actorId?: string | null;
-  /** The link version the client accepted through; it must still be current. */
+  /** The link version the client signed through; it must still be current. */
   linkVersion?: number;
   ipAddress?: string | null;
   userAgent?: string | null;
-  /**
-   * Writes that must commit or roll back with the acceptance itself, run in
-   * the transaction straight after the claim — the seam for signature
-   * evidence, so a signature can never exist without its hand-off or the
-   * other way round. `proposal` is the row as read just before the claim
-   * (scope, lead, currency), `total` its scope total.
-   */
-  withinClaim?: (
-    tx: Tx,
-    claimed: { proposal: HandoffProposal; total: number; acceptedAt: Date },
-  ) => Promise<void>;
-  /** Extra detail for the SIGNED audit event. */
+  signature: SignatureEvidence;
+  /** Extra detail for the SIGNED audit event (the raw forwarding chain, the signer's zone, evidence). */
   eventMeta?: Record<string, string | number | boolean | null>;
+  /** The signer's own copy: where the signed PDF is emailed, and the link it opens at. */
+  signedCopy?: { email: string; viewUrl: string };
 };
 
-type HandoffResult = ActionResult<{
+type HandoffData = {
   accepted: true;
   /** Somebody (a double click, another tab) got there first; nothing was created twice. */
   alreadyAccepted: boolean;
   /** A set-your-password invite is on its way (the client had no login yet). */
   portalInvite: boolean;
-}>;
+};
+
+type HandoffResult = ActionResult<HandoffData>;
+
+const ALREADY_ACCEPTED: HandoffResult = {
+  ok: true,
+  data: { accepted: true, alreadyAccepted: true, portalInvite: false },
+};
 
 /** Why this acceptance can't go ahead, in words for whoever is accepting. */
 function handoffBlocker(
   p: { status: ProposalStatus; archivedAt: Date | null; linkVersion: number; expiresAt: Date | null },
-  acceptance: Acceptance,
+  acceptance: { byAdmin: boolean; linkVersion?: number },
   now: Date,
 ): string | null {
   if (p.archivedAt) return "This proposal was withdrawn.";
@@ -1267,31 +1326,58 @@ function handoffBlocker(
 }
 
 /**
- * The one hand-off, used by the client's acceptance AND the admin's "mark
- * accepted" (and, later, the e-signature). It creates a CONTRACT project
- * priced at the proposal total, attaches the first invoice (or creates the
- * deposit invoice the client was promised), marks a backing lead WON and
- * records who accepted.
+ * The new project's plan. One milestone per scope line, in the proposal's
+ * order, so the board starts with what was sold; unpriced, because a CONTRACT
+ * project is billed as a whole and its milestone prices are ignored. Only a
+ * proposal with no scope lines (very old ones) falls back to the project
+ * type's template.
+ */
+function handoffMilestones(proposal: HandoffProposal, now: Date) {
+  const scope = proposal.items
+    .map((item) => item.description.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const plan =
+    scope.length > 0
+      ? scope.map((title) => ({ title, description: undefined }))
+      : milestoneTemplates[proposal.projectType].map((m) => ({
+          title: m.title,
+          description: textToDoc(m.description),
+        }));
+  return plan.map((m, index) => ({
+    title: m.title,
+    ...(m.description ? { description: m.description } : {}),
+    pricingType: "NONE" as const,
+    position: index,
+    boardPosition: (index + 1) * 1024,
+    ...stageWrite("TODO", null, now),
+  }));
+}
+
+/**
+ * The one hand-off, behind the client's signature AND the admin's "mark
+ * accepted". It records the signature evidence, creates a CONTRACT project
+ * priced at the proposal total with the scope as its milestones, attaches the
+ * first invoice (or creates the deposit invoice the client was promised),
+ * marks a backing lead WON and records who accepted.
  *
  * The FIRST statement of its transaction claims the proposal: a conditional
  * update to ACCEPTED that only one caller can win. Two tabs, a double click,
  * or the client signing while the admin clicks "mark accepted" all reach it;
  * the losers find the row already ACCEPTED and get the same success back
- * without creating a second project. Emails, notifications and the activity
- * log run after the response.
+ * without creating a second project or a second signature. The admin's claim
+ * also requires the row to be unchanged since it was read, because the
+ * snapshot it records was built from that read (a client's claim is held to
+ * its link version instead: content only changes on a draft, and every resend
+ * or extension moves the version).
  *
- * Callers must have already authorised the action (link or admin session).
+ * The signed PDF, the emails, the notification and the activity log run after
+ * the response. Callers must have already authorised the action (link or
+ * admin session).
  */
-async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffResult> {
+async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): Promise<HandoffResult> {
+  const id = proposal.id;
   const now = new Date();
-  const [proposal, links] = await Promise.all([
-    prisma.proposal.findUnique({ where: { id }, include: HANDOFF_INCLUDE }),
-    proposalLinks(id),
-  ]);
-  if (!proposal || !links) return { ok: false, error: "Proposal not found." };
-  if (proposal.status === "ACCEPTED") {
-    return { ok: true, data: { accepted: true, alreadyAccepted: true, portalInvite: false } };
-  }
+  if (proposal.status === "ACCEPTED") return ALREADY_ACCEPTED;
   const blocker = handoffBlocker(proposal, acceptance, now);
   if (blocker) return { ok: false, error: blocker };
 
@@ -1317,7 +1403,8 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
   }
 
   // The same decision the public page made when it told the client what
-  // they would be invoiced first (see firstInvoicePromise).
+  // they would be invoiced first (see firstInvoicePromise), and that the
+  // snapshot records.
   const promise = firstInvoicePromise(
     { total, currency: proposal.currency, depositPercent: proposal.depositPercent },
     links.invoice,
@@ -1326,7 +1413,12 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
   const deposit = promise?.kind === "deposit" ? promise : null;
 
   const claimWhere: Prisma.ProposalWhereInput = acceptance.byAdmin
-    ? { id, archivedAt: null, status: { in: ["DRAFT", "SENT", "EXPIRED"] } }
+    ? {
+        id,
+        archivedAt: null,
+        status: { in: ["DRAFT", "SENT", "EXPIRED"] },
+        updatedAt: proposal.updatedAt,
+      }
     : {
         id,
         archivedAt: null,
@@ -1334,14 +1426,19 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
         linkVersion: acceptance.linkVersion,
         expiresAt: { gt: now },
       };
+  const evidence = acceptance.signature;
 
   type Outcome =
-    | { claimed: false; alreadyAccepted: boolean }
+    | {
+        claimed: false;
+        current: { status: ProposalStatus; archivedAt: Date | null; linkVersion: number; expiresAt: Date | null } | null;
+      }
     | {
         claimed: true;
         client: { id: string; email: string; emailVerified: boolean };
         projectId: string;
         invoiceNumber: string | null;
+        signatureId: string;
       };
 
   let outcome: Outcome;
@@ -1354,19 +1451,47 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
           acceptedAt: now,
           acceptedName: acceptance.signedName,
           acceptedByAdmin: acceptance.byAdmin,
+          documentHash: evidence.documentHash,
         },
       });
       if (claimed.count === 0) {
-        const current = await tx.proposal.findUnique({ where: { id }, select: { status: true } });
-        return { claimed: false, alreadyAccepted: current?.status === "ACCEPTED" };
+        const current = await tx.proposal.findUnique({
+          where: { id },
+          select: { status: true, archivedAt: true, linkVersion: true, expiresAt: true },
+        });
+        return { claimed: false, current };
       }
-      await acceptance.withinClaim?.(tx, { proposal, total, acceptedAt: now });
 
       const client = links.client
         ? { ...links.client, created: false }
         : await findOrCreateClient(tx, newAccount!.contact, newAccount!.passwordHash);
 
-      const template = milestoneTemplates[proposal.projectType];
+      const signature = await tx.proposalSignature.create({
+        data: {
+          proposalId: id,
+          clientId: client.id,
+          role: "CLIENT",
+          method: evidence.method,
+          signerName: evidence.signerName,
+          signerEmail: evidence.signerEmail,
+          signerTitle: evidence.signerTitle,
+          signerCompany: evidence.signerCompany,
+          imagePng: evidence.imagePng ? new Uint8Array(evidence.imagePng) : null,
+          typedFont: evidence.typedFont,
+          consentText: evidence.consentText,
+          consentVersion: evidence.consentVersion,
+          documentHash: evidence.documentHash,
+          snapshot: evidence.snapshot as unknown as Prisma.InputJsonObject,
+          snapshotVersion: evidence.snapshot.snapshotVersion,
+          ipAddress: acceptance.ipAddress ?? null,
+          userAgent: acceptance.userAgent ?? null,
+          tokenFingerprint: evidence.tokenFingerprint,
+          recordedById: evidence.recordedById,
+          signedAt: now,
+        },
+        select: { id: true },
+      });
+
       const project = await tx.project.create({
         data: {
           projectName: proposal.title,
@@ -1377,15 +1502,7 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
           status: "PLANNING",
           billingType: "CONTRACT",
           contractPrice: total,
-          milestones: {
-            create: template.map((m, index) => ({
-              title: m.title,
-              description: textToDoc(m.description),
-              position: index,
-              boardPosition: (index + 1) * 1024,
-              ...stageWrite("TODO", null, now),
-            })),
-          },
+          milestones: { create: handoffMilestones(proposal, now) },
         },
         select: { id: true },
       });
@@ -1448,10 +1565,15 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
           actorId: acceptance.actorId ?? null,
           ipAddress: acceptance.ipAddress ?? null,
           userAgent: acceptance.userAgent ?? null,
+          // The same instant as acceptedAt and signedAt, not the database's
+          // transaction start, so the audit trail agrees with itself.
+          createdAt: now,
           meta: {
-            name: acceptance.signedName,
-            method: acceptance.byAdmin ? "ADMIN_RECORDED" : "TYPED",
             ...acceptance.eventMeta,
+            name: acceptance.signedName,
+            method: evidence.method,
+            signatureId: signature.id,
+            documentHash: evidence.documentHash,
           },
         },
       });
@@ -1460,6 +1582,7 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
         client: { id: client.id, email: client.email, emailVerified: client.emailVerified },
         projectId: project.id,
         invoiceNumber,
+        signatureId: signature.id,
       };
     });
   } catch (err) {
@@ -1468,13 +1591,16 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
   }
 
   if (!outcome.claimed) {
-    if (outcome.alreadyAccepted) {
-      return { ok: true, data: { accepted: true, alreadyAccepted: true, portalInvite: false } };
-    }
-    return { ok: false, error: "This proposal is no longer available." };
+    const current = outcome.current;
+    if (current?.status === "ACCEPTED") return ALREADY_ACCEPTED;
+    const why = current ? handoffBlocker(current, acceptance, now) : null;
+    return {
+      ok: false,
+      error: why ?? "This proposal changed a moment ago. Refresh and try again.",
+    };
   }
 
-  const { client, projectId, invoiceNumber } = outcome;
+  const { client, projectId, invoiceNumber, signatureId } = outcome;
   // A client who already has a login gets their project in the portal, not a
   // password-reset email they never asked for.
   const portalInvite = !client.emailVerified;
@@ -1487,22 +1613,56 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
         console.error("[proposals] invite after acceptance failed:", (err as Error).message);
       }
     }
+
+    // Rendered once, from the snapshot just committed, and kept: the copy
+    // the signer and the owner are sent is the stored one.
+    let pdf: { filename: string; content: Buffer } | null = null;
+    try {
+      const rendered = await storeSignedProposalPdf(signatureId);
+      if (rendered) pdf = { filename: signedPdfFileName(rendered.title), content: rendered.pdf };
+    } catch (err) {
+      console.error("[proposals] signed PDF failed:", (err as Error).message);
+    }
+
+    if (acceptance.signedCopy) {
+      try {
+        await emailSignedProposal({
+          to: acceptance.signedCopy.email,
+          signerName: acceptance.signedName,
+          title: proposal.title,
+          signedAt: now,
+          documentHash: evidence.documentHash,
+          viewUrl: acceptance.signedCopy.viewUrl,
+          pdf,
+          portalInvite,
+        });
+      } catch (err) {
+        console.error("[proposals] signed copy email failed:", (err as Error).message);
+      }
+    }
+
     if (!acceptance.byAdmin) {
-      await notifyAllAdmins({
-        type: "PROPOSAL_ACCEPTED",
-        title: `${who} accepted "${proposal.title}"`,
-        body:
-          `${formatCurrency(total, proposal.currency)} · project created` +
-          (invoiceNumber ? `, invoice ${invoiceNumber} ready to send` : ""),
-        link: proposalHref(id),
-      });
+      try {
+        await notifyAllAdmins({
+          type: "PROPOSAL_ACCEPTED",
+          title: `${who} signed "${proposal.title}"`,
+          body:
+            `${formatCurrency(total, proposal.currency)} · project created` +
+            (invoiceNumber ? `, invoice ${invoiceNumber} ready to send` : "") +
+            (pdf ? ". The signed PDF is attached." : ""),
+          link: proposalHref(id),
+          attachments: pdf ? [pdf] : undefined,
+        });
+      } catch (err) {
+        console.error("[proposals] acceptance notification failed:", (err as Error).message);
+      }
     }
     // On the project's timeline too, which the team can read — so no money.
     await logActivity({
       type: "proposal.accepted",
       summary: acceptance.byAdmin
         ? `"${proposal.title}" marked accepted on behalf of ${acceptance.signedName}`
-        : `${who} accepted "${proposal.title}"`,
+        : `${who} signed "${proposal.title}"`,
       actorId: acceptance.actorId ?? null,
       clientId: client.id,
       projectId,
@@ -1521,51 +1681,206 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
 }
 
 /**
- * PUBLIC action (no session). A prospect accepts by typing their name. The
- * link is re-checked server-side (signature here, version and expiry in the
- * hand-off's claim) before anything happens. Idempotent once accepted.
+ * Signing tries per address before the action stops listening for a while.
+ * A real signer needs one or two; this only slows a script down.
  */
-export async function acceptProposal(
+const signAttempts = createRateLimiter({ limit: 10, windowMs: 10 * 60 * 1000 });
+
+const STALE_DOCUMENT = "This proposal was updated, please review the latest version.";
+
+export type SignProposalResult =
+  | { ok: true; data?: HandoffData }
+  | { ok: false; error: string; reload?: true };
+
+/** A zone the server's Intl knows, or nothing: it is printed on the certificate. */
+function validTimeZone(zone: string | undefined): string | null {
+  if (!zone) return null;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return zone;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PUBLIC action (no session): the prospect signs the proposal, which accepts
+ * it. Nothing the browser sends is taken on trust:
+ *
+ * - the link's signature is checked first, before any database read, and its
+ *   version and expiry again in the hand-off's claim;
+ * - every field is capped (signProposalSchema) and attempts are rate-limited
+ *   per address;
+ * - a drawn signature must be a real, non-empty PNG of sane size
+ *   (signature-png.ts), a typed one has no image at all;
+ * - the document is rebuilt from the database, never from the client, and
+ *   its hash must equal the one the page rendered, or the client is asked to
+ *   review the latest version instead of signing something they haven't seen.
+ *
+ * The signature, its snapshot and hash, the SIGNED event and the whole
+ * hand-off commit in one transaction. Idempotent once accepted.
+ */
+export async function signProposal(
   id: string,
   token: string,
-  signedName: string,
-): Promise<HandoffResult> {
-  const parsed = acceptProposalSchema.safeParse({ signedName });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Type your full name" };
+  input: SignProposalInput,
+): Promise<SignProposalResult> {
+  if (typeof id !== "string" || typeof token !== "string" || id.length > 64 || token.length > 256) {
+    return { ok: false, error: LINK_INVALID };
   }
   const claims = readProposalLink(id, token);
   if (!claims) return { ok: false, error: LINK_INVALID };
+
   const meta = await requestMeta();
-  return runHandoff(id, {
-    signedName: parsed.data.signedName,
+  const allowed = signAttempts.take(meta.ipAddress ?? `proposal:${id}`);
+  if (!allowed.ok) {
+    return {
+      ok: false,
+      error: `Too many attempts. Please wait ${Math.ceil(allowed.retryAfterMs / 60_000)} minutes and try again.`,
+    };
+  }
+
+  const parsed = signProposalSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
+  }
+  const data = parsed.data;
+  if (data.consentVersion !== SIGNATURE_CONSENT_VERSION) {
+    return {
+      ok: false,
+      error: "The signing wording has changed since this page loaded. Reload the proposal to see it.",
+      reload: true,
+    };
+  }
+  let image: Buffer | null = null;
+  if (data.method === "DRAWN") {
+    const checked = readSignatureDataUrl(data.imagePng);
+    if (!checked.ok) return { ok: false, error: checked.error };
+    image = checked.image.bytes;
+  }
+
+  const loaded = await loadHandoff(id);
+  if (!loaded) return { ok: false, error: LINK_INVALID };
+  if (loaded.proposal.status === "ACCEPTED") return ALREADY_ACCEPTED;
+  const blocker = handoffBlocker(loaded.proposal, { byAdmin: false, linkVersion: claims.version }, new Date());
+  if (blocker) return { ok: false, error: blocker };
+
+  // What the server knows the client is signing; the page's hash must match.
+  const snapshot = proposalSnapshotOf(loaded.proposal, loaded.links.invoice);
+  const documentHash = snapshotHash(snapshot);
+  if (documentHash !== data.documentHash) return { ok: false, error: STALE_DOCUMENT, reload: true };
+
+  const company = data.signerCompany || null;
+  return runHandoff(loaded, {
+    signedName: data.signerName,
     byAdmin: false,
     linkVersion: claims.version,
-    ...meta,
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent,
+    signature: {
+      method: data.method,
+      signerName: data.signerName,
+      signerEmail: data.signerEmail,
+      signerTitle: data.signerTitle || null,
+      signerCompany: company,
+      imagePng: image,
+      typedFont: data.method === "TYPED" ? SIGNATURE_FONT : null,
+      consentText: signatureConsentText(company),
+      consentVersion: SIGNATURE_CONSENT_VERSION,
+      snapshot,
+      documentHash,
+      // Ties the signature to the link it came through without keeping a
+      // usable credential.
+      tokenFingerprint: createHash("sha256").update(token).digest("hex"),
+      recordedById: null,
+    },
+    eventMeta: {
+      forwardedFor: meta.forwardedFor,
+      realIp: meta.realIp,
+      timeZone: validTimeZone(data.timeZone),
+      linkVersion: claims.version,
+    },
+    signedCopy: {
+      email: data.signerEmail,
+      viewUrl: `${appUrl()}/proposals/${id}?token=${encodeURIComponent(token)}`,
+    },
   });
 }
 
 /**
- * Admin closes the proposal on the client's behalf (they agreed by call/chat).
- * Runs the same hand-off; the signature records who agreed, flagged as
- * admin-recorded so the audit trail stays honest.
+ * Admin closes the proposal on the client's behalf (they agreed by call,
+ * chat or email). Runs the same hand-off and records a signature too, marked
+ * ADMIN_RECORDED, with the same snapshot and hash, the admin who recorded it,
+ * their address and browser, and optionally the proof (an email saved as PDF,
+ * a screenshot). The certificate then says plainly that Avix Digital recorded
+ * it on the client's behalf.
+ *
+ * FormData: `signedName` (who agreed) and an optional `evidence` file.
  */
-export async function markProposalAccepted(
-  id: string,
-  signedName: string,
-): Promise<HandoffResult> {
+export async function markProposalAccepted(id: string, formData: FormData): Promise<HandoffResult> {
   const admin = await requireAdmin();
-  const parsed = acceptProposalSchema.safeParse({ signedName });
+  const parsed = acceptProposalSchema.safeParse({ signedName: formData.get("signedName") ?? "" });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Enter who agreed" };
   }
-  const meta = await requestMeta();
-  return runHandoff(id, {
-    signedName: parsed.data.signedName,
-    byAdmin: true,
-    actorId: admin.id,
-    ...meta,
-  });
+  const name = parsed.data.signedName;
+  const file = formData.get("evidence");
+  const proof = file instanceof File && file.size > 0 ? file : null;
+
+  const [loaded, meta] = await Promise.all([loadHandoff(id), requestMeta()]);
+  if (!loaded) return { ok: false, error: "Proposal not found." };
+  if (loaded.proposal.status === "ACCEPTED") return ALREADY_ACCEPTED;
+  const blocker = handoffBlocker(loaded.proposal, { byAdmin: true }, new Date());
+  if (blocker) return { ok: false, error: blocker };
+
+  // Stored only once the proposal can be accepted, and removed again below
+  // if the hand-off doesn't happen after all.
+  let evidence: { fileName: string; originalName: string } | null = null;
+  if (proof) {
+    const saved = await saveUpload("contracts", proof);
+    if (!saved.ok) return { ok: false, error: saved.error };
+    evidence = { fileName: saved.fileName, originalName: proof.name.slice(0, 255) };
+  }
+
+  const snapshot = proposalSnapshotOf(loaded.proposal, loaded.links.invoice);
+  const contact = proposalContact(loaded.proposal);
+  let result: HandoffResult;
+  try {
+    result = await runHandoff(loaded, {
+      signedName: name,
+      byAdmin: true,
+      actorId: admin.id,
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+      signature: {
+        method: "ADMIN_RECORDED",
+        signerName: name,
+        signerEmail: loaded.links.client?.email ?? contact.email ?? "",
+        signerTitle: null,
+        signerCompany: contact.company,
+        imagePng: null,
+        typedFont: null,
+        consentText: adminRecordText(name),
+        consentVersion: ADMIN_RECORD_VERSION,
+        snapshot,
+        documentHash: snapshotHash(snapshot),
+        tokenFingerprint: null,
+        recordedById: admin.id,
+      },
+      eventMeta: {
+        forwardedFor: meta.forwardedFor,
+        realIp: meta.realIp,
+        ...(evidence ? { evidenceFile: evidence.fileName, evidenceName: evidence.originalName } : {}),
+      },
+    });
+  } catch (err) {
+    if (evidence) await deleteUpload("contracts", evidence.fileName);
+    throw err;
+  }
+  if (evidence && (!result.ok || result.data?.alreadyAccepted)) {
+    await deleteUpload("contracts", evidence.fileName);
+  }
+  return result;
 }
 
 // ---------- The client's side: decline and views ----------

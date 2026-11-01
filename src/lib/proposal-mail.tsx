@@ -5,6 +5,7 @@ import { formatCurrency } from "@/lib/currency";
 import { createProposalToken } from "@/lib/marketing-token";
 import ProposalSentEmail from "@/emails/proposal-sent";
 import ProposalReminderEmail from "@/emails/proposal-reminder";
+import ProposalSignedEmail from "@/emails/proposal-signed";
 
 /**
  * The proposal emails, shared by the send / extend actions and the duties
@@ -89,5 +90,43 @@ export async function emailProposalReminder(input: {
       />
     ),
     devHint: `proposal reminder ${input.title} → ${input.to}`,
+  });
+}
+
+/** The signer's copy of what they signed, with the PDF when there is one. */
+export async function emailSignedProposal(input: {
+  to: string;
+  signerName: string;
+  title: string;
+  signedAt: Date;
+  documentHash: string;
+  viewUrl: string;
+  pdf: { filename: string; content: Buffer } | null;
+  portalInvite: boolean;
+}) {
+  await sendEmail({
+    to: input.to,
+    subject: `Signed: ${input.title}`,
+    react: (
+      <ProposalSignedEmail
+        recipientName={firstNameOf(input.signerName)}
+        title={input.title}
+        signedAtText={new Intl.DateTimeFormat("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: "UTC",
+          timeZoneName: "short",
+        }).format(input.signedAt)}
+        fingerprintText={input.documentHash}
+        viewUrl={input.viewUrl}
+        pdfAttached={input.pdf != null}
+        portalInvite={input.portalInvite}
+      />
+    ),
+    attachments: input.pdf ? [input.pdf] : undefined,
+    devHint: `signed proposal ${input.title} → ${input.to}`,
   });
 }
