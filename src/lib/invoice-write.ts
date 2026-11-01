@@ -335,10 +335,22 @@ export async function prepareInvoice(
 }
 
 /**
+ * A recurring plan created together with its first invoice, which becomes
+ * its template (the Repeat section of a new invoice).
+ */
+export type PlanSeed = Omit<
+  Prisma.RetainerUncheckedCreateWithoutInvoicesInput,
+  "id" | "templateInvoiceId"
+>;
+
+/**
  * Creates a prepared invoice: one nested create, lines included, under the
  * custom number or the next free one. (It used to be an interactive
  * transaction holding a connection open across every statement.) `extra`
  * carries what the form doesn't: an uploaded file, or a plan and its period.
+ *
+ * With a `plan`, the plan is created in the same transaction and copies
+ * this invoice for every new period: either both exist or neither does.
  */
 export async function createPreparedInvoice(
   { data, refs, columns, status, markPaid }: PreparedInvoice,
@@ -346,27 +358,41 @@ export async function createPreparedInvoice(
     Prisma.InvoiceUncheckedCreateInput,
     "pdfPath" | "pdfOriginalName" | "retainerId" | "retainerPeriod"
   > = {},
-): Promise<{ id: string; invoiceNumber: string }> {
-  const create = (invoiceNumber: string) =>
-    prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        ...columns,
-        ...extra,
-        duplicatedFromId: refs.duplicatedFromId,
-        status,
-        // Created as already paid: the payment it stands for is on the record.
-        ...(markPaid > 0
-          ? {
-              amountPaid: markPaid,
-              payments: {
-                create: [{ amount: markPaid, paidAt: new Date(), method: MARKED_PAID }],
-              },
-            }
-          : {}),
-        items: { create: itemRows(data.items) },
-      },
-      select: { id: true, invoiceNumber: true },
-    });
+  plan?: PlanSeed,
+): Promise<{ id: string; invoiceNumber: string; retainerId: string | null }> {
+  const row = (invoiceNumber: string) => ({
+    invoiceNumber,
+    ...columns,
+    ...extra,
+    duplicatedFromId: refs.duplicatedFromId,
+    status,
+    // Created as already paid: the payment it stands for is on the record.
+    ...(markPaid > 0
+      ? {
+          amountPaid: markPaid,
+          payments: {
+            create: [{ amount: markPaid, paidAt: new Date(), method: MARKED_PAID }],
+          },
+        }
+      : {}),
+    items: { create: itemRows(data.items) },
+  });
+  const select = { id: true, invoiceNumber: true, retainerId: true } as const;
+  const create = plan
+    ? (invoiceNumber: string) =>
+        prisma.$transaction(
+          async (tx) => {
+            const invoice = await tx.invoice.create({ data: row(invoiceNumber), select });
+            // The plan points at its template, so it is made once the
+            // invoice has an id, through the invoice, which joins it.
+            return tx.invoice.update({
+              where: { id: invoice.id },
+              data: { retainer: { create: { ...plan, templateInvoiceId: invoice.id } } },
+              select,
+            });
+          },
+          { maxWait: 10_000, timeout: 20_000 },
+        )
+    : (invoiceNumber: string) => prisma.invoice.create({ data: row(invoiceNumber), select });
   return refs.customNumber ? create(refs.customNumber) : createWithNextNumber(prisma, create);
 }

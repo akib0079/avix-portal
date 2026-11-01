@@ -25,6 +25,8 @@ import {
   rollForward,
   runAllowed,
   runInstant,
+  scheduleColumns,
+  scheduleProblem,
   shiftMonths,
   shiftMonthsInDoc,
   shortDay,
@@ -368,4 +370,53 @@ test("a plan's state and what its page says about it", () => {
   assert.equal(ended.nextDay, null);
   assert.equal(ended.remaining, 0);
   assert.equal(ended.due, false);
+});
+
+test("a schedule is checked against where its plan stands", () => {
+  const monthlyFrom = (nextDate: string) =>
+    ({ frequency: "MONTH", interval: 1, nextDate, ends: "never", autoSend: false }) as const;
+  const today = "2026-11-02";
+  assert.equal(scheduleProblem(monthlyFrom("2026-12-01"), { today, runCount: 0 }), null);
+  assert.match(scheduleProblem(monthlyFrom("2026-11-01"), { today, runCount: 0 })!, /today or a later/);
+  // A plan running behind may keep the date it already has.
+  assert.equal(
+    scheduleProblem(monthlyFrom("2026-11-01"), { today, runCount: 0, storedDay: "2026-11-01" }),
+    null,
+  );
+  // An invoice made recurring already covers its own month.
+  assert.match(
+    scheduleProblem(monthlyFrom("2026-11-20"), { today, runCount: 1, coveredPeriod: "2026-11" })!,
+    /already covers that month/,
+  );
+  assert.equal(
+    scheduleProblem(monthlyFrom("2026-12-02"), { today, runCount: 1, coveredPeriod: "2026-11" }),
+    null,
+  );
+  assert.match(
+    scheduleProblem({ ...monthlyFrom("2026-12-01"), ends: "after", endAfterCount: 3 }, { today, runCount: 3 })!,
+    /made 3 invoices already/,
+  );
+  assert.match(
+    scheduleProblem({ ...monthlyFrom("2026-12-01"), ends: "on", endDate: "2026-11-30" }, { today, runCount: 0 })!,
+    /end date is before/,
+  );
+
+  const columns = scheduleColumns(
+    { frequency: "MONTH", interval: 3, nextDate: "2026-11-30", ends: "on", endDate: "2027-11-30", autoSend: true },
+    "Asia/Dhaka",
+  );
+  assert.deepEqual(columns, {
+    frequency: "MONTH",
+    interval: 3,
+    dayOfMonth: 30,
+    nextRunAt: new Date("2026-11-30T00:00:00.000Z"),
+    endAfterCount: null,
+    endDate: new Date("2027-11-30T00:00:00.000Z"),
+    autoSend: true,
+  });
+  // The stored anchor survives an edit that keeps the clamped date.
+  assert.equal(
+    scheduleColumns({ ...monthlyFrom("2027-02-28") }, "Asia/Dhaka", 31).dayOfMonth,
+    31,
+  );
 });

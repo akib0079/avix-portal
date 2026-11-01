@@ -316,6 +316,67 @@ export function planSummary(plan: PlanFacts, timeZone: string, now: Date): PlanS
   };
 }
 
+/** A schedule as the forms send it (lib/validation/retainer scheduleSchema). */
+export type ScheduleFormValue = Cadence & {
+  nextDate: Day;
+  ends: "never" | "after" | "on";
+  endAfterCount?: number | null;
+  endDate?: string;
+  autoSend: boolean;
+};
+
+/**
+ * The plan columns a schedule writes. A monthly plan bills on its next
+ * date's day from then on, unless that date is the one it already had
+ * (`keepDayOfMonth`): a plan on the 31st whose next run is 28 February keeps
+ * the 31st.
+ */
+export function scheduleColumns(
+  schedule: ScheduleFormValue,
+  timeZone: string,
+  keepDayOfMonth?: number,
+) {
+  return {
+    frequency: schedule.frequency,
+    interval: schedule.interval,
+    dayOfMonth: keepDayOfMonth ?? anchorDay(schedule.nextDate),
+    nextRunAt: runInstant(schedule.nextDate, timeZone),
+    endAfterCount: schedule.ends === "after" ? (schedule.endAfterCount ?? null) : null,
+    endDate: schedule.ends === "on" && schedule.endDate ? dayToDate(schedule.endDate) : null,
+    autoSend: schedule.autoSend,
+  };
+}
+
+/**
+ * What's wrong with a schedule, given where its plan stands: a next date in
+ * the past (unless it is the one already stored, on a plan running behind),
+ * a first invoice inside the period its first invoice already covers, or an
+ * end the plan has already passed. Null when it is fine.
+ */
+export function scheduleProblem(
+  schedule: ScheduleFormValue,
+  ctx: { today: Day; runCount: number; storedDay?: Day | null; coveredPeriod?: string },
+): string | null {
+  if (schedule.nextDate < ctx.today && schedule.nextDate !== ctx.storedDay) {
+    return "Pick today or a later date for the next invoice.";
+  }
+  const unit = schedule.frequency === "WEEK" ? "week" : "month";
+  if (ctx.coveredPeriod && periodKey(schedule.nextDate, schedule.frequency) <= ctx.coveredPeriod) {
+    return `This invoice already covers that ${unit}. Start the plan in a later ${unit}.`;
+  }
+  const end: PlanEnd = {
+    endAfterCount: schedule.ends === "after" ? (schedule.endAfterCount ?? null) : null,
+    endDay: schedule.ends === "on" ? schedule.endDate || null : null,
+    runCount: ctx.runCount,
+  };
+  if (!runAllowed(schedule.nextDate, end)) {
+    return schedule.ends === "after"
+      ? `This plan has made ${ctx.runCount} invoice${ctx.runCount === 1 ? "" : "s"} already. Pick a number above ${ctx.runCount}.`
+      : "The end date is before the next invoice.";
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- words
 
 const MONTHS = [

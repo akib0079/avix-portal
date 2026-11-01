@@ -38,7 +38,16 @@ import {
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
 import { cn } from "@/lib/utils";
-import { Loader2, FileText, Upload, Link2, Plus, Trash2 } from "lucide-react";
+import { repeatSchema } from "@/lib/validation/retainer";
+import { cadenceLabel, defaultFirstRun, isDay, withoutMonths } from "@/lib/recurring";
+import {
+  ScheduleFields,
+  scheduleErrors,
+  scheduleInput,
+  type ScheduleDraft,
+  type ScheduleErrors,
+} from "@/components/retainers/schedule-fields";
+import { Loader2, FileText, Upload, Link2, Plus, Repeat, Trash2 } from "lucide-react";
 
 export type InvoiceClientOption = {
   id: string;
@@ -65,6 +74,7 @@ export function InvoiceForm({
   invoice,
   initial,
   copiedFrom,
+  today,
 }: {
   clients: InvoiceClientOption[];
   /**
@@ -80,6 +90,8 @@ export function InvoiceForm({
   initial?: Partial<InvoiceInput>;
   /** The invoice a duplicate came from, for the "last time" USD hint. */
   copiedFrom?: { invoiceNumber: string; lastAmountUsd: number | null };
+  /** Today in the agency's zone: a new invoice's date, and the earliest it can repeat. */
+  today?: string;
 }) {
   const router = useRouter();
   const { track } = useActivity();
@@ -104,7 +116,7 @@ export function InvoiceForm({
       projectId: start?.projectId ?? "none",
       amount: start?.amount ?? ("" as unknown as number),
       status: start?.status ?? "ASSIGNED",
-      issueDate: start?.issueDate ?? new Date().toISOString().slice(0, 10),
+      issueDate: start?.issueDate ?? today ?? new Date().toISOString().slice(0, 10),
       dueDate: start?.dueDate ?? "",
       discount: start?.discount ?? 0,
       taxRate: start?.taxRate ?? null,
@@ -132,6 +144,23 @@ export function InvoiceForm({
     control: form.control,
     name: "items",
   });
+
+  // The Repeat section of a new invoice: off, or a plan to create with it.
+  const repeatToday = today ?? new Date().toISOString().slice(0, 10);
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [repeatTitle, setRepeatTitle] = useState("");
+  const [repeat, setRepeat] = useState<ScheduleDraft>({
+    frequency: "MONTH",
+    interval: 1,
+    nextDate: "",
+    ends: "never",
+    endAfterCount: "",
+    endDate: "",
+    autoSend: false,
+  });
+  // Until it is picked by hand, the first new invoice is a period after this one.
+  const [repeatDateTouched, setRepeatDateTouched] = useState(false);
+  const [repeatErrors, setRepeatErrors] = useState<ScheduleErrors & { title?: string }>({});
 
   const selectedClient = form.watch("clientId");
   // Each client's projects, fetched the first time that client is picked.
@@ -179,6 +208,20 @@ export function InvoiceForm({
       maximumFractionDigits: 2,
     })}`;
 
+  const watchedTitle = form.watch("title");
+  const repeatFirst = (draft: ScheduleDraft, issueDay: string) =>
+    draft.interval === "" || !isDay(issueDay)
+      ? draft.nextDate
+      : defaultFirstRun(issueDay, { frequency: draft.frequency, interval: draft.interval }, repeatToday);
+  const repeatSchedule: ScheduleDraft = repeatDateTouched
+    ? repeat
+    : { ...repeat, nextDate: repeatFirst(repeat, watchedIssueDate) };
+
+  function changeRepeat(next: ScheduleDraft) {
+    if (next.nextDate !== repeatSchedule.nextDate) setRepeatDateTouched(true);
+    setRepeat(next);
+  }
+
   // Net terms drive the due date; picking terms fills the date field in.
   function applyTerms(days: number | null) {
     form.setValue("paymentTermsDays", days);
@@ -210,6 +253,23 @@ export function InvoiceForm({
     const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
 
+    if (!isEdit && repeatOn) {
+      const plan = repeatSchema.safeParse({
+        title:
+          repeatTitle.trim() || withoutMonths(values.title ?? "") || "Recurring invoice",
+        schedule: scheduleInput(repeatSchedule),
+      });
+      if (!plan.success) {
+        setRepeatErrors({
+          ...scheduleErrors(plan.error.issues, ["schedule"]),
+          title: plan.error.issues.find((i) => i.path[0] === "title")?.message,
+        });
+        return void toast.error("Check the Repeat settings.");
+      }
+      setRepeatErrors({});
+      formData.append("repeat", JSON.stringify(plan.data));
+    }
+
     const label = file ? "Uploading invoice…" : "Saving…";
     // No router.refresh() after either: both actions revalidate the invoice
     // pages, so the fresh page arrives with the action's own response, and a
@@ -221,7 +281,11 @@ export function InvoiceForm({
     } else {
       const result = await track(createInvoice(formData), label);
       if (!result.ok) return void toast.error(result.error);
-      toast.success("Invoice created.");
+      toast.success(
+        repeatOn
+          ? `Invoice created. It repeats ${cadenceLabel({ frequency: repeatSchedule.frequency, interval: Number(repeatSchedule.interval) }).toLowerCase()}.`
+          : "Invoice created.",
+      );
       router.push(result.data ? `/admin/invoices/${result.data.id}` : "/admin/invoices");
     }
   }
@@ -981,6 +1045,55 @@ export function InvoiceForm({
             </FormItem>
           )}
         />
+
+        {/* One step for a recurring invoice: this one is created and becomes
+            the template a plan copies for every new period. */}
+        {!isEdit && (
+          <div className="rounded-xl border p-4">
+            <label className="flex cursor-pointer items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <Repeat className="size-4 text-primary" /> Repeat this invoice
+                </span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  {repeatOn
+                    ? "Each new invoice copies this one, with its months moved on to the new period."
+                    : "Does not repeat."}
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]"
+                checked={repeatOn}
+                onChange={(e) => setRepeatOn(e.target.checked)}
+              />
+            </label>
+            {repeatOn && (
+              <div className="mt-4 space-y-4 border-t pt-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium">Plan name</span>
+                  <Input
+                    value={repeatTitle}
+                    onChange={(e) => setRepeatTitle(e.target.value)}
+                    placeholder={withoutMonths(watchedTitle ?? "") || "e.g. Monthly maintenance"}
+                  />
+                  {repeatErrors.title && (
+                    <p className="mt-1 text-xs font-medium text-destructive">{repeatErrors.title}</p>
+                  )}
+                </label>
+                <ScheduleFields
+                  value={repeatSchedule}
+                  onChange={changeRepeat}
+                  errors={repeatErrors}
+                  today={repeatToday}
+                  runCount={1}
+                  dateLabel="First new invoice on"
+                  countHint="This invoice counts as the first."
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-3 pt-2">
           <Button type="submit" disabled={form.formState.isSubmitting}>

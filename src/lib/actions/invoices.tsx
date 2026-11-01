@@ -30,6 +30,17 @@ import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { logActivity } from "@/lib/dal/activity";
 import { sendInvoiceCore } from "@/lib/invoice-send";
 import { formatCurrency } from "@/lib/currency";
+import { getBookingConfig } from "@/lib/dal/availability";
+import { repeatSchema, type RepeatInput } from "@/lib/validation/retainer";
+import {
+  dayIn,
+  dayToDate,
+  periodKey,
+  scheduleColumns,
+  scheduleProblem,
+} from "@/lib/recurring";
+import { runPlanIfDue } from "@/lib/recurring-run";
+import type { PlanSeed } from "@/lib/invoice-write";
 import type { InvoiceStatus } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
@@ -91,6 +102,28 @@ async function handlePdf(formData: FormData): Promise<
   return { ok: true, fileName: saved.fileName, originalName: file.name.slice(0, 255) };
 }
 
+/**
+ * The Repeat section of a new invoice, posted beside the form's fields as
+ * one JSON value: absent when the invoice doesn't repeat.
+ */
+function readRepeat(
+  formData: FormData,
+): { ok: true; repeat: RepeatInput | null } | { ok: false; error: string } {
+  const raw = formData.get("repeat");
+  if (typeof raw !== "string" || raw === "") return { ok: true, repeat: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "The repeat settings couldn't be read. Set them again." };
+  }
+  const parsed = repeatSchema.safeParse(value);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the repeat settings." };
+  }
+  return { ok: true, repeat: parsed.data };
+}
+
 export async function createInvoice(
   formData: FormData,
 ): Promise<ActionResult<{ id: string }>> {
@@ -100,20 +133,70 @@ export async function createInvoice(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
+  const repeat = readRepeat(formData);
+  if (!repeat.ok) return { ok: false, error: repeat.error };
 
-  const ready = await prepareInvoice(data);
+  const [ready, booking] = await Promise.all([
+    prepareInvoice(data),
+    repeat.repeat ? getBookingConfig() : null,
+  ]);
   if (!ready.ok) return { ok: false, error: ready.error };
+
+  // Made recurring as it is created: the plan copies this invoice for each
+  // new period, starting after the one this invoice covers.
+  let plan: PlanSeed | undefined;
+  let period: string | undefined;
+  const timeZone = booking?.agencyTimezone;
+  if (repeat.repeat && timeZone) {
+    const { title, schedule } = repeat.repeat;
+    if (ready.prepared.status === "CANCELLED") {
+      return { ok: false, error: "A cancelled invoice can't repeat." };
+    }
+    period = periodKey(data.issueDate, schedule.frequency);
+    const problem = scheduleProblem(schedule, {
+      today: dayIn(new Date(), timeZone),
+      runCount: 1,
+      coveredPeriod: period,
+    });
+    if (problem) return { ok: false, error: problem };
+    const { columns } = ready.prepared;
+    plan = {
+      clientId: columns.clientId,
+      projectId: columns.projectId,
+      title,
+      amount: columns.amount,
+      currency: columns.currency,
+      amountUsd: columns.amountUsd,
+      paymentTermsDays: columns.paymentTermsDays,
+      active: true,
+      ...scheduleColumns(schedule, timeZone),
+      startDate: dayToDate(schedule.nextDate),
+      // This invoice is the plan's first.
+      runCount: 1,
+      lastGeneratedPeriod: schedule.frequency === "MONTH" ? period : null,
+    };
+  }
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
 
-  const invoice = await createPreparedInvoice(ready.prepared, {
-    pdfPath: pdf.fileName,
-    pdfOriginalName: pdf.originalName,
-  });
+  const invoice = await createPreparedInvoice(
+    ready.prepared,
+    {
+      pdfPath: pdf.fileName,
+      pdfOriginalName: pdf.originalName,
+      ...(period ? { retainerPeriod: period } : {}),
+    },
+    plan,
+  );
 
+  const planId = invoice.retainerId;
+  if (planId && timeZone && plan && (plan.nextRunAt as Date).getTime() <= Date.now()) {
+    after(() => runPlanIfDue(planId, timeZone));
+  }
   revalidatePath("/admin/invoices");
   revalidatePath("/admin");
+  if (planId) revalidatePath("/admin/retainers");
   return { ok: true, data: { id: invoice.id } };
 }
 

@@ -31,7 +31,8 @@ export default async function NewInvoicePage({
     listActiveClientOptions(),
     listActivePaymentAccounts(),
     from ? getInvoiceCopySource(from) : null,
-    from ? getBookingConfig() : null,
+    // The agency's today: a copy's dates, and the earliest a new invoice can repeat.
+    getBookingConfig(),
     from
       ? listInvoiceProjectOptions({ ofInvoice: from })
       : client
@@ -40,8 +41,8 @@ export default async function NewInvoicePage({
   ]);
 
   // Today in the agency's zone: the server runs on UTC, the agency doesn't.
-  const copy =
-    source && booking ? invoiceCopyDefaults(source, { today: todayIn(booking.agencyTimezone) }) : null;
+  const today = todayIn(booking.agencyTimezone);
+  const copy = source ? invoiceCopyDefaults(source, { today }) : null;
   // A copy for a client who has since been deactivated waits for the owner to
   // pick who it is for, rather than quietly billing an inactive account.
   const clientGone = !!copy?.ok && !clients.some((c) => c.id === copy.input.clientId);
@@ -93,6 +94,7 @@ export default async function NewInvoicePage({
             projects={projects}
             paymentAccounts={paymentAccounts.map((a) => ({ id: a.id, title: a.title }))}
             initial={initial}
+            today={today}
             copiedFrom={
               copy?.ok && source
                 ? { invoiceNumber: source.invoiceNumber, lastAmountUsd: copy.lastAmountUsd }

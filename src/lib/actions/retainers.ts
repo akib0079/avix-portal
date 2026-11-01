@@ -16,7 +16,6 @@ import {
   type ScheduleInput,
 } from "@/lib/validation/retainer";
 import {
-  anchorDay,
   cadenceLabel,
   dateToDay,
   dayIn,
@@ -31,6 +30,8 @@ import {
   rollForward,
   runAllowed,
   runInstant,
+  scheduleColumns,
+  scheduleProblem,
   type Day,
 } from "@/lib/recurring";
 import { generatePlanNow, planRunSelect, runPlanIfDue, scheduleOf } from "@/lib/recurring-run";
@@ -74,53 +75,6 @@ async function resolvePlanRefs(data: {
   return { clientId: client.id, projectId: project?.id ?? null };
 }
 
-/**
- * The columns a schedule writes. A monthly plan bills on its next date's day
- * from then on, unless that date is the one it already had: a plan on the
- * 31st whose next run is 28 February keeps 31 as its day.
- */
-function scheduleColumns(schedule: ScheduleInput, timeZone: string, keepDayOfMonth?: number) {
-  return {
-    frequency: schedule.frequency,
-    interval: schedule.interval,
-    dayOfMonth: keepDayOfMonth ?? anchorDay(schedule.nextDate),
-    nextRunAt: runInstant(schedule.nextDate, timeZone),
-    endAfterCount: schedule.ends === "after" ? (schedule.endAfterCount ?? null) : null,
-    endDate: schedule.ends === "on" && schedule.endDate ? dayToDate(schedule.endDate) : null,
-    autoSend: schedule.autoSend,
-  };
-}
-
-/**
- * What's wrong with a schedule, given where the plan stands: a next date in
- * the past (unless it is the one already stored, on a plan running behind),
- * a first invoice in the period its template already covers, or an end the
- * plan has already passed.
- */
-function scheduleError(
-  schedule: ScheduleInput,
-  ctx: { today: Day; runCount: number; storedDay?: Day | null; coveredPeriod?: string },
-): string | null {
-  if (schedule.nextDate < ctx.today && schedule.nextDate !== ctx.storedDay) {
-    return "Pick today or a later date for the next invoice.";
-  }
-  const unit = schedule.frequency === "WEEK" ? "week" : "month";
-  if (ctx.coveredPeriod && periodKey(schedule.nextDate, schedule.frequency) <= ctx.coveredPeriod) {
-    return `This invoice already covers that ${unit}. Start the plan in a later ${unit}.`;
-  }
-  const end = {
-    endAfterCount: schedule.ends === "after" ? (schedule.endAfterCount ?? null) : null,
-    endDay: schedule.ends === "on" ? schedule.endDate || null : null,
-    runCount: ctx.runCount,
-  };
-  if (!runAllowed(schedule.nextDate, end)) {
-    return schedule.ends === "after"
-      ? `This plan has made ${ctx.runCount} invoice${ctx.runCount === 1 ? "" : "s"} already. Pick a number above ${ctx.runCount}.`
-      : "The end date is before the next invoice.";
-  }
-  return null;
-}
-
 function firstIssue(error: { issues: { message: string }[] }): string {
   return error.issues[0]?.message ?? "Invalid input";
 }
@@ -147,7 +101,7 @@ export async function createRetainer(input: RetainerInput): Promise<ActionResult
   const [refs, booking] = await Promise.all([resolvePlanRefs(data), getBookingConfig()]);
   if ("error" in refs) return { ok: false, error: refs.error };
   const timeZone = booking.agencyTimezone;
-  const problem = scheduleError(data.schedule, { today: dayIn(new Date(), timeZone), runCount: 0 });
+  const problem = scheduleProblem(data.schedule, { today: dayIn(new Date(), timeZone), runCount: 0 });
   if (problem) return { ok: false, error: problem };
 
   const plan = await prisma.retainer.create({
@@ -220,7 +174,7 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
 
   const timeZone = booking.agencyTimezone;
   const storedDay = existing.nextRunAt ? dayIn(existing.nextRunAt, timeZone) : null;
-  const problem = scheduleError(data.schedule, {
+  const problem = scheduleProblem(data.schedule, {
     today: dayIn(new Date(), timeZone),
     runCount: existing.runCount,
     storedDay,
@@ -306,7 +260,7 @@ export async function updatePlanSchedule(id: string, input: RepeatInput): Promis
   if (!existing) return { ok: false, error: "Plan not found." };
   const timeZone = booking.agencyTimezone;
   const storedDay = existing.nextRunAt ? dayIn(existing.nextRunAt, timeZone) : null;
-  const problem = scheduleError(schedule, {
+  const problem = scheduleProblem(schedule, {
     today: dayIn(new Date(), timeZone),
     runCount: existing.runCount,
     storedDay,
@@ -524,7 +478,7 @@ export async function makeInvoiceRecurring(
 
   const timeZone = booking.agencyTimezone;
   const own = periodKey(dateToDay(invoice.issueDate), schedule.frequency);
-  const problem = scheduleError(schedule, {
+  const problem = scheduleProblem(schedule, {
     today: dayIn(new Date(), timeZone),
     runCount: 1,
     coveredPeriod: own,
