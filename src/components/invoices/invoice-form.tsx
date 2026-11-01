@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,11 +10,12 @@ import {
   type InvoiceInput,
 } from "@/lib/validation/invoice";
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
+import { serializeInvoiceForm } from "@/lib/invoice-form-data";
 import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { richTextToLines, linesToRichDoc } from "@/lib/rich-text";
 import type { JSONContent } from "@tiptap/react";
-import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
+import { createInvoice, listInvoiceProjects, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +38,16 @@ import {
 import { toast } from "sonner";
 import { useActivity } from "@/components/layout/activity-indicator";
 import { cn } from "@/lib/utils";
-import { Loader2, FileText, Upload, Link2, Plus, Trash2 } from "lucide-react";
+import { repeatSchema } from "@/lib/validation/retainer";
+import { cadenceLabel, defaultFirstRun, isDay, withoutMonths } from "@/lib/recurring";
+import {
+  ScheduleFields,
+  scheduleErrors,
+  scheduleInput,
+  type ScheduleDraft,
+  type ScheduleErrors,
+} from "@/components/retainers/schedule-fields";
+import { Loader2, FileText, Upload, Link2, Plus, Repeat, Trash2 } from "lucide-react";
 
 export type InvoiceClientOption = {
   id: string;
@@ -62,15 +72,32 @@ export function InvoiceForm({
   projects,
   paymentAccounts,
   invoice,
+  initial,
+  copiedFrom,
+  today,
 }: {
   clients: InvoiceClientOption[];
+  /**
+   * Projects for the client the form opens with (theirs and unassigned ones).
+   * Another client's are fetched when the client changes, rather than every
+   * project in the system being sent with the page.
+   */
   projects: InvoiceProjectOption[];
   paymentAccounts: InvoicePaymentAccountOption[];
+  /** Edit mode: the saved invoice. */
   invoice?: InvoiceInput & { id: string; pdfOriginalName: string | null };
+  /** Create mode, prefilled: a duplicate, or a new invoice for one client. */
+  initial?: Partial<InvoiceInput>;
+  /** The invoice a duplicate came from, for the "last time" USD hint. */
+  copiedFrom?: { invoiceNumber: string; lastAmountUsd: number | null };
+  /** Today in the agency's zone: a new invoice's date, and the earliest it can repeat. */
+  today?: string;
 }) {
   const router = useRouter();
   const { track } = useActivity();
   const isEdit = !!invoice;
+  // Edit reads the saved invoice; a prefilled create reads its starting values.
+  const start: Partial<InvoiceInput> | undefined = invoice ?? initial;
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
 
@@ -85,28 +112,30 @@ export function InvoiceForm({
   const form = useForm<InvoiceInput>({
     resolver: zodResolver(invoiceSchema),
     defaultValues: {
-      clientId: invoice?.clientId ?? "",
-      projectId: invoice?.projectId ?? "none",
-      amount: invoice?.amount ?? ("" as unknown as number),
-      status: invoice?.status ?? "ASSIGNED",
-      issueDate: invoice?.issueDate ?? new Date().toISOString().slice(0, 10),
-      dueDate: invoice?.dueDate ?? "",
-      discount: invoice?.discount ?? 0,
-      taxRate: invoice?.taxRate ?? null,
-      taxLabel: invoice?.taxLabel ?? "",
-      paymentTermsDays: invoice?.paymentTermsDays ?? null,
-      notes: invoice?.notes ?? "",
-      pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
-      invoiceNumber: invoice?.invoiceNumber ?? "",
-      title: invoice?.title ?? "",
-      currency: invoice?.currency ?? "USD",
-      amountUsd: invoice?.amountUsd ?? null,
-      paymentAccountId: invoice?.paymentAccountId ?? "none",
-      billToCompany: invoice?.billToCompany ?? "",
-      billToAddress: invoice?.billToAddress ?? "",
-      billToEmail: invoice?.billToEmail ?? "",
-      items: invoice?.items?.length
-        ? invoice.items
+      clientId: start?.clientId ?? "",
+      projectId: start?.projectId ?? "none",
+      amount: start?.amount ?? ("" as unknown as number),
+      status: start?.status ?? "ASSIGNED",
+      issueDate: start?.issueDate ?? today ?? new Date().toISOString().slice(0, 10),
+      dueDate: start?.dueDate ?? "",
+      discount: start?.discount ?? 0,
+      taxRate: start?.taxRate ?? null,
+      taxLabel: start?.taxLabel ?? "",
+      paymentTermsDays: start?.paymentTermsDays ?? null,
+      notes: start?.notes ?? "",
+      payLinkUrl: start?.payLinkUrl ?? "",
+      duplicatedFromId: start?.duplicatedFromId ?? "",
+      pdfExternalUrl: start?.pdfExternalUrl ?? "",
+      invoiceNumber: start?.invoiceNumber ?? "",
+      title: start?.title ?? "",
+      currency: start?.currency ?? "USD",
+      amountUsd: start?.amountUsd ?? null,
+      paymentAccountId: start?.paymentAccountId ?? "none",
+      billToCompany: start?.billToCompany ?? "",
+      billToAddress: start?.billToAddress ?? "",
+      billToEmail: start?.billToEmail ?? "",
+      items: start?.items?.length
+        ? start.items
         : [{ description: "", descriptionRich: null, qty: 1, rate: "" as unknown as number }],
     },
   });
@@ -116,10 +145,41 @@ export function InvoiceForm({
     name: "items",
   });
 
+  // The Repeat section of a new invoice: off, or a plan to create with it.
+  const repeatToday = today ?? new Date().toISOString().slice(0, 10);
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [repeatTitle, setRepeatTitle] = useState("");
+  const [repeat, setRepeat] = useState<ScheduleDraft>({
+    frequency: "MONTH",
+    interval: 1,
+    nextDate: "",
+    ends: "never",
+    endAfterCount: "",
+    endDate: "",
+    autoSend: false,
+  });
+  // Until it is picked by hand, the first new invoice is a period after this one.
+  const [repeatDateTouched, setRepeatDateTouched] = useState(false);
+  const [repeatErrors, setRepeatErrors] = useState<ScheduleErrors & { title?: string }>({});
+
   const selectedClient = form.watch("clientId");
-  const clientProjects = projects.filter(
-    (p) => p.clientId === selectedClient || p.clientId === null,
-  );
+  // Each client's projects, fetched the first time that client is picked.
+  const [projectsByClient, setProjectsByClient] = useState<
+    Record<string, InvoiceProjectOption[]>
+  >(() => (start?.clientId ? { [start.clientId]: projects } : {}));
+  const [loadingProjects, startLoadingProjects] = useTransition();
+  const clientProjects = projectsByClient[selectedClient] ?? [];
+
+  function pickClient(clientId: string, onChange: (value: string) => void) {
+    onChange(clientId);
+    // A project belongs to one client, so it can't follow the invoice to another.
+    form.setValue("projectId", "none");
+    if (!clientId || projectsByClient[clientId]) return;
+    startLoadingProjects(async () => {
+      const list = await listInvoiceProjects(clientId);
+      setProjectsByClient((known) => ({ ...known, [clientId]: list }));
+    });
+  }
 
   const watchedItems = form.watch("items");
   const currency = form.watch("currency");
@@ -148,6 +208,20 @@ export function InvoiceForm({
       maximumFractionDigits: 2,
     })}`;
 
+  const watchedTitle = form.watch("title");
+  const repeatFirst = (draft: ScheduleDraft, issueDay: string) =>
+    draft.interval === "" || !isDay(issueDay)
+      ? draft.nextDate
+      : defaultFirstRun(issueDay, { frequency: draft.frequency, interval: draft.interval }, repeatToday);
+  const repeatSchedule: ScheduleDraft = repeatDateTouched
+    ? repeat
+    : { ...repeat, nextDate: repeatFirst(repeat, watchedIssueDate) };
+
+  function changeRepeat(next: ScheduleDraft) {
+    if (next.nextDate !== repeatSchedule.nextDate) setRepeatDateTouched(true);
+    setRepeat(next);
+  }
+
   // Net terms drive the due date; picking terms fills the date field in.
   function applyTerms(days: number | null) {
     form.setValue("paymentTermsDays", days);
@@ -156,45 +230,63 @@ export function InvoiceForm({
   }
 
   async function onSubmit(values: InvoiceInput) {
-    const formData = new FormData();
     // Only the chosen document mode's data is submitted, so switching modes
     // clears the others rather than leaving a stale link/upload behind.
-    const { items, ...scalars } = values;
-    Object.entries(scalars).forEach(([key, value]) => {
-      if (key === "pdfExternalUrl" && docMode !== "link") {
-        formData.append(key, "");
-        return;
-      }
-      formData.append(key, String(value ?? ""));
-    });
-    if (docMode === "generate" && items?.length) {
+    // serializeInvoiceForm writes every field the schema knows; the server
+    // reads them back with the same table (lib/invoice-form-data).
+    const formData = serializeInvoiceForm({
+      ...values,
+      pdfExternalUrl: docMode === "link" ? values.pdfExternalUrl : "",
       // descriptionRich is the source of truth; the plain text is derived here
       // rather than trusted from form state, so what is stored can never drift
       // from what was typed even if a field failed to register.
-      const withPlain = items.map((item) => ({
-        ...item,
-        description: item.descriptionRich
-          ? richTextToLines(item.descriptionRich)
-          : item.description,
-      }));
-      formData.append("items", JSON.stringify(withPlain));
-    }
+      items:
+        docMode === "generate"
+          ? values.items?.map((item) => ({
+              ...item,
+              description: item.descriptionRich
+                ? richTextToLines(item.descriptionRich)
+                : item.description,
+            }))
+          : undefined,
+    });
     const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
 
+    if (!isEdit && repeatOn) {
+      const plan = repeatSchema.safeParse({
+        title:
+          repeatTitle.trim() || withoutMonths(values.title ?? "") || "Recurring invoice",
+        schedule: scheduleInput(repeatSchedule),
+      });
+      if (!plan.success) {
+        setRepeatErrors({
+          ...scheduleErrors(plan.error.issues, ["schedule"]),
+          title: plan.error.issues.find((i) => i.path[0] === "title")?.message,
+        });
+        return void toast.error("Check the Repeat settings.");
+      }
+      setRepeatErrors({});
+      formData.append("repeat", JSON.stringify(plan.data));
+    }
+
     const label = file ? "Uploading invoice…" : "Saving…";
+    // No router.refresh() after either: both actions revalidate the invoice
+    // pages, so the fresh page arrives with the action's own response, and a
+    // refresh on top rendered the whole page a second time.
     if (isEdit) {
       const result = await track(updateInvoice(invoice.id, formData), label);
       if (!result.ok) return void toast.error(result.error);
       toast.success("Invoice updated.");
-      router.push(`/admin/invoices/${invoice.id}`);
-      router.refresh();
     } else {
       const result = await track(createInvoice(formData), label);
       if (!result.ok) return void toast.error(result.error);
-      toast.success("Invoice created.");
+      toast.success(
+        repeatOn
+          ? `Invoice created. It repeats ${cadenceLabel({ frequency: repeatSchedule.frequency, interval: Number(repeatSchedule.interval) }).toLowerCase()}.`
+          : "Invoice created.",
+      );
       router.push(result.data ? `/admin/invoices/${result.data.id}` : "/admin/invoices");
-      router.refresh();
     }
   }
 
@@ -208,7 +300,10 @@ export function InvoiceForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Client</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={(value) => pickClient(value, field.onChange)}
+                >
                   <FormControl>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select client" />
@@ -233,10 +328,20 @@ export function InvoiceForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Project (optional)</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  disabled={loadingProjects}
+                >
                   <FormControl>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Link a project" />
+                      {loadingProjects ? (
+                        <span className="flex items-center gap-1.5 text-muted-foreground">
+                          <Loader2 className="size-3.5 animate-spin" /> Loading projects…
+                        </span>
+                      ) : (
+                        <SelectValue placeholder="Link a project" />
+                      )}
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -307,6 +412,22 @@ export function InvoiceForm({
                     figure your reports count — leave it blank and the invoice stays
                     outside your totals.
                   </p>
+                  {/* A copy never carries the USD value over (it is the rate
+                      the payment settles at), but last time's is a fair start. */}
+                  {copiedFrom?.lastAmountUsd != null && field.value == null && (
+                    <button
+                      type="button"
+                      onClick={() => field.onChange(copiedFrom.lastAmountUsd)}
+                      className="mt-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      Last time {copiedFrom.invoiceNumber} was{" "}
+                      {copiedFrom.lastAmountUsd.toLocaleString("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                      })}{" "}
+                      · use the same
+                    </button>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
@@ -361,30 +482,64 @@ export function InvoiceForm({
           </FormItem>
         </div>
 
-        <FormField
-          control={form.control}
-          name="status"
-          render={({ field }) => (
-            <FormItem className="sm:max-w-xs">
-              <FormLabel>Status</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+          <FormField
+            control={form.control}
+            name="status"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Status</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {Object.entries(invoiceStatusLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {field.value === "DRAFT"
+                    ? "The client can't see a draft until it's sent."
+                    : field.value === "PAID"
+                      ? "Any balance left is recorded as a payment received today."
+                      : "Part paid and Paid follow the payments recorded."}
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {/* Lives outside the document modes: a pay link works the same
+              whether we generate the PDF or the owner supplies one. */}
+          <FormField
+            control={form.control}
+            name="payLinkUrl"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Pay online link (optional)</FormLabel>
                 <FormControl>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
+                  <Input
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://wise.com/pay/…"
+                    {...field}
+                    value={field.value ?? ""}
+                  />
                 </FormControl>
-                <SelectContent>
-                  {Object.entries(invoiceStatusLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+                <p className="text-xs text-muted-foreground">
+                  A Wise, Stripe or PayPal payment page. The client gets a Pay online
+                  button; card details never pass through here.
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
 
         {/* How the client gets their document: we build it, or you supply it. */}
         <div className="rounded-xl border p-4">
@@ -890,6 +1045,55 @@ export function InvoiceForm({
             </FormItem>
           )}
         />
+
+        {/* One step for a recurring invoice: this one is created and becomes
+            the template a plan copies for every new period. */}
+        {!isEdit && (
+          <div className="rounded-xl border p-4">
+            <label className="flex cursor-pointer items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <Repeat className="size-4 text-primary" /> Repeat this invoice
+                </span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  {repeatOn
+                    ? "Each new invoice copies this one, with its months moved on to the new period."
+                    : "Does not repeat."}
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]"
+                checked={repeatOn}
+                onChange={(e) => setRepeatOn(e.target.checked)}
+              />
+            </label>
+            {repeatOn && (
+              <div className="mt-4 space-y-4 border-t pt-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium">Plan name</span>
+                  <Input
+                    value={repeatTitle}
+                    onChange={(e) => setRepeatTitle(e.target.value)}
+                    placeholder={withoutMonths(watchedTitle ?? "") || "e.g. Monthly maintenance"}
+                  />
+                  {repeatErrors.title && (
+                    <p className="mt-1 text-xs font-medium text-destructive">{repeatErrors.title}</p>
+                  )}
+                </label>
+                <ScheduleFields
+                  value={repeatSchedule}
+                  onChange={changeRepeat}
+                  errors={repeatErrors}
+                  today={repeatToday}
+                  runCount={1}
+                  dateLabel="First new invoice on"
+                  countHint="This invoice counts as the first."
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-3 pt-2">
           <Button type="submit" disabled={form.formState.isSubmitting}>

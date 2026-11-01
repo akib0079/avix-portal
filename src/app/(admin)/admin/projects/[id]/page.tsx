@@ -97,7 +97,7 @@ export default async function ProjectDetailPage({
   const pending = pendingWork({
     milestones: items,
     deliverables,
-    invoices: project.invoices.map((i) => ({ status: i.status })),
+    invoices: project.invoices.map((i) => ({ status: i.status, creditNoteForId: i.creditNoteForId })),
   });
 
   const clientHelp = items.filter((i) => i.helpFrom === "CLIENT").length;

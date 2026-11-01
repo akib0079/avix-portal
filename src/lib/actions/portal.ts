@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
@@ -114,37 +115,58 @@ export async function rateMilestone(
 /**
  * Client reports having sent the payment for one of their invoices.
  * Moves the invoice to IN_REVIEW; the admin confirms by marking it PAID.
+ *
+ * Only for money they actually owe: a draft reads as not found (they can't
+ * see one), and a cancelled invoice or a credit note has nothing to pay. A
+ * part-paid invoice keeps its status, since the money already in still
+ * counts; the claim itself (paymentClaimedAt) is what the admin acts on.
  */
 export async function claimInvoicePayment(id: string): Promise<ActionResult> {
   const user = await requireClient();
 
   const invoice = await prisma.invoice.findFirst({
-    where: { id, clientId: user.id },
+    where: { id, clientId: user.id, status: { not: "DRAFT" } },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      status: true,
+      paymentClaimedAt: true,
+      creditNoteForId: true,
+    },
   });
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if (invoice.status === "PAID") {
     return { ok: false, error: "This invoice is already marked as paid." };
   }
+  if (invoice.status === "CANCELLED" || invoice.creditNoteForId) {
+    return { ok: false, error: "There's nothing to pay on this one." };
+  }
   if (invoice.paymentClaimedAt) return { ok: true }; // already reported
 
   await prisma.invoice.update({
     where: { id },
-    data: { paymentClaimedAt: new Date(), status: "IN_REVIEW" },
+    data: {
+      paymentClaimedAt: new Date(),
+      ...(invoice.status === "PARTIALLY_PAID" ? {} : { status: "IN_REVIEW" }),
+    },
   });
-  await notifyAllAdmins({
-    type: "PAYMENT_CLAIMED",
-    title: `${user.firstName || "Client"} says ${invoice.invoiceNumber} is paid`,
-    body: "Confirm the transfer and mark it paid.",
-    link: `/admin/invoices/${invoice.id}`,
-  });
-  await logActivity({
-    type: "invoice.claimed",
-    summary: `${user.firstName || "Client"} reported paying ${invoice.invoiceNumber}`,
-    actorId: user.id,
-    clientId: user.id,
-    entity: "invoice",
-    entityId: invoice.id,
-    link: `/admin/invoices/${invoice.id}`,
+  // The client's answer doesn't wait on telling the team.
+  after(async () => {
+    await notifyAllAdmins({
+      type: "PAYMENT_CLAIMED",
+      title: `${user.firstName || "Client"} says ${invoice.invoiceNumber} is paid`,
+      body: "Confirm the transfer and mark it paid.",
+      link: `/admin/invoices/${invoice.id}`,
+    });
+    await logActivity({
+      type: "invoice.claimed",
+      summary: `${user.firstName || "Client"} reported paying ${invoice.invoiceNumber}`,
+      actorId: user.id,
+      clientId: user.id,
+      entity: "invoice",
+      entityId: invoice.id,
+      link: `/admin/invoices/${invoice.id}`,
+    });
   });
 
   revalidatePath(`/portal/invoices/${id}`);

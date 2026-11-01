@@ -132,7 +132,7 @@ export type PendingWork = {
   deliverablesNeedingChanges: number;
   /** Client requests still waiting in Requested. */
   openRequests: number;
-  /** Invoices not yet settled: neither paid, cancelled nor still a draft. */
+  /** Invoices not yet settled: neither paid, cancelled, a draft nor a credit note. */
   unpaidInvoices: number;
   /**
    * What the client can pay now: sent or part-paid, not reported paid (see
@@ -152,8 +152,10 @@ export function pendingWork(input: {
     clientRating: number | null;
   }[];
   deliverables: { reviewStatus: string | null }[];
+  /** A credit note (creditNoteForId set) is money back, never unpaid. */
   invoices?: {
     status: string;
+    creditNoteForId?: string | null;
     paymentClaimedAt?: string | Date | null;
     amount?: number | null;
     amountPaid?: number | null;
@@ -172,7 +174,8 @@ export function pendingWork(input: {
   // A draft is being prepared and owes nothing yet — counting it showed the
   // client a "settle" nag for an invoice they can't even open.
   const unpaidInvoices = invoices.filter(
-    (i) => i.status !== "PAID" && i.status !== "CANCELLED" && i.status !== "DRAFT",
+    (i) =>
+      i.status !== "PAID" && i.status !== "CANCELLED" && i.status !== "DRAFT" && !i.creditNoteForId,
   ).length;
   const invoicesToPay = invoices.filter(isInvoiceToPay).length;
 

@@ -18,11 +18,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { prisma } from "@/lib/prisma";
-import { usd, formatDate, projectTypeLabels } from "@/lib/format";
+import { formatDate, projectTypeLabels } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Inbox } from "lucide-react";
 import { requireAdmin } from "@/lib/dal/session";
 import { toneChip } from "@/lib/tone";
+import { formatCurrency } from "@/lib/currency";
+import { isReceivable } from "@/lib/invoice-rules";
 
 export const metadata = { title: "Client" };
 
@@ -55,9 +57,9 @@ export default async function ClientDetailPage({
   if (!client) notFound();
 
   const openRequests = requests.filter((r) => r.status === "PENDING").length;
-  const unpaidInvoices = client.invoices.filter(
-    (i) => i.status !== "PAID" && i.status !== "CANCELLED",
-  ).length;
+  const unpaidInvoices = client.invoices.filter((i) => isReceivable(i)).length;
+  // invoices arrive newest first: the one to copy for "like the last one".
+  const lastInvoice = client.invoices.find((i) => !i.creditNoteForId) ?? null;
 
   const tabs = [
     {
@@ -144,10 +146,10 @@ export default async function ClientDetailPage({
                         {formatDate(invoice.issueDate)}
                       </TableCell>
                       <TableCell className="text-sm">
-                        {usd.format(Number(invoice.amount))}
+                        {formatCurrency(Number(invoice.amount), invoice.currency)}
                       </TableCell>
                       <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                        {usd.format(Number(invoice.amountPaid))}
+                        {formatCurrency(Number(invoice.amountPaid), invoice.currency)}
                       </TableCell>
                       <TableCell>
                         <InvoiceStatusBadge status={invoice.status} />
@@ -283,6 +285,9 @@ export default async function ClientDetailPage({
               emailVerified: client.emailVerified,
             }}
             snapshot={snapshot}
+            lastInvoice={
+              lastInvoice ? { id: lastInvoice.id, invoiceNumber: lastInvoice.invoiceNumber } : null
+            }
           />
         </div>
 

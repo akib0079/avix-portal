@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
+import { formatCurrency } from "@/lib/currency";
 
 export type SearchHit = {
   group: "Clients" | "Projects" | "Invoices" | "Leads" | "Messages" | "Deliverables";
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
         id: true,
         invoiceNumber: true,
         amount: true,
+        currency: true,
         status: true,
         client: { select: { firstName: true, lastName: true } },
       },
@@ -110,7 +112,7 @@ export async function GET(request: Request) {
     ...invoices.map((i) => ({
       group: "Invoices" as const,
       label: i.invoiceNumber,
-      detail: `${i.client.firstName} ${i.client.lastName} · $${Number(i.amount).toFixed(2)} · ${i.status.replaceAll("_", " ").toLowerCase()}`,
+      detail: `${i.client.firstName} ${i.client.lastName} · ${formatCurrency(Number(i.amount), i.currency)} · ${i.status.replaceAll("_", " ").toLowerCase()}`,
       href: `/admin/invoices/${i.id}`,
     })),
     ...leads.map((l) => ({

@@ -21,7 +21,8 @@ import {
   generateRetainerInvoice,
   attachInvoiceToRetainer,
   detachInvoiceFromRetainer,
-  updateRetainer,
+  setRetainerActive,
+  skipNextRun,
 } from "@/lib/actions/retainers";
 import { InvoiceStatusBadge } from "@/components/status-badges";
 import {
@@ -45,40 +46,54 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Lane, LaneEmpty, LaneScroller, ViewToggle, VIEW_MODES } from "@/components/ui/lanes";
+import { SoftPill } from "@/components/ui/status-pill";
 import { HUE } from "@/lib/status-colors";
 import { useLocalChoice, useLocalSet } from "@/lib/use-local-pref";
-import { usd } from "@/lib/format";
+import { formatCurrency } from "@/lib/currency";
+import { cadenceSuffix, longDay, monthlyUsd, shortDay, type Day } from "@/lib/recurring";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
-  Plus,
-  Pencil,
-  Trash2,
-  Loader2,
-  Repeat,
-  PauseCircle,
+  AlertTriangle,
+  Building2,
+  CalendarClock,
+  ChevronRight,
   FileText,
   Link2,
+  Loader2,
+  MoreHorizontal,
+  PauseCircle,
+  Pencil,
+  PlayCircle,
+  Repeat,
+  SkipForward,
+  Trash2,
   Unlink,
-  CalendarDays,
-  ChevronRight,
-  Building2,
 } from "lucide-react";
 
 /**
- * Where each plan stands in THIS month's billing cycle — the question the
- * page exists to answer. A plan moves along on its own as its invoice does:
- * drafted, sent, paid. Paused plans sit apart and draft nothing.
+ * Where each plan stands in its current period — the question the page
+ * exists to answer. A plan moves along on its own as its latest invoice
+ * does: drafted, sent, paid. A plan with nothing yet (or a run that has come
+ * due) is scheduled; paused and ended plans sit apart and draft nothing.
  */
-type LaneId = "todraft" | "drafted" | "sent" | "paid" | "paused";
+type LaneId = "scheduled" | "drafted" | "sent" | "paid" | "paused" | "ended";
 
 const LANES: { id: LaneId; title: string; color: string; hint: string }[] = [
-  { id: "todraft", title: "To draft", color: HUE.sky, hint: "No invoice for this month yet" },
+  { id: "scheduled", title: "Scheduled", color: HUE.sky, hint: "Its next invoice is on the way" },
   { id: "drafted", title: "Drafted", color: HUE.violet, hint: "Review the draft and send it" },
   { id: "sent", title: "Sent", color: HUE.blue, hint: "Waiting on the client" },
-  { id: "paid", title: "Paid", color: HUE.green, hint: "This month is settled" },
-  { id: "paused", title: "Paused", color: HUE.slate, hint: "No invoices drafted" },
+  { id: "paid", title: "Paid", color: HUE.green, hint: "This period is settled" },
+  { id: "paused", title: "Paused", color: HUE.slate, hint: "Nothing is drafted until resumed" },
+  { id: "ended", title: "Ended", color: HUE.muted, hint: "Made all its invoices" },
 ];
 const LANE_BY_ID = Object.fromEntries(LANES.map((l) => [l.id, l])) as Record<
   LaneId,
@@ -91,69 +106,49 @@ const usdWhole = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
+/** The plan's latest invoice, unless it was voided. */
+function currentInvoice(r: RetainerView): RetainerInvoice | null {
+  return r.invoices.find((i) => i.status !== "CANCELLED") ?? null;
 }
 
-/** This month's invoice: the newest linked one issued in the period, unless voided. */
-function currentInvoice(r: RetainerView, period: string): RetainerInvoice | null {
-  return (
-    r.invoices.find((i) => i.issueDate.slice(0, 7) === period && i.status !== "CANCELLED") ??
-    null
-  );
-}
-
-function laneOf(r: RetainerView, period: string): LaneId {
-  if (!r.active) return "paused";
-  const current = currentInvoice(r, period);
-  if (current) {
-    if (current.status === "PAID") return "paid";
-    if (current.status === "ASSIGNED") return "drafted";
-    return "sent";
+function laneOf(r: RetainerView): LaneId {
+  if (r.state === "ended") return "ended";
+  if (r.state === "paused") return "paused";
+  if (r.due) return "scheduled";
+  const current = currentInvoice(r);
+  if (!current) return "scheduled";
+  if (current.status === "PAID") return "paid";
+  // DRAFT since v49; plans drafted before that left unsent ASSIGNED invoices.
+  if (current.status === "DRAFT" || (current.status === "ASSIGNED" && !current.sent)) {
+    return "drafted";
   }
-  // Stamped as drafted but its invoice is gone (deleted or unlinked): it
-  // can't be drafted again this month, so it waits with the drafts.
-  if (r.lastGeneratedPeriod === period) return "drafted";
-  return "todraft";
+  return "sent";
 }
 
-function toInput(r: RetainerView, active: boolean) {
-  return {
-    title: r.title,
-    clientId: r.clientId,
-    projectId: r.projectId ?? "none",
-    amount: r.amount,
-    dayOfMonth: r.dayOfMonth,
-    active,
-    notes: r.notes ?? "",
-  };
+function mrrOf(rows: RetainerView[]) {
+  return monthlyUsd(rows.filter((r) => r.state === "active"));
 }
 
 export function RetainerManager({
   retainers,
   clients,
   projects,
-  period,
   today,
 }: {
   retainers: RetainerView[];
   clients: RetainerClientOption[];
   projects: RetainerProjectOption[];
-  /** "YYYY-MM" — the billing month, read on the server like the drafting job does. */
-  period: string;
-  /** Day of the month on the server, for "drafts itself in N days". */
-  today: number;
+  /** Agency today, "YYYY-MM-DD": the calendar the schedule runs on. */
+  today: Day;
 }) {
   const router = useRouter();
   const [view, setView] = useLocalChoice("avix.retainers.view", "board", VIEW_MODES);
-  const [folded, toggleFold] = useLocalSet("avix.retainers.folded", ["paused"]);
+  const [folded, toggleFold] = useLocalSet("avix.retainers.folded", ["paused", "ended"]);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<RetainerView | null>(null);
   const [deleting, setDeleting] = useState<RetainerView | null>(null);
   const [busy, setBusy] = useState(false);
-  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [workingId, setWorkingId] = useState<string | null>(null);
   const [attachPick, setAttachPick] = useState<Record<string, string>>({});
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const [detachingId, setDetachingId] = useState<string | null>(null);
@@ -171,7 +166,7 @@ export function RetainerManager({
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
   );
 
-  const laneFor = (r: RetainerView) => moved[r.id] ?? laneOf(r, period);
+  const laneFor = (r: RetainerView) => moved[r.id] ?? laneOf(r);
   const active = retainers.find((r) => r.id === activeId) ?? null;
 
   function unmove(id: string) {
@@ -182,6 +177,9 @@ export function RetainerManager({
     });
   }
 
+  // None of these refresh the router: each action revalidates the page, and
+  // its fresh rows arrive with the action's own response.
+
   async function attachNow(retainerId: string) {
     const invoiceId = attachPick[retainerId];
     if (!invoiceId) return;
@@ -190,8 +188,7 @@ export function RetainerManager({
     setAttachingId(null);
     if (!result.ok) return void toast.error(result.error);
     setAttachPick((m) => ({ ...m, [retainerId]: "" }));
-    toast.success("Invoice linked to this retainer.");
-    router.refresh();
+    toast.success("Invoice linked to this plan.");
   }
 
   async function detachNow(invoiceId: string) {
@@ -200,33 +197,54 @@ export function RetainerManager({
     setDetachingId(null);
     if (!result.ok) return void toast.error(result.error);
     toast.success("Invoice unlinked.");
-    router.refresh();
   }
 
   async function generateNow(r: RetainerView) {
-    setGeneratingId(r.id);
+    setWorkingId(r.id);
     setMoved((m) => ({ ...m, [r.id]: "drafted" }));
     const result = await generateRetainerInvoice(r.id);
-    setGeneratingId(null);
+    setWorkingId(null);
     if (!result.ok) {
       unmove(r.id);
       return void toast.error(result.error);
     }
-    toast.success(`Invoice ${result.data?.invoiceNumber} drafted — review and send it.`);
-    router.refresh();
+    const made = result.data!;
+    toast.success(
+      made.count > 1
+        ? `${made.count} invoices drafted, up to ${made.invoiceNumber}. Review and send them.`
+        : `Invoice ${made.invoiceNumber} drafted. Review and send it.`,
+      { action: { label: "Open", onClick: () => router.push(`/admin/invoices/${made.invoiceId}`) } },
+    );
   }
 
-  async function setActive(r: RetainerView, on: boolean, lane: LaneId) {
-    setMoved((m) => ({ ...m, [r.id]: lane }));
-    const result = await updateRetainer(r.id, toInput(r, on));
+  async function skipNext(r: RetainerView) {
+    setWorkingId(r.id);
+    const result = await skipNextRun(r.id);
+    setWorkingId(null);
+    if (!result.ok) return void toast.error(result.error);
+    const { skipped, nextDay } = result.data!;
+    toast.success(
+      nextDay
+        ? `Skipped ${shortDay(skipped)}. Next invoice ${longDay(nextDay)}.`
+        : `Skipped ${shortDay(skipped)}. That was the last one, so the plan has ended.`,
+    );
+  }
+
+  async function setActive(r: RetainerView, on: boolean, lane?: LaneId) {
+    if (lane) setMoved((m) => ({ ...m, [r.id]: lane }));
+    setWorkingId(r.id);
+    const result = await setRetainerActive(r.id, on);
+    setWorkingId(null);
     if (!result.ok) {
       unmove(r.id);
       return void toast.error(result.error);
     }
+    const nextDay = result.data?.nextDay;
     toast.success(
-      on ? `${r.title} resumed.` : `${r.title} paused — nothing is drafted until you resume it.`,
+      on
+        ? `${r.title} resumed.${nextDay ? ` Next invoice ${longDay(nextDay)}.` : ""}`
+        : `${r.title} paused. Nothing is drafted until you resume it.`,
     );
-    router.refresh();
   }
 
   function onDragStart(event: DragStartEvent) {
@@ -235,7 +253,7 @@ export function RetainerManager({
 
   /**
    * A drop does what the lane means, and only where that is a safe, single
-   * step: pause, resume, or draft this month's invoice. Sending and payment
+   * step: pause, resume, or draft this period's invoice. Sending and payment
    * belong to the invoice — sending emails the client — so those drops
    * snap back and point at the invoice instead.
    */
@@ -247,11 +265,14 @@ export function RetainerManager({
     const from = laneFor(r);
     if (from === to) return;
 
+    if (from === "ended" || to === "ended") {
+      return void toast.info("Edit the plan to change when it ends.");
+    }
     if (to === "paused") return void setActive(r, false, "paused");
-    if (from === "paused") return void setActive(r, true, laneOf({ ...r, active: true }, period));
-    if (from === "todraft" && to === "drafted") return void generateNow(r);
+    if (from === "paused") return void setActive(r, true, "scheduled");
+    if (from === "scheduled" && to === "drafted") return void generateNow(r);
 
-    const current = currentInvoice(r, period);
+    const current = currentInvoice(r);
     const open = current
       ? { label: "Open invoice", onClick: () => router.push(`/admin/invoices/${current.id}`) }
       : undefined;
@@ -264,20 +285,21 @@ export function RetainerManager({
     }
   }
 
-  const activePlans = retainers.filter((r) => r.active);
-  const monthlyTotal = activePlans.reduce((sum, r) => sum + r.amount, 0);
+  const mrr = mrrOf(retainers);
+  const activeCount = retainers.filter((r) => r.state === "active").length;
 
   function renderCard(r: RetainerView, opts: { ghost?: boolean; overlay?: boolean } = {}) {
     return (
       <RetainerCard
         r={r}
         lane={laneFor(r)}
-        period={period}
         today={today}
         ghost={opts.ghost}
         overlay={opts.overlay}
-        generating={generatingId === r.id}
+        working={workingId === r.id}
         onGenerate={() => generateNow(r)}
+        onSkip={() => skipNext(r)}
+        onToggleActive={() => setActive(r, r.state !== "active")}
         onEdit={() => {
           setEditing(r);
           setFormOpen(true);
@@ -300,8 +322,14 @@ export function RetainerManager({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           Recurring revenue:{" "}
-          <span className="font-semibold text-foreground">{usd.format(monthlyTotal)}/month</span>{" "}
-          across {activePlans.length} active plan{activePlans.length === 1 ? "" : "s"}
+          <span className="font-semibold text-foreground">{usdWhole.format(mrr.total)}/month</span>{" "}
+          across {activeCount} active plan{activeCount === 1 ? "" : "s"}
+          {mrr.missing > 0 && (
+            <span className="text-amber-700 dark:text-amber-300">
+              {" "}
+              · {mrr.missing} without a USD value, not counted
+            </span>
+          )}
         </p>
         <div className="flex items-center gap-2">
           <ViewToggle value={view} onChange={setView} />
@@ -311,20 +339,20 @@ export function RetainerManager({
               setFormOpen(true);
             }}
           >
-            <Plus /> New retainer
+            <Repeat /> New plan
           </Button>
         </div>
       </div>
 
       {retainers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-16 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed px-4 py-16 text-center">
           <div className="flex size-12 items-center justify-center rounded-full bg-muted">
             <Repeat className="size-6 text-muted-foreground" />
           </div>
-          <p className="mt-4 font-medium">No retainers yet</p>
+          <p className="mt-4 font-medium">No recurring plans yet</p>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            Set up a monthly plan — an invoice is drafted automatically each month for you to
-            review and send.
+            Make any invoice repeat from its own page, or set up a plan here. An invoice is
+            made for every period, for you to review and send.
           </p>
         </div>
       ) : view === "board" ? (
@@ -363,6 +391,7 @@ export function RetainerManager({
         retainer={editing}
         clients={clients}
         projects={projects}
+        today={today}
         open={formOpen}
         onOpenChange={setFormOpen}
       />
@@ -372,7 +401,8 @@ export function RetainerManager({
           <DialogHeader>
             <DialogTitle>Delete “{deleting?.title}”?</DialogTitle>
             <DialogDescription>
-              Already-drafted invoices are kept; no future ones will be created.
+              Its invoices are kept, unlinked from the plan. No new ones are made. To stop
+              it for a while instead, pause it.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -388,9 +418,8 @@ export function RetainerManager({
                 const result = await deleteRetainer(deleting.id);
                 setBusy(false);
                 if (!result.ok) return void toast.error(result.error);
-                toast.success("Retainer deleted.");
+                toast.success("Plan deleted.");
                 setDeleting(null);
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />}
@@ -419,7 +448,7 @@ function RetainerLane({
   renderCard: (r: RetainerView, ghost: boolean) => React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: lane.id });
-  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  const { total } = monthlyUsd(rows);
   return (
     <Lane
       color={lane.color}
@@ -461,6 +490,42 @@ function DraggableRetainer({
   );
 }
 
+/** "Next invoice 1 Dec", "Due now", "Paused", "Ended after 12". */
+function ScheduleLine({ r, today }: { r: RetainerView; today: Day }) {
+  if (r.state === "ended") {
+    return (
+      <span className="text-muted-foreground">
+        Ended after {r.runCount} invoice{r.runCount === 1 ? "" : "s"}
+      </span>
+    );
+  }
+  if (r.state === "paused") return <span className="text-muted-foreground">Paused</span>;
+  if (r.due) {
+    return (
+      <span className="font-medium text-amber-700 dark:text-amber-300">
+        Due now · drafts on the next run
+      </span>
+    );
+  }
+  if (!r.nextDay) return null;
+  return (
+    <span className="text-muted-foreground">
+      Next invoice{" "}
+      <span className="font-medium text-foreground">
+        {r.nextDay === today ? "today" : shortDay(r.nextDay)}
+      </span>
+    </span>
+  );
+}
+
+function endsLabel(r: RetainerView): string | null {
+  if (r.state === "ended") return null;
+  const left = r.remaining == null ? "" : ` · ${r.remaining} left`;
+  if (r.endAfterCount != null) return `Ends after ${r.endAfterCount}${left}`;
+  if (r.endDay) return `Ends ${longDay(r.endDay)}${left}`;
+  return null;
+}
+
 /**
  * One plan. The same card serves the list and a lane, laying out side by
  * side when it has the room. Its invoice history — and the attach/unlink
@@ -469,12 +534,13 @@ function DraggableRetainer({
 function RetainerCard({
   r,
   lane,
-  period,
   today,
   ghost,
   overlay,
-  generating,
+  working,
   onGenerate,
+  onSkip,
+  onToggleActive,
   onEdit,
   onDelete,
   attach,
@@ -483,21 +549,27 @@ function RetainerCard({
 }: {
   r: RetainerView;
   lane: LaneId;
-  period: string;
-  today: number;
+  today: Day;
   ghost?: boolean;
   overlay?: boolean;
-  generating: boolean;
+  working: boolean;
   onGenerate: () => void;
+  onSkip: () => void;
+  onToggleActive: () => void;
   onEdit: () => void;
   onDelete: () => void;
   attach: { pick: string; setPick: (v: string) => void; busy: boolean; run: () => void };
   detachingId: string | null;
   onDetach: (invoiceId: string) => void;
 }) {
-  const current = currentInvoice(r, period);
-  const late = lane === "todraft" && today >= r.dayOfMonth;
-  const daysToDraft = r.dayOfMonth - today;
+  const current = currentInvoice(r);
+  const ends = endsLabel(r);
+  const live = r.state === "active";
+  // Pointer and key events stop at the menu, so it never starts a drag.
+  const stop = {
+    onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+    onKeyDown: (e: React.KeyboardEvent) => e.stopPropagation(),
+  };
 
   return (
     <article
@@ -509,7 +581,7 @@ function RetainerCard({
         overlay &&
           "rotate-[1.5deg] cursor-grabbing border-[color-mix(in_oklab,var(--col)_55%,var(--border))] shadow-[0_22px_45px_-18px_rgb(15_23_42/0.45)]",
         ghost && "border-dashed opacity-35 shadow-none",
-        lane === "paused" && !ghost && "opacity-75",
+        !live && !ghost && "opacity-75",
       )}
     >
       <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
@@ -517,7 +589,7 @@ function RetainerCard({
       <div className="flex flex-col gap-3 @[34rem]:flex-row @[34rem]:items-start @[34rem]:justify-between">
         <div className="min-w-0">
           <p className="flex items-start gap-2 text-sm font-semibold [overflow-wrap:anywhere]">
-            {r.active ? (
+            {live ? (
               <Repeat className="mt-0.5 size-4 shrink-0 text-primary" />
             ) : (
               <PauseCircle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -534,35 +606,31 @@ function RetainerCard({
 
           <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[11px]">
             <span className="inline-flex items-center gap-1 text-muted-foreground">
-              <CalendarDays className="size-3" />
-              bills on the {ordinal(r.dayOfMonth)}
+              <CalendarClock className="size-3" />
+              {r.cadence}
             </span>
+            <SoftPill color={r.autoSend ? HUE.green : HUE.slate} className="px-2 text-[10px]">
+              {r.autoSend ? "Sends itself" : "Drafts for review"}
+            </SoftPill>
             {current && (
               <Link
                 href={`/admin/invoices/${current.id}`}
                 className="inline-flex items-center gap-1.5 font-medium hover:text-primary"
               >
                 {current.invoiceNumber}
-                <InvoiceStatusBadge status={current.status as never} />
+                <InvoiceStatusBadge status={current.status} />
               </Link>
             )}
           </div>
 
-          {lane === "todraft" && (
-            <p
-              className={cn(
-                "mt-1.5 text-[11px] font-medium",
-                late ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
-              )}
-            >
-              {late
-                ? `Due since the ${ordinal(r.dayOfMonth)} — draft it now`
-                : `Drafts itself on the ${ordinal(r.dayOfMonth)} · in ${daysToDraft} day${daysToDraft === 1 ? "" : "s"}`}
-            </p>
-          )}
-          {lane === "drafted" && !current && (
-            <p className="mt-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-              Drafted this month, but that invoice was removed or unlinked.
+          <p className="mt-1.5 text-[11px]">
+            <ScheduleLine r={r} today={today} />
+            {ends && <span className="text-muted-foreground"> · {ends}</span>}
+          </p>
+          {r.lastRunError && (
+            <p className="mt-1.5 flex items-start gap-1 text-[11px] font-medium text-red-700 dark:text-red-300">
+              <AlertTriangle className="mt-px size-3 shrink-0" />
+              <span className="min-w-0">{r.lastRunError}</span>
             </p>
           )}
         </div>
@@ -570,34 +638,63 @@ function RetainerCard({
         <div className="flex shrink-0 flex-col gap-2 border-t pt-3 @[34rem]:flex-row @[34rem]:items-center @[34rem]:border-t-0 @[34rem]:pt-0">
           <div className="flex items-center gap-1">
             <span className="num mr-auto text-lg font-bold text-primary @[34rem]:mr-1">
-              {usd.format(r.amount)}
-              <span className="text-xs font-normal text-muted-foreground">/mo</span>
+              {formatCurrency(r.amount, r.currency)}
+              <span className="text-xs font-normal text-muted-foreground">{cadenceSuffix(r)}</span>
             </span>
-            <Button variant="ghost" size="icon" className="size-8" onClick={onEdit}>
-              <Pencil className="size-4" />
-              <span className="sr-only">Edit</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-destructive hover:text-destructive"
-              onClick={onDelete}
-            >
-              <Trash2 className="size-4" />
-              <span className="sr-only">Delete</span>
-            </Button>
+            {!overlay && (
+              <span {...stop} className="contents">
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger
+                    aria-label={`Actions for ${r.title}`}
+                    className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                  >
+                    {working ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="size-4" />
+                    )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    {live && (
+                      <>
+                        <DropdownMenuItem onSelect={onGenerate}>
+                          <FileText /> Generate now
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={onSkip}>
+                          <SkipForward /> Skip next
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    {r.state !== "ended" && (
+                      <DropdownMenuItem onSelect={onToggleActive}>
+                        {live ? <PauseCircle /> : <PlayCircle />}
+                        {live ? "Pause" : "Resume"}
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onSelect={onEdit}>
+                      <Pencil /> Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                      <Trash2 /> Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </span>
+            )}
           </div>
-          {lane === "todraft" && (
+          {lane === "scheduled" && live && !overlay && (
             <Button
-              variant={late ? "default" : "outline"}
+              variant={r.due ? "default" : "outline"}
               size="sm"
               className="h-8 w-full @[34rem]:w-auto"
-              disabled={generating}
+              disabled={working}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={onGenerate}
-              title="Draft this month's invoice now"
+              title="Draft this period's invoice now"
             >
-              {generating ? <Loader2 className="animate-spin" /> : <FileText className="size-3.5" />}
-              Draft now
+              {working ? <Loader2 className="animate-spin" /> : <FileText className="size-3.5" />}
+              Generate now
             </Button>
           )}
         </div>
@@ -607,7 +704,7 @@ function RetainerCard({
         <details className="group/history mt-3 border-t pt-2.5">
           <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
             <ChevronRight className="size-3.5 transition-transform group-open/history:rotate-90" />
-            Invoices ({r.invoices.length})
+            Invoices ({r.invoiceCount})
           </summary>
 
           {r.attachable.length > 0 && (
@@ -619,7 +716,7 @@ function RetainerCard({
                 <SelectContent>
                   {r.attachable.map((inv) => (
                     <SelectItem key={inv.id} value={inv.id}>
-                      {inv.invoiceNumber} · {usd.format(inv.amount)}
+                      {inv.invoiceNumber} · {formatCurrency(inv.amount, inv.currency)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -639,7 +736,7 @@ function RetainerCard({
 
           {r.invoices.length === 0 ? (
             <p className="mt-2 text-xs text-muted-foreground">
-              None yet — draft this month&apos;s, or attach an existing one.
+              None yet — generate this period&apos;s, or attach an existing one.
             </p>
           ) : (
             <ul className="mt-2 space-y-1">
@@ -649,7 +746,7 @@ function RetainerCard({
                     {inv.invoiceNumber}
                   </Link>
                   <span className="text-muted-foreground tabular-nums">
-                    {usd.format(inv.amount)} ·{" "}
+                    {formatCurrency(inv.amount, inv.currency)} ·{" "}
                     {new Date(inv.issueDate).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
@@ -657,12 +754,17 @@ function RetainerCard({
                       timeZone: "UTC",
                     })}
                   </span>
-                  <InvoiceStatusBadge status={inv.status as never} />
+                  <InvoiceStatusBadge status={inv.status} />
+                  {r.template?.id === inv.id && (
+                    <SoftPill color={HUE.violet} className="px-2 text-[10px]">
+                      Template
+                    </SoftPill>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"
                     className="ml-auto size-7 text-muted-foreground hover:text-destructive"
-                    title="Unlink from this retainer"
+                    title="Unlink from this plan"
                     disabled={detachingId === inv.id}
                     onClick={() => onDetach(inv.id)}
                   >
@@ -674,6 +776,11 @@ function RetainerCard({
                   </Button>
                 </li>
               ))}
+              {r.invoiceCount > r.invoices.length && (
+                <li className="text-[11px] text-muted-foreground">
+                  and {r.invoiceCount - r.invoices.length} older
+                </li>
+              )}
             </ul>
           )}
         </details>

@@ -1,6 +1,7 @@
 import "server-only";
 import { readFile } from "fs/promises";
 import path from "path";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { invoiceTotals } from "@/lib/invoice-totals";
 import { getBranding, getInvoiceFooter } from "@/lib/dal/settings";
@@ -21,38 +22,61 @@ async function imageDataUri(fileName: string | null): Promise<string | null> {
 }
 
 /**
+ * Logos, read once per process. Every PDF used to read the logo off disk (or
+ * out of the storage bucket) again. An uploaded logo is keyed by its file
+ * name, and a new upload gets a new name, so a changed logo is never served
+ * stale. A failed read is not kept, so the next PDF tries again.
+ */
+const logoCache = new Map<string, Promise<string | null>>();
+
+function cachedLogo(key: string, load: () => Promise<string | null>): Promise<string | null> {
+  let pending = logoCache.get(key);
+  if (!pending) {
+    pending = load().then((uri) => {
+      if (!uri) logoCache.delete(key);
+      return uri;
+    });
+    logoCache.set(key, pending);
+  }
+  return pending;
+}
+
+/**
  * Logo for the document: the dedicated invoice logo when set, else the bundled
  * dark avixdigital PNG. Deliberately does NOT use the web branding logo — that
  * one is light-on-dark for the app sidebar and prints invisibly on a white
  * invoice. An invoice must never go out unbranded.
  */
 async function invoiceLogo(invoiceLogoFile: string | null): Promise<string | null> {
-  const uploaded = await imageDataUri(invoiceLogoFile);
+  const uploaded = invoiceLogoFile
+    ? await cachedLogo(`upload:${invoiceLogoFile}`, () => imageDataUri(invoiceLogoFile))
+    : null;
   if (uploaded) return uploaded;
-  try {
-    const file = await readFile(path.join(process.cwd(), "public", "avix-logo.png"));
-    return `data:image/png;base64,${file.toString("base64")}`;
-  } catch {
-    return null; // falls back to the text wordmark
-  }
+  return cachedLogo("bundled", async () => {
+    try {
+      const file = await readFile(path.join(process.cwd(), "public", "avix-logo.png"));
+      return `data:image/png;base64,${file.toString("base64")}`;
+    } catch {
+      return null; // falls back to the text wordmark
+    }
+  });
 }
 
-/**
- * Renders the generated invoice PDF for an id. UNSCOPED — callers (the download
- * route, the send-invoice action) authorize first. Returns null if the invoice
- * is gone.
- */
-export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
-  const invoice = await prisma.invoice.findUnique({
-    where: { id },
-    include: {
-      items: { orderBy: { sortOrder: "asc" } },
-      client: { select: { firstName: true, lastName: true, company: true, email: true } },
-      paymentAccount: true,
-    },
-  });
-  if (!invoice) return null;
+/** What the document is built from, loaded as one statement. */
+export const invoicePdfInclude = {
+  items: { orderBy: { sortOrder: "asc" } },
+  client: { select: { firstName: true, lastName: true, company: true, email: true } },
+  paymentAccount: true,
+} satisfies Prisma.InvoiceInclude;
 
+export type InvoicePdfRow = Prisma.InvoiceGetPayload<{ include: typeof invoicePdfInclude }>;
+
+/**
+ * Renders the generated invoice PDF from an invoice the caller has already
+ * loaded (with invoicePdfInclude) and authorized. Sending uses this so the
+ * invoice it emails is read once, not once for the email and again here.
+ */
+export async function renderInvoicePdfFor(invoice: InvoicePdfRow): Promise<Buffer> {
   const [branding, footer] = await Promise.all([getBranding(), getInvoiceFooter()]);
 
   const data: InvoicePdfData = {
@@ -109,4 +133,23 @@ export async function renderInvoicePdfById(id: string): Promise<Buffer | null> {
   };
 
   return renderInvoicePdf(data);
+}
+
+/**
+ * Renders the generated invoice PDF for an id. `scope` narrows the lookup —
+ * the download route passes the client's id and "not a draft" here, so the
+ * ownership check and the read are one query instead of two. With no scope it
+ * is UNSCOPED, and the caller must have authorized already. Returns null when
+ * nothing matches.
+ */
+export async function renderInvoicePdfById(
+  id: string,
+  scope: Prisma.InvoiceWhereInput = {},
+): Promise<{ pdf: Buffer; invoiceNumber: string } | null> {
+  const invoice = await prisma.invoice.findFirst({
+    where: { ...scope, id },
+    include: invoicePdfInclude,
+  });
+  if (!invoice) return null;
+  return { pdf: await renderInvoicePdfFor(invoice), invoiceNumber: invoice.invoiceNumber };
 }

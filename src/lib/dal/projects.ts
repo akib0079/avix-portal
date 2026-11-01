@@ -108,8 +108,11 @@ export async function getProjectWorkspace(projectId: string) {
             id: true,
             title: true,
             amount: true,
+            currency: true,
             active: true,
             dayOfMonth: true,
+            frequency: true,
+            interval: true,
           },
         })
       : Promise.resolve([]),
@@ -141,8 +144,11 @@ export async function getProjectWorkspace(projectId: string) {
       id: r.id,
       title: r.title,
       amount: Number(r.amount),
+      currency: r.currency,
       active: r.active,
       dayOfMonth: r.dayOfMonth,
+      frequency: r.frequency,
+      interval: r.interval,
     })),
     activity: activity.map((a) => ({
       id: a.id,

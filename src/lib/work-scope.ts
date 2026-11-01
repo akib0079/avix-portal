@@ -106,8 +106,9 @@ export function clientWaiting(
 /**
  * An invoice the client can act on: sent (or part-paid) with a balance, and
  * not yet reported paid. A draft, or an invoice created but not sent, is
- * never on the client's list — it isn't theirs to see yet. Defined here with
- * the work rules because the portal's "needs you" lists count them together.
+ * never on the client's list — it isn't theirs to see yet, and a credit note
+ * (also SENT) is money back, not a bill. Defined here with the work rules
+ * because the portal's "needs you" lists count them together.
  *
  * The filter can't compare two columns, so "has a balance" is the
  * predicate's part: callers that count in the database select the amounts
@@ -116,17 +117,19 @@ export function clientWaiting(
 export const INVOICE_TO_PAY = {
   status: { in: ["SENT", "PARTIALLY_PAID"] },
   paymentClaimedAt: null,
+  creditNoteForId: null,
 } satisfies Prisma.InvoiceWhereInput;
 
 export function isInvoiceToPay(invoice: {
   status: string;
   /** Left out when the caller didn't load it; the status then decides. */
   paymentClaimedAt?: string | Date | null;
+  creditNoteForId?: string | null;
   amount?: number | null;
   amountPaid?: number | null;
 }): boolean {
   if (invoice.status !== "SENT" && invoice.status !== "PARTIALLY_PAID") return false;
-  if (invoice.paymentClaimedAt) return false;
+  if (invoice.paymentClaimedAt || invoice.creditNoteForId) return false;
   if (invoice.amount != null && invoice.amountPaid != null) {
     return invoice.amount - invoice.amountPaid > 0.005;
   }

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
+import { taskVisibility } from "@/lib/dal/tasks";
+import type { SessionUser } from "@/lib/auth";
 import {
   taskSchema,
   quickTaskSchema,
@@ -28,6 +30,22 @@ export type ActionResult<T = undefined> =
 function refresh(scope: "all" | "tasks" = "all") {
   revalidatePath("/admin/tasks");
   if (scope === "all") revalidatePath("/admin");
+}
+
+/**
+ * Whether this viewer may touch a task. STAFF can't see invoice tasks (see
+ * taskVisibility), so they can't change, tick, snooze or delete one either:
+ * a task outside their view reads as not found. Admins skip the lookup.
+ */
+async function canTouchTask(viewer: SessionUser, id: string): Promise<boolean> {
+  if (viewer.role === "ADMIN") return true;
+  const visible = await prisma.task.count({ where: { AND: [{ id }, taskVisibility(viewer)] } });
+  return visible > 0;
+}
+
+/** Only an admin links a task to an invoice; anyone else's link is dropped. */
+function invoiceLinkFor(viewer: SessionUser, invoiceId: string | null): string | null {
+  return viewer.role === "ADMIN" ? invoiceId : null;
 }
 
 /** Local midnight, so "due today" means the whole day and not this instant. */
@@ -81,7 +99,7 @@ export async function createTask(input: TaskInput): Promise<ActionResult<{ id: s
       assigneeId: d.assigneeId,
       clientId: d.clientId,
       projectId: d.projectId,
-      invoiceId: d.invoiceId,
+      invoiceId: invoiceLinkFor(viewer, d.invoiceId),
       leadId: d.leadId,
       createdById: viewer.id,
     },
@@ -92,14 +110,17 @@ export async function createTask(input: TaskInput): Promise<ActionResult<{ id: s
 }
 
 export async function updateTask(id: string, input: TaskInput): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
   const parsed = taskSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const d = parsed.data;
 
-  const existing = await prisma.task.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.task.findFirst({
+    where: { AND: [{ id }, taskVisibility(viewer)] },
+    select: { id: true },
+  });
   if (!existing) return { ok: false, error: "Task not found." };
 
   await prisma.task.update({
@@ -114,7 +135,12 @@ export async function updateTask(id: string, input: TaskInput): Promise<ActionRe
       assigneeId: d.assigneeId,
       clientId: d.clientId,
       projectId: d.projectId,
-      invoiceId: d.invoiceId,
+      // The task form has no invoice picker, so an edit that doesn't mention
+      // the invoice leaves the link alone (it used to clear it, unlinking a
+      // chase task from its invoice). Only an admin can set one.
+      ...(viewer.role === "ADMIN" && input.invoiceId !== undefined
+        ? { invoiceId: d.invoiceId }
+        : {}),
       leadId: d.leadId,
     },
   });
@@ -131,7 +157,7 @@ export async function updateTask(id: string, input: TaskInput): Promise<ActionRe
  */
 export async function setTaskDone(id: string, done: boolean): Promise<ActionResult> {
   const viewer = await requireTeam();
-  const task = await prisma.task.findUnique({ where: { id } });
+  const task = await prisma.task.findFirst({ where: { AND: [{ id }, taskVisibility(viewer)] } });
   if (!task) return { ok: false, error: "Task not found." };
 
   await prisma.task.update({
@@ -189,7 +215,8 @@ export async function setTaskStatus(
   status: "TODO" | "DOING" | "DONE",
 ): Promise<ActionResult> {
   if (status === "DONE") return setTaskDone(id, true);
-  await requireTeam();
+  const viewer = await requireTeam();
+  if (!(await canTouchTask(viewer, id))) return { ok: false, error: "Task not found." };
   await prisma.task.update({
     where: { id },
     data: { status, completedAt: null },
@@ -203,7 +230,8 @@ export async function snoozeTask(
   id: string,
   preset: SnoozePreset | null,
 ): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
+  if (!(await canTouchTask(viewer, id))) return { ok: false, error: "Task not found." };
 
   let until: Date | null = null;
   if (preset) {
@@ -220,17 +248,21 @@ export async function snoozeTask(
 }
 
 export async function deleteTask(id: string): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
+  if (!(await canTouchTask(viewer, id))) return { ok: false, error: "Task not found." };
   await prisma.task.delete({ where: { id } });
   refresh();
   return { ok: true };
 }
 
 export async function addSubtask(input: SubtaskInput): Promise<ActionResult<{ id: string }>> {
-  await requireTeam();
+  const viewer = await requireTeam();
   const parsed = subtaskSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  if (!(await canTouchTask(viewer, parsed.data.taskId))) {
+    return { ok: false, error: "Task not found." };
   }
   const count = await prisma.subtask.count({ where: { taskId: parsed.data.taskId } });
   const row = await prisma.subtask.create({
@@ -241,8 +273,16 @@ export async function addSubtask(input: SubtaskInput): Promise<ActionResult<{ id
   return { ok: true, data: row };
 }
 
+/** A subtask is as visible as its task. Admins skip the lookup. */
+async function canTouchSubtask(viewer: SessionUser, id: string): Promise<boolean> {
+  if (viewer.role === "ADMIN") return true;
+  const visible = await prisma.subtask.count({ where: { id, task: taskVisibility(viewer) } });
+  return visible > 0;
+}
+
 export async function setSubtaskDone(id: string, done: boolean): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
+  if (!(await canTouchSubtask(viewer, id))) return { ok: false, error: "Step not found." };
   await prisma.subtask.update({
     where: { id },
     data: { completedAt: done ? new Date() : null },
@@ -252,7 +292,8 @@ export async function setSubtaskDone(id: string, done: boolean): Promise<ActionR
 }
 
 export async function deleteSubtask(id: string): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
+  if (!(await canTouchSubtask(viewer, id))) return { ok: false, error: "Step not found." };
   await prisma.subtask.delete({ where: { id } });
   refresh("tasks");
   return { ok: true };
@@ -260,7 +301,13 @@ export async function deleteSubtask(id: string): Promise<ActionResult> {
 
 /** Persist a drag reorder within a bucket. */
 export async function reorderTasks(ids: string[]): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
+  if (viewer.role !== "ADMIN") {
+    const visible = await prisma.task.count({
+      where: { AND: [{ id: { in: ids } }, taskVisibility(viewer)] },
+    });
+    if (visible !== new Set(ids).size) return { ok: false, error: "Task not found." };
+  }
   await prisma.$transaction(
     ids.map((id, position) => prisma.task.update({ where: { id }, data: { position } })),
   );

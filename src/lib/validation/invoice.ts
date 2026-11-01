@@ -15,6 +15,12 @@ export const paymentTermsOptions = [0, 7, 14, 30, 45, 60] as const;
 
 export const invoiceItemSchema = z.object({
   /**
+   * The saved line this row edits, when it is one. An edit keeps a line that
+   * bills tracked work (lib/invoice-items), so the work stays billed by it;
+   * the server only trusts ids of this invoice's own lines.
+   */
+  id: z.string().trim().max(40).optional(),
+  /**
    * Plain-text projection of `descriptionRich`, derived by the form. The cap is
    * generous because a formatted line item is a small document — a title and
    * half a dozen bullets — not the single sentence 200 characters assumed.
@@ -32,6 +38,17 @@ import { currencyCodes } from "@/lib/currency";
 
 /** Re-exported so existing imports keep working; the list lives in one place. */
 export const invoiceCurrencyValues = currencyCodes;
+
+/** An absolute https:// URL with a host, and nothing that isn't a URL. */
+export function isSecureLink(value: string): boolean {
+  if (/\s/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 export const invoiceSchema = z.object({
   /** Optional line items; when present the server recomputes amount = Σ qty×rate. */
@@ -89,6 +106,25 @@ export const invoiceSchema = z.object({
   issueDate: z.string().min(1, "Issue date is required"),
   dueDate: z.string().optional().or(z.literal("")),
   notes: z.string().trim().max(2000).optional().or(z.literal("")),
+  /**
+   * A hosted payment page (Wise, a Stripe Payment Link, PayPal) shown to the
+   * client as "Pay online". The app only links out and never sees a card.
+   * https only: this is put in front of a client next to the word "pay".
+   */
+  payLinkUrl: z
+    .string()
+    .trim()
+    .max(1000)
+    .refine((v) => v === "" || isSecureLink(v), {
+      message: "Use a secure link that starts with https://",
+    })
+    .optional()
+    .or(z.literal("")),
+  /**
+   * The invoice this one was duplicated from, posted by the prefilled form.
+   * Provenance only ("Copied from INV-014"); the server checks it exists.
+   */
+  duplicatedFromId: z.string().trim().max(40).optional().or(z.literal("")),
   // External file link (Drive/Dropbox); empty string = none
   pdfExternalUrl: z
     .string()

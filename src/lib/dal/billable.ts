@@ -1,133 +1,192 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
+import { usdValue } from "@/lib/invoice-usd";
+import { billableLines, contractInvoiced } from "@/lib/billable-lines";
+import type { BillableLine } from "@/lib/billable-lines";
 
-export type BillableLine = {
-  description: string;
-  qty: number;
-  rate: number;
-  /** What produced this line, so the UI can explain itself. */
-  source: "milestone-fixed" | "milestone-hourly" | "contract";
-  milestoneId: string | null;
-};
+export type { BillableLine } from "@/lib/billable-lines";
 
 export type BillableWork = {
   projectId: string;
   projectName: string;
   clientId: string | null;
-  currency: string;
+  /** Work is priced in dollars. */
+  currency: "USD";
   lines: BillableLine[];
   /** Σ qty × rate of the lines above. */
   total: number;
-  /** Already invoiced against this project (excluding cancelled). */
-  alreadyInvoiced: number;
-  /** Value of work done that nothing has billed yet. */
+  /** Work already on an invoice that isn't cancelled, in USD. */
+  billed: number;
+  /** Value of work done that nothing bills yet (the lines above), in USD. */
   unbilled: number;
+  /** Contract projects: invoices with no USD value, left out of what has been invoiced. */
+  missingUsd: number;
 };
 
-function round(value: number): number {
-  return Math.round(value * 100) / 100;
+/** A project invoice as contractInvoiced reads it. */
+export function toContractInvoice(invoice: {
+  amount: Prisma.Decimal;
+  currency: string;
+  amountUsd: Prisma.Decimal | null;
+  creditNoteForId: string | null;
+  status: string;
+}) {
+  return {
+    usd: usdValue({
+      amount: Number(invoice.amount),
+      currency: invoice.currency,
+      amountUsd: invoice.amountUsd == null ? null : Number(invoice.amountUsd),
+    }),
+    creditNote: !!invoice.creditNoteForId,
+    status: invoice.status,
+  };
 }
 
-/**
- * Turns work that has actually happened into invoice lines: completed
- * fixed-price milestones, and hours logged against hourly milestones. Without
- * this every invoice was retyped by hand from the milestone board.
- *
- * Deliberately does NOT mark anything as billed — the caller decides whether an
- * invoice is really created, and `alreadyInvoiced` shows what's covered.
- */
-export async function getBillableWork(projectId: string): Promise<BillableWork | null> {
-  await requireAdmin();
+/** The columns toContractInvoice reads. */
+export const contractInvoiceSelect = {
+  amount: true,
+  currency: true,
+  amountUsd: true,
+  creditNoteForId: true,
+  status: true,
+} satisfies Prisma.InvoiceSelect;
 
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: {
-      id: true,
-      projectName: true,
-      clientId: true,
-      billingType: true,
-      contractPrice: true,
-      milestones: {
-        orderBy: { position: "asc" },
-        select: {
-          id: true,
-          title: true,
-          status: true,
-          pricingType: true,
-          fixedPrice: true,
-          hourlyRate: true,
+/** Hours not on any invoice line, or only on a cancelled invoice's. */
+export const unbilledHours = {
+  OR: [{ invoiceItemId: null }, { invoiceItem: { invoice: { status: "CANCELLED" } } }],
+} satisfies Prisma.TimeEntryWhereInput;
+
+/** Hours on a line of an invoice that still counts. */
+const billedHours = {
+  invoiceItem: { invoice: { status: { not: "CANCELLED" } } },
+} satisfies Prisma.TimeEntryWhereInput;
+
+/**
+ * One wave: the project with its live work (and whether each fixed piece is
+ * on a live invoice line), plus the hours split into billed and unbilled.
+ * `withEntries` loads the unbilled entries themselves, for the invoice that
+ * is about to link them; otherwise their sums are enough.
+ */
+async function loadWork(projectId: string, withEntries: boolean) {
+  const hourly = {
+    milestone: { projectId, archivedAt: null, pricingType: "HOURLY" },
+  } satisfies Prisma.TimeEntryWhereInput;
+  const [project, open, billed] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        projectName: true,
+        clientId: true,
+        billingType: true,
+        contractPrice: true,
+        milestones: {
+          where: { archivedAt: null },
+          orderBy: { position: "asc" },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            pricingType: true,
+            fixedPrice: true,
+            hourlyRate: true,
+            invoiceItems: {
+              where: { invoice: { status: { not: "CANCELLED" } } },
+              select: { id: true },
+              take: 1,
+            },
+          },
+        },
+        // A contract bills what is left of its price after what's invoiced.
+        invoices: {
+          where: { status: { not: "CANCELLED" } },
+          select: contractInvoiceSelect,
         },
       },
-      invoices: { select: { amount: true, status: true, currency: true } },
-    },
-  });
+    }),
+    withEntries
+      ? prisma.timeEntry.findMany({
+          where: { ...hourly, ...unbilledHours },
+          select: { id: true, milestoneId: true, hours: true },
+        })
+      : prisma.timeEntry
+          .groupBy({
+            by: ["milestoneId"],
+            where: { ...hourly, ...unbilledHours },
+            _sum: { hours: true },
+          })
+          .then((rows) =>
+            rows.map((row) => ({ id: null, milestoneId: row.milestoneId, hours: row._sum.hours })),
+          ),
+    prisma.timeEntry.groupBy({
+      by: ["milestoneId"],
+      where: { ...hourly, ...billedHours },
+      _sum: { hours: true },
+    }),
+  ]);
   if (!project) return null;
 
-  // Hours per milestone come from an aggregate — a milestone can hold hundreds
-  // of entries and we only need the sum.
-  const hourTotals = await prisma.timeEntry.groupBy({
-    by: ["milestoneId"],
-    where: { milestone: { projectId } },
-    _sum: { hours: true },
-  });
-  const hoursByMilestone = new Map(
-    hourTotals.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
-  );
+  const invoiced = contractInvoiced(project.invoices.map(toContractInvoice));
+  const contractInvoicedUsd = invoiced.usd;
 
-  const lines: BillableLine[] = [];
-
-  if (project.billingType === "CONTRACT") {
-    if (project.contractPrice != null) {
-      lines.push({
-        description: `${project.projectName} — fixed contract`,
-        qty: 1,
-        rate: Number(project.contractPrice),
-        source: "contract",
-        milestoneId: null,
-      });
-    }
-  } else {
-    for (const milestone of project.milestones) {
-      if (milestone.pricingType === "FIXED" && milestone.status === "COMPLETED") {
-        lines.push({
-          description: milestone.title,
-          qty: 1,
-          rate: Number(milestone.fixedPrice ?? 0),
-          source: "milestone-fixed",
-          milestoneId: milestone.id,
-        });
-      }
-      if (milestone.pricingType === "HOURLY") {
-        const hours = hoursByMilestone.get(milestone.id) ?? 0;
-        if (hours > 0) {
-          lines.push({
-            description: `${milestone.title} — ${hours}h`,
-            qty: hours,
-            rate: Number(milestone.hourlyRate ?? 0),
-            source: "milestone-hourly",
-            milestoneId: milestone.id,
-          });
-        }
-      }
-    }
+  const unbilled: Record<string, number> = {};
+  const entries: Record<string, string[]> = {};
+  for (const row of open) {
+    unbilled[row.milestoneId] = (unbilled[row.milestoneId] ?? 0) + Number(row.hours ?? 0);
+    if (row.id) (entries[row.milestoneId] ??= []).push(row.id);
   }
+  const { lines, total, billed: billedValue } = billableLines({
+    projectName: project.projectName,
+    billingType: project.billingType,
+    contractPrice: project.contractPrice == null ? null : Number(project.contractPrice),
+    contractInvoicedUsd,
+    items: project.milestones.map((m) => ({
+      id: m.id,
+      title: m.title,
+      status: m.status,
+      archived: false,
+      pricingType: m.pricingType,
+      fixedPrice: m.fixedPrice == null ? null : Number(m.fixedPrice),
+      hourlyRate: m.hourlyRate == null ? null : Number(m.hourlyRate),
+      onLiveInvoice: m.invoiceItems.length > 0,
+    })),
+    unbilledHours: unbilled,
+    billedHours: Object.fromEntries(
+      billed.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
+    ),
+  });
 
-  const total = round(lines.reduce((sum, l) => sum + l.qty * l.rate, 0));
-  const alreadyInvoiced = round(
-    project.invoices
-      .filter((i) => i.status !== "CANCELLED")
-      .reduce((sum, i) => sum + Number(i.amount), 0),
-  );
-
-  return {
+  const work: BillableWork = {
     projectId: project.id,
     projectName: project.projectName,
     clientId: project.clientId,
-    currency: project.invoices[0]?.currency ?? "USD",
-    lines: lines.filter((l) => l.rate > 0),
+    currency: "USD",
+    lines,
     total,
-    alreadyInvoiced,
-    unbilled: round(Math.max(total - alreadyInvoiced, 0)),
+    billed: billedValue,
+    unbilled: total,
+    missingUsd: project.billingType === "CONTRACT" ? invoiced.missing : 0,
   };
+  return { work, entries, contractInvoicedUsd };
+}
+
+/**
+ * Turns work that has actually happened, and no invoice bills yet, into
+ * invoice lines: completed fixed-price work and unbilled hours on hourly
+ * work (lib/billable-lines). ADMIN only: it is all prices.
+ */
+export async function getBillableWork(projectId: string): Promise<BillableWork | null> {
+  await requireAdmin();
+  return (await loadWork(projectId, false))?.work ?? null;
+}
+
+/**
+ * The same, with the unbilled time entries behind each hourly line, for the
+ * invoice that is about to bill them (createInvoiceFromWork links them).
+ */
+export async function getBillableWorkToInvoice(projectId: string) {
+  await requireAdmin();
+  return loadWork(projectId, true);
 }

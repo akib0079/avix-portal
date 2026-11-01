@@ -14,6 +14,10 @@ import {
 } from "@/components/ui/table";
 import { formatDate } from "@/lib/format";
 import { formatCurrency, sumByCurrency } from "@/lib/currency";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
+import { isReceivable } from "@/lib/invoice-rules";
+import { SoftPill } from "@/components/ui/status-pill";
+import { HUE } from "@/lib/status-colors";
 import { Download, FileText, ChevronRight, ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Invoices" };
@@ -22,9 +26,24 @@ export default async function MyInvoicesPage() {
   const invoices = await listMyInvoices();
   // Per currency, never summed together: a client billed in EUR and USD has
   // two totals, and adding them makes a number that is true of nothing.
-  const rows = invoices.map((i) => ({ amount: Number(i.amount), currency: i.currency, status: i.status }));
-  const outstanding = sumByCurrency(rows.filter((i) => i.status !== "PAID"));
-  const paid = sumByCurrency(rows.filter((i) => i.status === "PAID"));
+  // Outstanding is what is still owed on each invoice after payments and
+  // credit notes; cancelled invoices and the credit notes themselves owe
+  // nothing, and drafts never reach this page.
+  const issued = invoices.filter((i) => i.status !== "CANCELLED" && !i.creditNoteForId);
+  const outstanding = sumByCurrency(
+    issued
+      .filter((i) => isReceivable(i))
+      .map((i) => ({
+        amount: balanceDue(Number(i.amount), Number(i.amountPaid), creditedTotal(i.creditNotes)),
+        currency: i.currency,
+      }))
+      .filter((i) => i.amount > 0),
+  );
+  const paid = sumByCurrency(
+    issued
+      .map((i) => ({ amount: Number(i.amountPaid), currency: i.currency }))
+      .filter((i) => i.amount > 0),
+  );
 
   return (
     <div>
@@ -107,10 +126,16 @@ export default async function MyInvoicesPage() {
                       {formatDate(invoice.dueDate)}
                     </TableCell>
                     <TableCell className="text-sm font-medium">
+                      {/* A credit note is money back, so it reads as one. */}
+                      {invoice.creditNoteForId && "−"}
                       {formatCurrency(Number(invoice.amount), invoice.currency)}
                     </TableCell>
                     <TableCell>
-                      <InvoiceStatusBadge status={invoice.status} />
+                      {invoice.creditNoteForId ? (
+                        <SoftPill color={HUE.violet}>Credit note</SoftPill>
+                      ) : (
+                        <InvoiceStatusBadge status={invoice.status} />
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="relative z-10 flex items-center justify-end gap-1">

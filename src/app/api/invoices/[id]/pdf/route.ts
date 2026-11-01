@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/dal/session";
-import { prisma } from "@/lib/prisma";
 import { renderInvoicePdfById } from "@/lib/pdf/invoice-render";
 
 /**
@@ -24,20 +23,19 @@ export async function GET(
   }
 
   const { id } = await params;
-  // Authorize ownership before rendering (client sees only their own).
-  const owned = await prisma.invoice.findFirst({
-    where: viewer.role === "ADMIN" ? { id } : { id, clientId: viewer.id },
-    select: { id: true, invoiceNumber: true },
-  });
-  if (!owned) return new NextResponse(null, { status: 404 });
+  // The ownership check is the render's own lookup: a client gets their own
+  // invoice and never a draft, in the same query that loads it. (It used to
+  // be a separate findFirst first, one more round trip per download.)
+  const rendered = await renderInvoicePdfById(
+    id,
+    viewer.role === "ADMIN" ? {} : { clientId: viewer.id, status: { not: "DRAFT" } },
+  );
+  if (!rendered) return new NextResponse(null, { status: 404 });
 
-  const pdf = await renderInvoicePdfById(id);
-  if (!pdf) return new NextResponse(null, { status: 404 });
-
-  return new NextResponse(new Uint8Array(pdf), {
+  return new NextResponse(new Uint8Array(rendered.pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${owned.invoiceNumber}.pdf"`,
+      "Content-Disposition": `attachment; filename="${rendered.invoiceNumber.replace(/[^\w.\- ]/g, "_")}.pdf"`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     },

@@ -15,10 +15,11 @@ import {
 } from "@dnd-kit/core";
 import type { InvoiceStatus } from "@prisma/client";
 import { setInvoiceStatus } from "@/lib/actions/invoices";
-import { invoiceStatusLabels, usd } from "@/lib/format";
+import { invoiceStatusLabels } from "@/lib/format";
 import { formatCurrency } from "@/lib/currency";
 import { usdValue } from "@/lib/invoice-usd";
-import { invoiceStatusColor } from "@/lib/status-colors";
+import { HUE, invoiceStatusColor } from "@/lib/status-colors";
+import { SoftPill } from "@/components/ui/status-pill";
 import { useLocalSet } from "@/lib/use-local-pref";
 import { Lane, LaneCard, LaneEmpty, LaneScroller } from "@/components/ui/lanes";
 import { DueChip } from "@/components/board/board-bits";
@@ -34,10 +35,14 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Building2, Paperclip, HandCoins, Loader2 } from "lucide-react";
-import type { InvoiceListRow } from "./invoice-table";
+import { isRecurring, rowBalance, type InvoiceListRow } from "./invoice-row";
+import { RepeatMark } from "./repeat-mark";
+import { InvoiceRowMenu, type InvoiceRowAction } from "./invoice-row-menu";
+import { isReceivable } from "@/lib/invoice-rules";
 
 const LANES: { status: InvoiceStatus; hint: string }[] = [
-  { status: "ASSIGNED", hint: "Created, not sent yet" },
+  { status: "DRAFT", hint: "Being prepared — the client can't see it" },
+  { status: "ASSIGNED", hint: "In the client's portal, not emailed yet" },
   { status: "SENT", hint: "With the client" },
   { status: "IN_REVIEW", hint: "Client says it's paid — confirm" },
   { status: "PARTIALLY_PAID", hint: "Some of it has landed" },
@@ -52,24 +57,20 @@ const usdWhole = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-/** Statuses that change the money, so a drop asks before it commits. */
-const CONFIRM: Partial<Record<InvoiceStatus, true>> = { PAID: true, CANCELLED: true };
-
-function balanceOf(row: InvoiceListRow) {
-  return Math.max(row.amount - row.amountPaid, 0);
-}
-
 /**
  * What a lane is worth in USD, per the multi-currency rule: each invoice at
  * its own recorded USD value, never at face value. Paid lanes count what
  * was invoiced; the rest count what is still owed. Rows without a USD value
- * are left out and counted, so the gap is visible instead of silent.
+ * are left out and counted, so the gap is visible instead of silent. Credit
+ * notes are money we owe, not money owed to us, so they count in no lane.
  */
 function laneUsd(status: InvoiceStatus, rows: InvoiceListRow[]) {
   let total = 0;
   let missing = 0;
   for (const row of rows) {
-    const value = status === "PAID" ? row.amount : balanceOf(row);
+    if (row.creditNoteForId) continue;
+    // Drafts aren't owed yet: their lane shows what they will bill.
+    const value = status === "PAID" || status === "DRAFT" ? row.amount : rowBalance(row);
     if (value <= 0) continue;
     // usdValue, not amountUsd: a USD invoice is worth its own total even when
     // the column was never filled (retainer runs and older rows leave it null).
@@ -88,17 +89,24 @@ function laneUsd(status: InvoiceStatus, rows: InvoiceListRow[]) {
  * what it is worth in USD, so the board reads as a pipeline: what's drafted,
  * what's out, what the client says they've paid, what's in.
  *
- * Dragging a card is the same action as the status menu in the list. Paid
- * and Cancelled ask first — one stray drop should not book revenue.
+ * Dragging a card is the same action as the status menu in the list. A drop
+ * on Paid or Part paid with money owing opens the payment dialog (onPay), so
+ * the board books the payment rather than just the label; Cancelled asks
+ * first. One stray drop should not book revenue.
  */
 export function InvoiceLanes({
   invoices,
   now,
   today,
+  onPay,
+  onAction,
 }: {
   invoices: InvoiceListRow[];
   now: number;
   today: string;
+  onPay: (row: InvoiceListRow, prefill: "balance" | "none") => void;
+  /** The cards' "…" menu; the list owns the dialogs it opens. */
+  onAction: (action: InvoiceRowAction, row: InvoiceListRow) => void;
 }) {
   const [folded, toggleFold] = useLocalSet("avix.invoices.folded", ["CANCELLED"]);
   const [moved, setMoved] = useState<Record<string, InvoiceStatus>>({});
@@ -148,17 +156,16 @@ export function InvoiceLanes({
     const to = event.over?.id as InvoiceStatus | undefined;
     const row = rows.find((i) => i.id === event.active.id);
     if (!row || !to || row.status === to || !LANES.some((l) => l.status === to)) return;
-    if (CONFIRM[to]) {
+    if ((to === "PAID" || to === "PARTIALLY_PAID") && rowBalance(row) > 0) {
+      onPay(row, to === "PAID" ? "balance" : "none");
+      return;
+    }
+    if (to === "CANCELLED") {
       setConfirming({ row, to });
       return;
     }
     commit(row, to);
   }
-
-  const confirmUsd =
-    confirming && confirming.row.amountUsd !== null && confirming.row.currency !== "USD"
-      ? ` (${usd.format(confirming.row.amountUsd)})`
-      : "";
 
   return (
     <>
@@ -181,6 +188,7 @@ export function InvoiceLanes({
               highlightSource={active?.status === lane.status}
               now={now}
               today={today}
+              onAction={onAction}
             />
           ))}
         </LaneScroller>
@@ -192,15 +200,9 @@ export function InvoiceLanes({
       <Dialog open={!!confirming} onOpenChange={(o) => !o && !saving && setConfirming(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {confirming?.to === "PAID"
-                ? `Mark ${confirming.row.invoiceNumber} as paid?`
-                : `Cancel ${confirming?.row.invoiceNumber}?`}
-            </DialogTitle>
+            <DialogTitle>Cancel {confirming?.row.invoiceNumber}?</DialogTitle>
             <DialogDescription>
-              {confirming?.to === "PAID"
-                ? `This books ${formatCurrency(confirming.row.amount, confirming.row.currency)}${confirmUsd} from ${confirming.row.clientName} as collected.`
-                : "The invoice stays on record, struck through, and stops counting as owed."}
+              The invoice stays on record, struck through, and stops counting as owed.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -208,12 +210,12 @@ export function InvoiceLanes({
               Keep as is
             </Button>
             <Button
-              variant={confirming?.to === "CANCELLED" ? "destructive" : "default"}
+              variant="destructive"
               disabled={saving}
               onClick={() => confirming && commit(confirming.row, confirming.to)}
             >
               {saving && <Loader2 className="animate-spin" />}
-              {confirming?.to === "PAID" ? "Mark paid" : "Cancel invoice"}
+              Cancel invoice
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -231,6 +233,7 @@ function InvoiceLane({
   highlightSource,
   now,
   today,
+  onAction,
 }: {
   status: InvoiceStatus;
   hint: string;
@@ -240,6 +243,7 @@ function InvoiceLane({
   highlightSource: boolean;
   now: number;
   today: string;
+  onAction: (action: InvoiceRowAction, row: InvoiceListRow) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const page = useProgressive(rows, status, 20);
@@ -259,7 +263,9 @@ function InvoiceLane({
                 ? `${worth.missing} invoice${worth.missing === 1 ? " has" : "s have"} no USD value yet and ${worth.missing === 1 ? "is" : "are"} not in this total`
                 : status === "PAID"
                   ? "Invoiced value of everything in this lane, in USD"
-                  : "Still owed on everything in this lane, in USD"
+                  : status === "DRAFT"
+                    ? "What these drafts will bill, in USD. Not counted as owed until sent"
+                    : "Still owed on everything in this lane, in USD"
             }
           >
             {usdWhole.format(worth.total)}
@@ -276,14 +282,24 @@ function InvoiceLane({
       empty={rows.length === 0 ? <LaneEmpty>Drop an invoice here</LaneEmpty> : undefined}
     >
       {page.shown.map((row) => (
-        <DraggableInvoice key={row.id} row={row} now={now} today={today} />
+        <DraggableInvoice key={row.id} row={row} now={now} today={today} onAction={onAction} />
       ))}
       <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
     </Lane>
   );
 }
 
-function DraggableInvoice({ row, now, today }: { row: InvoiceListRow; now: number; today: string }) {
+function DraggableInvoice({
+  row,
+  now,
+  today,
+  onAction,
+}: {
+  row: InvoiceListRow;
+  now: number;
+  today: string;
+  onAction: (action: InvoiceRowAction, row: InvoiceListRow) => void;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: row.id });
   return (
     <div
@@ -292,7 +308,7 @@ function DraggableInvoice({ row, now, today }: { row: InvoiceListRow; now: numbe
       {...listeners}
       className="touch-manipulation rounded-xl outline-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-ring/60"
     >
-      <InvoiceCardFace row={row} now={now} today={today} ghost={isDragging} />
+      <InvoiceCardFace row={row} now={now} today={today} ghost={isDragging} onAction={onAction} />
     </div>
   );
 }
@@ -303,20 +319,26 @@ function InvoiceCardFace({
   today,
   overlay,
   ghost,
+  onAction,
 }: {
   row: InvoiceListRow;
   now: number;
   today: string;
   overlay?: boolean;
   ghost?: boolean;
+  /** Absent on the drag overlay, which is a picture of the card. */
+  onAction?: (action: InvoiceRowAction, row: InvoiceListRow) => void;
 }) {
-  const balance = balanceOf(row);
-  const settled = row.status === "PAID" || row.status === "CANCELLED";
+  const balance = rowBalance(row);
+  const settled = !isReceivable(row);
   const overdue = !settled && !!row.dueDate && Date.parse(row.dueDate) < now && balance > 0;
   const claimed = row.paymentClaimed && row.status !== "PAID";
 
   return (
-    <div style={{ "--col": invoiceStatusColor[row.status] } as CSSProperties}>
+    <div
+      className="relative"
+      style={{ "--col": invoiceStatusColor[row.status] } as CSSProperties}
+    >
       <LaneCard
         href={overlay ? undefined : `/admin/invoices/${row.id}`}
         overlay={overlay}
@@ -331,6 +353,7 @@ function InvoiceCardFace({
         <div className="flex items-start justify-between gap-2">
           <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
             <span className="truncate">{row.invoiceNumber}</span>
+            {isRecurring(row) && <RepeatMark row={row} />}
             {row.hasDocument && <Paperclip className="size-3 shrink-0 text-muted-foreground" />}
           </p>
           <p
@@ -352,7 +375,8 @@ function InvoiceCardFace({
             {row.projectName}
           </p>
         )}
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        {/* pr-8 keeps the chips clear of the menu button sitting over the corner. */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 pr-8">
           <DueChip
             day={row.dueDate ? row.dueDate.slice(0, 10) : null}
             done={settled}
@@ -371,8 +395,18 @@ function InvoiceCardFace({
               no USD value
             </span>
           )}
+          {row.creditNoteForId && (
+            <SoftPill color={HUE.violet} className="px-2 text-[10px]">
+              Credit note
+            </SoftPill>
+          )}
         </div>
       </LaneCard>
+      {/* Beside the card's link, not inside it: a button inside an <a> is
+          invalid, and its click would open the invoice. */}
+      {onAction && !ghost && (
+        <InvoiceRowMenu row={row} onAction={onAction} className="absolute right-1.5 bottom-1.5" />
+      )}
     </div>
   );
 }

@@ -11,7 +11,10 @@ import { GettingStarted } from "@/components/onboarding/getting-started";
 import { UpcomingMeetings } from "@/components/portal/upcoming-meetings";
 import { listMyUpcomingMeetings } from "@/lib/dal/meetings";
 import { countClientActionItems } from "@/lib/dal/portal-actions";
-import { usd, formatDate, projectTypeLabels } from "@/lib/format";
+import { formatDate, projectTypeLabels } from "@/lib/format";
+import { formatCurrency, sumByCurrency } from "@/lib/currency";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
+import { serverNow } from "@/lib/server-now";
 import { projectHealth } from "@/lib/project-health";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Bell, FileText } from "lucide-react";
@@ -32,14 +35,23 @@ export default async function PortalOverviewPage() {
     listMyUpcomingMeetings(),
     countClientActionItems(me.id),
   ]);
-  // Balance owed, not headline totals — a part-paid invoice isn't fully open.
-  const openTotal = openInvoices.reduce(
-    (sum, inv) => sum + Math.max(Number(inv.amount) - Number(inv.amountPaid), 0),
-    0,
-  );
-  const overdueCount = openInvoices.filter(
-    (inv) => inv.dueDate && new Date(inv.dueDate) < new Date(),
-  ).length;
+  // Balance owed, not headline totals — a part-paid or credited invoice isn't
+  // fully open. One total per currency: EUR and USD added together is a
+  // number that is true of nothing.
+  const now = serverNow();
+  const owed = openInvoices
+    .map((inv) => ({
+      amount: balanceDue(Number(inv.amount), Number(inv.amountPaid), creditedTotal(inv.creditNotes)),
+      currency: inv.currency,
+      dueDate: inv.dueDate,
+    }))
+    .filter((inv) => inv.amount > 0);
+  const owedTotals = sumByCurrency(owed);
+  const openTotal =
+    owedTotals.length === 0
+      ? formatCurrency(0, "USD")
+      : owedTotals.map((t) => formatCurrency(t.total, t.code)).join(" · ");
+  const overdueCount = owed.filter((inv) => inv.dueDate && inv.dueDate.getTime() < now).length;
   const milestonesTotal = projects.reduce((n, p) => n + p.milestones.length, 0);
   const milestonesDone = projects.reduce(
     (n, p) => n + p.milestones.filter((m) => m.status === "COMPLETED").length,
@@ -100,13 +112,13 @@ export default async function PortalOverviewPage() {
                 {overdueCount > 0 && <span className="size-1.5 rounded-full bg-red-400" />}
                 Balance due
               </dt>
-              <dd className="num mt-1 text-2xl font-semibold">{usd.format(openTotal)}</dd>
+              <dd className="num mt-1 text-2xl font-semibold">{openTotal}</dd>
               <dd className="text-[11px] text-white/40">
-                {openInvoices.length === 0
+                {owed.length === 0
                   ? "all settled — thank you"
                   : overdueCount > 0
                     ? `${overdueCount} past its due date`
-                    : `across ${openInvoices.length} invoice${openInvoices.length === 1 ? "" : "s"}`}
+                    : `across ${owed.length} invoice${owed.length === 1 ? "" : "s"}`}
               </dd>
             </div>
           </dl>
@@ -211,18 +223,16 @@ export default async function PortalOverviewPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {openInvoices.length === 0 ? (
+              {owed.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   Nothing outstanding — you&apos;re all settled.
                 </p>
               ) : (
                 <>
-                  <p className="font-heading text-2xl font-bold">
-                    {usd.format(openTotal)}
-                  </p>
+                  <p className="font-heading text-2xl font-bold">{openTotal}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    across {openInvoices.length} invoice
-                    {openInvoices.length === 1 ? "" : "s"}
+                    across {owed.length} invoice
+                    {owed.length === 1 ? "" : "s"}
                   </p>
                   {overdueCount > 0 && (
                     <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">

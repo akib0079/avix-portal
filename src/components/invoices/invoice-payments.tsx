@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { recordPayment, deletePayment, createCreditNote } from "@/lib/actions/invoices";
+import type { InvoiceStatus } from "@prisma/client";
+import { deletePayment, createCreditNote } from "@/lib/actions/invoices";
 import { balanceDue } from "@/lib/invoice-totals";
+import { paymentBlocker } from "@/lib/invoice-rules";
+import { RecordPaymentDialog } from "@/components/invoices/record-payment-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,17 +36,29 @@ export type PaymentRow = {
  * Money received against one invoice. Before this, an invoice was either
  * "PAID" or not — a deposit had nowhere to go, so half-paid invoices were
  * either marked paid (wrong) or left looking unpaid (also wrong).
+ *
+ * Credit notes count against the balance too, so a credited invoice shows
+ * what is really still owed.
  */
 export function InvoicePayments({
-  invoiceId,
+  invoice,
   total,
   amountPaid,
+  credited,
   currencySymbol,
   payments,
 }: {
-  invoiceId: string;
+  invoice: {
+    id: string;
+    invoiceNumber: string;
+    currency: string;
+    status: InvoiceStatus;
+    creditNoteForId: string | null;
+  };
   total: number;
   amountPaid: number;
+  /** Taken off by credit notes against this invoice. */
+  credited: number;
   currencySymbol: string;
   payments: PaymentRow[];
 }) {
@@ -51,11 +66,13 @@ export function InvoicePayments({
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [crediting, setCrediting] = useState(false);
-  const balance = balanceDue(total, amountPaid);
+  const balance = balanceDue(total, amountPaid, credited);
+  const canTakePayment = paymentBlocker(invoice) === null;
+  // A credit note is credited against nothing, and a draft or a void invoice
+  // has nothing issued to credit.
+  const canCredit =
+    !invoice.creditNoteForId && invoice.status !== "DRAFT" && invoice.status !== "CANCELLED";
 
-  const [amount, setAmount] = useState("");
-  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10));
-  const [method, setMethod] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
   const [creditReason, setCreditReason] = useState("");
 
@@ -65,25 +82,11 @@ export function InvoicePayments({
       maximumFractionDigits: 2,
     })}`;
 
-  async function submitPayment() {
-    const value = Number(amount);
-    if (!(value > 0)) return void toast.error("Enter an amount above zero.");
-    setBusy(true);
-    const res = await recordPayment(invoiceId, { amount: value, paidAt, method });
-    setBusy(false);
-    if (!res.ok) return void toast.error(res.error);
-    setAdding(false);
-    setAmount("");
-    setMethod("");
-    toast.success("Payment recorded.");
-    router.refresh();
-  }
-
   async function submitCreditNote() {
     const value = Number(creditAmount);
     if (!(value > 0)) return void toast.error("Enter an amount above zero.");
     setBusy(true);
-    const res = await createCreditNote(invoiceId, { amount: value, reason: creditReason });
+    const res = await createCreditNote(invoice.id, { amount: value, reason: creditReason });
     setBusy(false);
     if (!res.ok) return void toast.error(res.error);
     setCrediting(false);
@@ -101,16 +104,25 @@ export function InvoicePayments({
             <ReceiptText className="size-4" /> Payments
           </h2>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setCrediting(true)}>
-              <Undo2 className="size-3.5" /> Credit note
-            </Button>
-            <Button size="sm" onClick={() => setAdding(true)}>
-              <Plus className="size-3.5" /> Record payment
-            </Button>
+            {canCredit && (
+              <Button variant="outline" size="sm" onClick={() => setCrediting(true)}>
+                <Undo2 className="size-3.5" /> Credit note
+              </Button>
+            )}
+            {canTakePayment && (
+              <Button size="sm" onClick={() => setAdding(true)}>
+                <Plus className="size-3.5" /> Record payment
+              </Button>
+            )}
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+        <div
+          className={cn(
+            "mb-4 grid grid-cols-1 gap-3 text-sm",
+            credited > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3",
+          )}
+        >
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Invoice total</p>
             <p className="font-heading mt-0.5 font-bold">{money(total)}</p>
@@ -121,6 +133,12 @@ export function InvoicePayments({
               {money(amountPaid)}
             </p>
           </div>
+          {credited > 0 && (
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Credited</p>
+              <p className="font-heading mt-0.5 font-bold">{money(credited)}</p>
+            </div>
+          )}
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Balance due</p>
             <p
@@ -136,7 +154,9 @@ export function InvoicePayments({
 
         {payments.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            Nothing received yet.
+            {invoice.status === "DRAFT"
+              ? "Still a draft. Payments can be recorded once it's sent."
+              : "Nothing received yet."}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -164,8 +184,8 @@ export function InvoicePayments({
                     const res = await deletePayment(p.id);
                     setBusy(false);
                     if (!res.ok) return void toast.error(res.error);
+                    // deletePayment revalidates this page; no refresh needed.
                     toast.success("Payment removed.");
-                    router.refresh();
                   }}
                 >
                   <Trash2 className="size-3.5" />
@@ -175,54 +195,11 @@ export function InvoicePayments({
           </ul>
         )}
 
-        <Dialog open={adding} onOpenChange={setAdding}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Record a payment</DialogTitle>
-              <DialogDescription>
-                The invoice status follows the money — part pays mark it as
-                partially paid.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium">Amount</span>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder={balance > 0 ? String(balance) : "0.00"}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium">Date received</span>
-                <Input
-                  type="date"
-                  value={paidAt}
-                  onChange={(e) => setPaidAt(e.target.value)}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium">Method (optional)</span>
-                <Input
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value)}
-                  placeholder="Wise, bank transfer, cash…"
-                />
-              </label>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setAdding(false)} disabled={busy}>
-                Cancel
-              </Button>
-              <Button onClick={submitPayment} disabled={busy}>
-                {busy && <Loader2 className="animate-spin" />} Record
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <RecordPaymentDialog
+          target={adding ? { ...invoice, balance } : null}
+          prefill="none"
+          onClose={() => setAdding(false)}
+        />
 
         <Dialog open={crediting} onOpenChange={setCrediting}>
           <DialogContent>
@@ -230,7 +207,8 @@ export function InvoicePayments({
               <DialogTitle>Issue a credit note</DialogTitle>
               <DialogDescription>
                 Creates a separate CN document linked to this invoice, so the
-                original stays on the record.
+                original stays on the record. The credit comes off what is
+                still owed.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
@@ -240,6 +218,7 @@ export function InvoicePayments({
                   type="number"
                   step="0.01"
                   min="0"
+                  inputMode="decimal"
                   value={creditAmount}
                   onChange={(e) => setCreditAmount(e.target.value)}
                 />

@@ -7,6 +7,7 @@ import { requireAdmin } from "@/lib/dal/session";
 import { rangeWindow, type DashboardRange } from "@/lib/dashboard-ranges";
 import { workItemHref } from "@/lib/board";
 import { AWAITING_REVIEW, OPEN_REQUEST, PLAN_ITEM } from "@/lib/work-scope";
+import { monthlyUsd } from "@/lib/recurring";
 
 export {
   DASHBOARD_RANGES,
@@ -67,14 +68,17 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
   const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
   const startOfLastWeek = new Date(startOfWeek.getTime() - 7 * 86_400_000);
 
-  const unpaid = Prisma.sql`status <> 'PAID'`;
+  // Issued money only: a draft hasn't been sent, a cancelled invoice is void,
+  // and a credit note is money owed to the client, not by them.
+  const issued = Prisma.sql`status NOT IN ('DRAFT', 'CANCELLED') AND "creditNoteForId" IS NULL`;
+  const unpaid = Prisma.sql`status <> 'PAID' AND ${issued}`;
   const inWindow = Prisma.sql`"issueDate" >= ${ts(win.start)} AND "issueDate" < ${ts(win.end)}`;
 
   const [
     [totals],
     [hours],
     invoicesByStatus,
-    mrrAgg,
+    activePlans,
     targetRow,
     activeProjects,
     pendingRequests,
@@ -82,7 +86,7 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
     prisma.$queryRaw<InvoiceTotalsRow[]>`
       SELECT
         COALESCE(SUM("amountUsd") FILTER (WHERE status = 'PAID' AND ${inWindow}), 0) AS "collected",
-        COALESCE(SUM("amountUsd") FILTER (WHERE ${inWindow}), 0) AS "invoiced",
+        COALESCE(SUM("amountUsd") FILTER (WHERE ${issued} AND ${inWindow}), 0) AS "invoiced",
         COALESCE(SUM("amountUsd") FILTER (WHERE ${unpaid}), 0) AS "outstanding",
         COALESCE(SUM("amountUsd") FILTER (
           WHERE ${unpaid} AND "dueDate" >= ${ts(now)} AND "dueDate" <= ${ts(in30Days)}
@@ -102,7 +106,7 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
         COALESCE(SUM("amountUsd") FILTER (WHERE ${unpaid} AND "dueDate" < ${ts(days60Ago)}), 0)
           AS "aging3Amount",
         COUNT(*) FILTER (WHERE ${unpaid} AND "dueDate" < ${ts(days60Ago)}) AS "aging3Count",
-        COUNT(*) FILTER (WHERE "amountUsd" IS NULL) AS "missingUsd"
+        COUNT(*) FILTER (WHERE "amountUsd" IS NULL AND ${issued}) AS "missingUsd"
       FROM invoices`,
     prisma.$queryRaw<HoursRow[]>`
       SELECT
@@ -115,15 +119,29 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
         ), 0) AS "lastWeek"
       FROM time_entries`,
     prisma.invoice.groupBy({ by: ["status"], _count: { _all: true } }),
-    // MRR — recurring monthly value of all active retainers.
-    prisma.retainer.aggregate({ where: { active: true }, _sum: { amount: true } }),
+    // MRR — each active plan's monthly share (a quarterly plan is a third of
+    // its amount), in USD through its USD value; never a sum across
+    // currencies, which is what adding up retainer.amount was.
+    prisma.retainer.findMany({
+      where: { active: true },
+      select: { amount: true, currency: true, amountUsd: true, frequency: true, interval: true },
+    }),
     prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
     prisma.project.count({ where: { status: { not: "COMPLETED" } } }),
     // Client requests waiting in the Requested column (each has a PENDING request).
     prisma.milestone.count({ where: OPEN_REQUEST }),
   ]);
 
-  const mrr = Number(mrrAgg._sum.amount ?? 0);
+  const recurring = monthlyUsd(
+    activePlans.map((p) => ({
+      amount: Number(p.amount),
+      currency: p.currency,
+      amountUsd: p.amountUsd == null ? null : Number(p.amountUsd),
+      frequency: p.frequency,
+      interval: p.interval,
+    })),
+  );
+  const mrr = recurring.total;
   const bucket = (amount: Prisma.Decimal, count: bigint) => ({
     amount: Number(amount),
     count: Number(count),
@@ -150,6 +168,8 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
     })),
     money: {
       mrr,
+      /** Active plans in another currency with no USD value: left out of MRR. */
+      mrrMissing: recurring.missing,
       // Expected next 30 days = one-off invoices due soon + MRR.
       expectedNext30: Number(totals.expected) + mrr,
       aging: {
@@ -187,7 +207,11 @@ export const getDashboardLists = cache(async () => {
       },
     }),
     prisma.invoice.findMany({
-      where: { status: { not: "PAID" }, dueDate: { not: null, lte: soon } },
+      where: {
+        status: { notIn: ["PAID", "DRAFT", "CANCELLED"] },
+        creditNoteForId: null,
+        dueDate: { not: null, lte: soon },
+      },
       orderBy: { dueDate: "asc" },
       take: 5,
       select: {
@@ -263,7 +287,11 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     helpRequests,
   ] = await Promise.all([
       prisma.invoice.findMany({
-        where: { status: { not: "PAID" }, dueDate: { not: null, lt: now } },
+        where: {
+          status: { notIn: ["PAID", "DRAFT", "CANCELLED"] },
+          creditNoteForId: null,
+          dueDate: { not: null, lt: now },
+        },
         orderBy: { dueDate: "asc" },
         take: 5,
         include: { client: { select: { firstName: true, lastName: true } } },
@@ -281,8 +309,11 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
         orderBy: { startsAt: "asc" },
         include: { client: { select: { firstName: true, lastName: true } } },
       }),
+      // A plan's draft waiting to be reviewed and sent. Found by its plan, not
+      // by guessing from the notes (an em dash used to be the tell). DRAFT
+      // since v49; plans drafted ASSIGNED invoices before that.
       prisma.invoice.findMany({
-        where: { status: "ASSIGNED", notes: { contains: "—" } },
+        where: { retainerId: { not: null }, status: { in: ["DRAFT", "ASSIGNED"] }, sentAt: null },
         orderBy: { createdAt: "desc" },
         take: 5,
         include: { client: { select: { firstName: true, lastName: true } } },
@@ -350,16 +381,24 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
           recipientName: true,
         },
       }),
-      // Active plans whose bill-on day has passed without a draft this month.
+      // Active plans whose next invoice is due and not drafted yet: the duty
+      // makes it on its next pass, or Generate now does. (A plan from before
+      // schedules has no nextRunAt until that pass gives it one.)
       prisma.retainer.findMany({
         where: {
           active: true,
-          dayOfMonth: { lte: now.getDate() },
-          OR: [{ lastGeneratedPeriod: null }, { lastGeneratedPeriod: { not: period } }],
+          OR: [
+            { nextRunAt: { lte: now } },
+            {
+              nextRunAt: null,
+              dayOfMonth: { lte: now.getDate() },
+              OR: [{ lastGeneratedPeriod: null }, { lastGeneratedPeriod: { not: period } }],
+            },
+          ],
         },
-        orderBy: { dayOfMonth: "asc" },
+        orderBy: { nextRunAt: { sort: "asc", nulls: "first" } },
         take: 5,
-        select: { id: true, title: true, dayOfMonth: true },
+        select: { id: true, title: true },
       }),
       // A client asked for help on a piece of work and nobody has answered.
       prisma.milestoneComment.findMany({
@@ -467,8 +506,8 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
   for (const r of undraftedRetainers) {
     items.push({
       kind: "retainer",
-      label: `Draft this month — ${r.title}`,
-      detail: `bills on day ${r.dayOfMonth} · not drafted yet`,
+      label: `Invoice due — ${r.title}`,
+      detail: "recurring plan · not drafted yet",
       link: "/admin/retainers",
     });
   }
@@ -476,7 +515,7 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     items.push({
       kind: "retainer",
       label: `Send draft ${inv.invoiceNumber} — ${inv.client.firstName} ${inv.client.lastName}`,
-      detail: "Retainer invoice drafted, awaiting review",
+      detail: "Recurring invoice drafted, awaiting review",
       link: `/admin/invoices/${inv.id}`,
     });
   }

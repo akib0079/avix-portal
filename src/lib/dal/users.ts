@@ -29,9 +29,10 @@ export async function listClients() {
       include: { _count: { select: { projects: true, invoices: true } } },
     }),
     // Everything still owed. CANCELLED is not owed: it used to count here, so
-    // a voided invoice past its due date turned the client red for good.
+    // a voided invoice past its due date turned the client red for good. Nor
+    // is a draft the client hasn't been sent, or a credit note.
     prisma.invoice.findMany({
-      where: { status: { notIn: ["PAID", "CANCELLED"] } },
+      where: { status: { notIn: ["PAID", "CANCELLED", "DRAFT"] }, creditNoteForId: null },
       select: {
         clientId: true,
         dueDate: true,
@@ -191,7 +192,7 @@ export async function getClientSnapshot(clientId: string) {
   const [invoices, projects, ratings, lastMessage, openRequests, nextMeeting] =
     await Promise.all([
       prisma.invoice.findMany({
-        where: { clientId, status: { not: "CANCELLED" }, creditNoteForId: null },
+        where: { clientId, status: { notIn: ["CANCELLED", "DRAFT"] }, creditNoteForId: null },
         select: { amount: true, amountPaid: true, dueDate: true, status: true },
       }),
       prisma.project.findMany({

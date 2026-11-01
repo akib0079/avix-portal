@@ -161,6 +161,7 @@ test("an invoice is the client's to pay once it's sent and until they report pay
   assert.deepEqual(INVOICE_TO_PAY, {
     status: { in: ["SENT", "PARTIALLY_PAID"] },
     paymentClaimedAt: null,
+    creditNoteForId: null,
   });
   // Never a draft, or one created but not sent: the client can't open those.
   for (const status of ["DRAFT", "ASSIGNED", "IN_REVIEW", "PAID", "CANCELLED"]) {
@@ -177,5 +178,10 @@ test("an invoice is the client's to pay once it's sent and until they report pay
     isInvoiceToPay({ status: "PARTIALLY_PAID", amount: 1000, amountPaid: 1000 }),
     false,
     "nothing left to pay",
+  );
+  assert.equal(
+    isInvoiceToPay({ status: "SENT", creditNoteForId: "inv_1" }),
+    false,
+    "a credit note is money back, not a bill",
   );
 });

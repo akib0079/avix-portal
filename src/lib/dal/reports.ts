@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { usdValue } from "@/lib/invoice-usd";
+import { monthlyUsd } from "@/lib/recurring";
 import { requireAdmin } from "@/lib/dal/session";
 import { projectSourceLabels } from "@/lib/format";
 
@@ -38,8 +39,10 @@ export type ReportsData = {
   }[];
   /** Open leads by stage, with a crude stage-weighted value. */
   pipeline: { stage: string; count: number; value: number; weighted: number }[];
-  /** Sum of active retainers — the part of next month already committed. */
+  /** Monthly share of every active recurring plan, in USD — next month already committed. */
   monthlyRecurring: number;
+  /** Active plans in another currency with no USD value, left out of monthlyRecurring. */
+  monthlyRecurringMissing: number;
   /** Hours logged per person over the last four weeks. */
   utilisation: { userId: string; name: string; hours: number }[];
   /** One row per currency in use; the KPIs are raw sums across all of them. */
@@ -67,8 +70,8 @@ export async function getReportsData(): Promise<ReportsData> {
   const [invoices, timeEntries, clients, hourlyMilestones, leads, retainers, teamHours] =
     await Promise.all([
     prisma.invoice.findMany({
-      // Cancelled documents and credit notes aren't revenue.
-      where: { status: { not: "CANCELLED" }, creditNoteForId: null },
+      // Cancelled documents, drafts and credit notes aren't revenue.
+      where: { status: { notIn: ["CANCELLED", "DRAFT"] }, creditNoteForId: null },
       select: {
         amount: true,
         amountUsd: true,
@@ -102,7 +105,7 @@ export async function getReportsData(): Promise<ReportsData> {
     }),
     prisma.retainer.findMany({
       where: { active: true },
-      select: { amount: true },
+      select: { amount: true, currency: true, amountUsd: true, frequency: true, interval: true },
     }),
     // Utilisation: hours per person over the last 4 weeks.
     prisma.timeEntry.groupBy({
@@ -239,7 +242,17 @@ export async function getReportsData(): Promise<ReportsData> {
     row.count += 1;
     pipeline.set(lead.stage, row);
   }
-  const monthlyRecurring = retainers.reduce((sum, r) => sum + Number(r.amount), 0);
+  // Each plan's monthly share in USD, like the dashboard's MRR.
+  const recurring = monthlyUsd(
+    retainers.map((r) => ({
+      amount: Number(r.amount),
+      currency: r.currency,
+      amountUsd: r.amountUsd == null ? null : Number(r.amountUsd),
+      frequency: r.frequency,
+      interval: r.interval,
+    })),
+  );
+  const monthlyRecurring = recurring.total;
 
   const teamById = new Map(
     clients.length >= 0
@@ -286,6 +299,7 @@ export async function getReportsData(): Promise<ReportsData> {
       weighted: Math.round(row.weighted * 100) / 100,
     })),
     monthlyRecurring: Math.round(monthlyRecurring * 100) / 100,
+    monthlyRecurringMissing: recurring.missing,
     utilisation,
     // Shown when more than one currency is in play; the KPIs above are raw sums
     // and only make sense for a single-currency book.

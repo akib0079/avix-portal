@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 import { Clock, BadgeDollarSign, ReceiptText, Repeat } from "lucide-react";
 import { BillWorkButton, type BillableLineView } from "@/components/invoices/bill-work-button";
 import { toneChip, toneText } from "@/lib/tone";
+import { formatCurrency } from "@/lib/currency";
+import { cadenceLabel, cadenceSuffix } from "@/lib/recurring";
 
 type InvoiceRow = {
   id: string;
@@ -30,8 +32,11 @@ type RetainerRow = {
   id: string;
   title: string;
   amount: number;
+  currency: string;
   active: boolean;
   dayOfMonth: number;
+  frequency: "WEEK" | "MONTH";
+  interval: number;
 };
 
 function fmtHours(hours: number): string {
@@ -114,8 +119,13 @@ export function ProjectMoney({
   const liveInvoices = invoices.filter((i) => i.status !== "CANCELLED");
   const invoiced = liveInvoices.reduce((sum, i) => sum + i.amount, 0);
   const paid = liveInvoices.reduce((sum, i) => sum + i.amountPaid, 0);
-  const outstanding = invoiced - paid;
-  const unbilled = Math.max(earned - invoiced, 0);
+  // Nor are drafts: nothing on one is owed until it has been sent.
+  const outstanding = liveInvoices
+    .filter((i) => i.status !== "DRAFT")
+    .reduce((sum, i) => sum + i.amount - i.amountPaid, 0);
+  // Work no invoice line bills yet, from the links between them, rather than
+  // the work's value minus every invoice on the project.
+  const unbilled = billable.unbilled;
 
   return (
     <div className="space-y-6">
@@ -129,14 +139,13 @@ export function ProjectMoney({
             </p>
             <p className="text-xs text-muted-foreground">
               {billable.lines.length} line
-              {billable.lines.length === 1 ? "" : "s"} ready — completed fixed
-              milestones and logged hours.
+              {billable.lines.length === 1 ? "" : "s"} no invoice bills yet — completed
+              fixed-price work and logged hours.
             </p>
           </div>
           <BillWorkButton
             projectId={projectId}
             lines={billable.lines}
-            total={billable.total}
             unbilled={billable.unbilled}
           />
         </div>
@@ -179,7 +188,7 @@ export function ProjectMoney({
         <Card>
           <CardContent className="pt-6">
             <h3 className="title-card mb-3 flex items-center gap-2">
-              <Repeat className="size-4" /> Retainers
+              <Repeat className="size-4" /> Recurring
             </h3>
             <ul className="space-y-2">
               {retainers.map((r) => (
@@ -195,11 +204,18 @@ export function ProjectMoney({
                       {r.title}
                     </Link>
                     <span className="block text-xs text-muted-foreground">
-                      Bills on day {r.dayOfMonth} each month
+                      {r.frequency === "MONTH" && r.interval === 1
+                        ? `Monthly, on day ${r.dayOfMonth}`
+                        : cadenceLabel(r)}
                     </span>
                   </span>
                   <span className="flex items-center gap-3">
-                    <span className="text-sm font-medium">{usd.format(r.amount)}</span>
+                    <span className="text-sm font-medium">
+                      {formatCurrency(r.amount, r.currency)}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {cadenceSuffix(r)}
+                      </span>
+                    </span>
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-[11px] font-medium",
