@@ -59,6 +59,7 @@ export const milestoneStatusLabels: Record<MilestoneStatus, string> = {
 };
 
 export const invoiceStatusLabels: Record<InvoiceStatus, string> = {
+  DRAFT: "Draft",
   ASSIGNED: "Assigned",
   SENT: "Sent",
   IN_REVIEW: "In Review",

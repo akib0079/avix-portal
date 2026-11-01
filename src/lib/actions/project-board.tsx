@@ -47,7 +47,7 @@ import {
 
 export type BoardResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-const STATUS = z.enum(["BACKLOG", "TODO", "IN_PROGRESS", "REVIEW", "DONE"]);
+const STATUS = z.enum(["REQUESTED", "BACKLOG", "TODO", "IN_PROGRESS", "REVIEW", "DONE"]);
 const PRIORITY = z.enum(["HIGH", "MEDIUM", "LOW"]);
 const DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a valid date");
 

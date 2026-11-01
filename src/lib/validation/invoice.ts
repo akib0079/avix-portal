@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const invoiceStatusValues = [
+  "DRAFT",
   "ASSIGNED",
   "SENT",
   "IN_REVIEW",

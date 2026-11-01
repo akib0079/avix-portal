@@ -202,6 +202,7 @@ export function ProjectBoard({
   const columns = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const by: Record<ProjectTaskStatus, BoardCard[]> = {
+      REQUESTED: [],
       BACKLOG: [],
       TODO: [],
       IN_PROGRESS: [],

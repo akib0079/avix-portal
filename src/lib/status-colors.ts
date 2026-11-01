@@ -54,6 +54,7 @@ export const milestoneStatusColor: Record<MilestoneStatus, string> = {
 };
 
 export const invoiceStatusColor: Record<InvoiceStatus, string> = {
+  DRAFT: HUE.muted,
   ASSIGNED: HUE.slate,
   SENT: HUE.blue,
   IN_REVIEW: HUE.violet,

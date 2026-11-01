@@ -224,6 +224,7 @@ export const INVOICE_STATUS_COLOR: Record<InvoiceStatus, string> = {
   SENT: "var(--info)",
   IN_REVIEW: "var(--warning)",
   ASSIGNED: "color-mix(in oklab, var(--muted-foreground) 70%, transparent)",
+  DRAFT: "color-mix(in oklab, var(--muted-foreground) 45%, transparent)",
   CANCELLED: "color-mix(in oklab, var(--muted-foreground) 30%, transparent)",
 };
 

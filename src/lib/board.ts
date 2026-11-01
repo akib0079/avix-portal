@@ -24,6 +24,7 @@ export type BoardColumn = {
  * custom branding colour set in Settings carries onto the board.
  */
 export const BOARD_COLUMNS: BoardColumn[] = [
+  { id: "REQUESTED", label: "Requested", clientLabel: "Requested", color: "#f59e0b" },
   { id: "BACKLOG", label: "Backlog", clientLabel: "Backlog", color: "#94a3b8" },
   { id: "TODO", label: "To do", clientLabel: "To do", color: "#3b82f6" },
   { id: "IN_PROGRESS", label: "In progress", clientLabel: "In progress", color: "var(--brand)" },
