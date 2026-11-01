@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import type { InvoiceCopySource } from "@/lib/invoice-copy";
@@ -52,43 +53,43 @@ export async function getInvoice(id: string) {
 }
 
 /**
- * The invoice "Duplicate" copies, in the shape invoiceCopyDefaults reads:
- * plain numbers, and the project and payment account with what decides
- * whether they carry over. One statement.
+ * What invoiceCopyDefaults reads from an invoice, as one statement: the project
+ * and payment account come with what decides whether they carry over.
+ * Exported with toInvoiceCopySource for the duties engine, which copies a
+ * plan's template without a session and so can't use getInvoiceCopySource.
  */
-export async function getInvoiceCopySource(id: string): Promise<InvoiceCopySource | null> {
-  await requireAdmin();
-  const row = await prisma.invoice.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      invoiceNumber: true,
-      clientId: true,
-      title: true,
-      currency: true,
-      amount: true,
-      subtotal: true,
-      amountUsd: true,
-      discount: true,
-      taxRate: true,
-      taxLabel: true,
-      paymentTermsDays: true,
-      issueDate: true,
-      dueDate: true,
-      notes: true,
-      billToCompany: true,
-      billToAddress: true,
-      billToEmail: true,
-      creditNoteForId: true,
-      project: { select: { id: true, clientId: true } },
-      paymentAccount: { select: { id: true, isActive: true } },
-      items: {
-        orderBy: { sortOrder: "asc" },
-        select: { description: true, descriptionRich: true, qty: true, rate: true },
-      },
-    },
-  });
-  if (!row) return null;
+export const invoiceCopySourceSelect = {
+  id: true,
+  invoiceNumber: true,
+  clientId: true,
+  title: true,
+  currency: true,
+  amount: true,
+  subtotal: true,
+  amountUsd: true,
+  discount: true,
+  taxRate: true,
+  taxLabel: true,
+  paymentTermsDays: true,
+  issueDate: true,
+  dueDate: true,
+  notes: true,
+  billToCompany: true,
+  billToAddress: true,
+  billToEmail: true,
+  creditNoteForId: true,
+  project: { select: { id: true, clientId: true } },
+  paymentAccount: { select: { id: true, isActive: true } },
+  items: {
+    orderBy: { sortOrder: "asc" },
+    select: { description: true, descriptionRich: true, qty: true, rate: true },
+  },
+} satisfies Prisma.InvoiceSelect;
+
+/** The selected row with Decimals as plain numbers, as invoiceCopyDefaults wants. */
+export function toInvoiceCopySource(
+  row: Prisma.InvoiceGetPayload<{ select: typeof invoiceCopySourceSelect }>,
+): InvoiceCopySource {
   return {
     ...row,
     amount: Number(row.amount),
@@ -103,6 +104,13 @@ export async function getInvoiceCopySource(id: string): Promise<InvoiceCopySourc
       rate: Number(item.rate),
     })),
   };
+}
+
+/** The invoice "Duplicate" copies, for the new-invoice page. */
+export async function getInvoiceCopySource(id: string): Promise<InvoiceCopySource | null> {
+  await requireAdmin();
+  const row = await prisma.invoice.findUnique({ where: { id }, select: invoiceCopySourceSelect });
+  return row ? toInvoiceCopySource(row) : null;
 }
 
 /**
