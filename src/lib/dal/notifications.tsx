@@ -21,10 +21,10 @@ export async function getNotificationsForUser(userId: string) {
  *
  * The bell is free and can carry everything; an inbox cannot. These are the
  * ones where a delay costs something real — money won or turned down, money
- * claimed, and a meeting you are expected to attend. Milestone approvals, thumbs ratings,
- * deliverable reviews and generated retainer drafts stay in-app: they are
- * routine project churn, and mailing every one of them trains you to ignore
- * the whole channel.
+ * claimed, and a meeting you are expected to attend. Milestone approvals,
+ * thumbs ratings, deliverable reviews and generated retainer drafts stay
+ * in-app: they are routine project churn, and mailing every one of them
+ * trains you to ignore the whole channel.
  *
  * TASK_REQUEST_SUBMITTED is absent on purpose — it already sends its own
  * bespoke email from src/lib/actions/task-requests.tsx, and adding it here

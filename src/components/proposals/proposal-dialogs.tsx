@@ -82,6 +82,13 @@ export function useProposalDetail(id: string | null, refreshKey = "") {
   };
 }
 
+/** Why an invoice can't go with the proposal, in the words of draftInvoiceRemovable. */
+function keptBecause(invoice: NonNullable<ProposalDetail["invoice"]>): string {
+  if (invoice.sentAt) return "it has already been sent";
+  if (invoice.amountPaid > 0 || invoice.paymentCount > 0) return "money has been recorded against it";
+  return `it is ${invoiceStatusLabels[invoice.status].toLowerCase()}`;
+}
+
 function DetailLoading() {
   return (
     <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
@@ -140,8 +147,7 @@ export function ProposalRemoveDialog({
                   )}
                   {invoice && plan.invoice === "keep" && (
                     <p>
-                      Invoice {invoice.invoiceNumber} stays: it has already been{" "}
-                      {invoice.sentAt ? "sent" : "paid against"}.
+                      Invoice {invoice.invoiceNumber} stays: {keptBecause(invoice)}.
                     </p>
                   )}
                 </>
@@ -184,8 +190,7 @@ export function ProposalRemoveDialog({
         )}
         {plan?.mode === "archive" && plan.invoice === "keep" && invoice && proposal.status !== "ACCEPTED" && (
           <p className="text-xs text-muted-foreground">
-            Invoice {invoice.invoiceNumber} ({invoiceStatusLabels[invoice.status].toLowerCase()}) stays
-            — it has already {invoice.sentAt ? "been sent" : "had money against it"}.
+            Invoice {invoice.invoiceNumber} stays: {keptBecause(invoice)}.
           </p>
         )}
 

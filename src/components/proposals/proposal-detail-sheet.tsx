@@ -144,7 +144,9 @@ export function ProposalDetailSheet({
     <Sheet open={!!card} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-lg"
+        // Same variant prefix as the primitive's widths, so these replace
+        // them: the whole screen on a phone, a wider panel from sm up.
+        className="gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
         style={p ? ({ "--col": proposalStatusColor[p.status] } as CSSProperties) : undefined}
       >
         {p && (

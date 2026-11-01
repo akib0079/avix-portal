@@ -29,6 +29,9 @@ export const ACTIVITY_META: Record<string, { icon: React.ComponentType<{ classNa
   "deliverable.approved": { icon: BadgeCheck, tone: "text-emerald-600" },
   "deliverable.changes": { icon: Flag, tone: "text-amber-600" },
   "proposal.created": { icon: FileSignature, tone: "text-muted-foreground" },
+  "proposal.declined": { icon: FileSignature, tone: "text-amber-600" },
+  "proposal.archived": { icon: FileSignature, tone: "text-muted-foreground" },
+  "proposal.deleted": { icon: FileSignature, tone: "text-muted-foreground" },
 };
 
 /** Read-only audit timeline. Used on the dashboard and per-client tab. */
