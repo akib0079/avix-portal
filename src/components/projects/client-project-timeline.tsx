@@ -103,9 +103,7 @@ function Waiting({ items }: { items: WorkItem[] }) {
                   <Button size="sm" variant="outline" onClick={() => work.open(item.id)}>
                     <PanelRightOpen /> Edit
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void work.withdraw(item.id)}>
-                    <Undo2 /> Withdraw
-                  </Button>
+                  <WithdrawButton onConfirm={() => work.withdraw(item.id)} />
                 </span>
               )}
             </li>
@@ -113,6 +111,42 @@ function Waiting({ items }: { items: WorkItem[] }) {
         })}
       </ul>
     </section>
+  );
+}
+
+/**
+ * Withdrawing can't be undone (the client would ask again), so the first
+ * click asks "Sure?" in place rather than acting.
+ */
+function WithdrawButton({ onConfirm }: { onConfirm: () => Promise<boolean> }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!asking) {
+    return (
+      <Button size="sm" variant="ghost" onClick={() => setAsking(true)}>
+        <Undo2 /> Withdraw
+      </Button>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      <Button
+        size="sm"
+        variant="destructive"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          const ok = await onConfirm();
+          setBusy(false);
+          if (!ok) setAsking(false);
+        }}
+      >
+        {busy ? <LoaderCircle className="animate-spin" /> : <Undo2 />} Withdraw it
+      </Button>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAsking(false)}>
+        Keep
+      </Button>
+    </span>
   );
 }
 
