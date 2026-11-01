@@ -884,12 +884,14 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
     };
   }
 
-  await prisma.$transaction([
-    ...(plans.length > 0
-      ? [prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } })]
-      : []),
-    prisma.invoice.delete({ where: { id } }),
-  ]);
+  if (plans.length > 0) {
+    await prisma.$transaction([
+      prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } }),
+      prisma.invoice.delete({ where: { id } }),
+    ]);
+  } else {
+    await prisma.invoice.delete({ where: { id } });
+  }
   const file = invoice.pdfPath;
   if (file) after(() => deleteUpload("invoices", file));
   await resettleCredited(invoice.creditNoteForId);
