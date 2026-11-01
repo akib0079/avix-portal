@@ -8,6 +8,23 @@ export async function register() {
 
   const { prisma } = await import("@/lib/prisma");
 
+  // Next waits for register() before serving the first request, so nothing
+  // here may block on the database: with it in Tokyo, the two seed queries
+  // below cost ~2 s on a cold connection, paid by whoever arrived first after
+  // every process start. Warm the pool and run the seeds in the background.
+  const warm = () =>
+    Promise.all([prisma.$queryRaw`SELECT 1`, prisma.$queryRaw`SELECT 1`]).catch(() => {});
+  void warm();
+  // Keep the connections warm between visits; unref so it never holds the
+  // process open on shutdown.
+  setInterval(warm, 4 * 60_000).unref();
+  void seed(prisma);
+}
+
+type Db = (typeof import("@/lib/prisma"))["prisma"];
+
+/** One-time bootstrap rows. Idempotent; runs in the background on boot. */
+async function seed(prisma: Db) {
   // Seed the super admin (idempotent).
   const email = process.env.SEED_ADMIN_EMAIL;
   const password = process.env.SEED_ADMIN_PASSWORD;
