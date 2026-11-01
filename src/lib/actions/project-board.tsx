@@ -26,6 +26,7 @@ import {
   canMoveWorkItem,
   parseDay,
   placeInColumn,
+  positionBetween,
   workItemHref,
   type BoardComment,
   type WorkItem,
@@ -327,8 +328,12 @@ export async function updateWorkItem(
 const moveSchema = z.object({
   itemId: z.string().min(1),
   stage: STAGE,
-  /** Where in the column it was dropped (the midpoint of its new neighbours). */
-  boardPosition: z.number(),
+  /**
+   * Where in the column it was dropped (the midpoint of its new neighbours).
+   * Left out: the end of the column, for a stage picked somewhere that
+   * doesn't hold the column, such as My Work.
+   */
+  boardPosition: z.number().optional(),
   /** Why — required when a client sends work back. */
   comment: z.string().trim().max(5000, "Keep it under 5,000 characters").optional(),
 });
@@ -386,8 +391,9 @@ export async function moveWorkItem(
   };
 
   // A usable position is written straight away, alongside the column read
-  // that checks it still has room; an unusable one waits for the column.
-  const usable = Number.isFinite(requested) && requested > 0;
+  // that checks it still has room; an unusable one, or "the end", waits for
+  // the column.
+  const usable = requested !== undefined && Number.isFinite(requested) && requested > 0;
   const [first, column, extras] = await Promise.all([
     usable ? write(requested) : null,
     prisma.milestone.findMany({
@@ -396,12 +402,18 @@ export async function moveWorkItem(
     }),
     itemExtras(item.id, viewer),
   ]);
-  const plan = placeInColumn(column, item.id, requested);
+  const target =
+    requested ??
+    positionBetween(
+      column.reduce<number | null>((max, c) => (max == null || c.boardPosition > max ? c.boardPosition : max), null),
+      null,
+    );
+  const plan = placeInColumn(column, item.id, target);
   const planned = plan.find((r) => r.id === item.id)!.boardPosition;
   let row = first ?? (await write(planned));
   // Anything other than "the item, where it was dropped" is a renumber the
   // board has to hear about — even one that only moved the item itself.
-  const renumbered = plan.length > 1 || planned !== requested ? plan : [];
+  const renumbered = plan.length > 1 || planned !== target ? plan : [];
   const pending = plan.filter((r) => r.id !== item.id || r.boardPosition !== row.boardPosition);
   if (pending.length) {
     await prisma.$transaction(

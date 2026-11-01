@@ -16,16 +16,19 @@ import { currentWorkViewer, getBoard, getWorkItems, getWorkVersion } from "@/lib
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const [{ id }, viewer] = await Promise.all([params, currentWorkViewer()]);
   if (!viewer) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const version = await getWorkVersion(id, viewer);
-  if (!version) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const headers = { "Cache-Control": "no-store" };
   const query = new URL(request.url).searchParams;
   if (query.get("archived") === "1") {
+    // The team may read any project's archive, so there is nothing to check
+    // first: an unknown id is simply an empty list. One round trip.
     if (viewer.role === "CLIENT") return NextResponse.json({ error: "Not found" }, { status: 404 });
     const items = await getWorkItems(id, viewer, { archived: true });
     return NextResponse.json({ items }, { headers });
   }
+
+  const version = await getWorkVersion(id, viewer);
+  if (!version) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (query.get("v") === version) return new NextResponse(null, { status: 204, headers });
 
   const board = await getBoard(id, viewer, version);
