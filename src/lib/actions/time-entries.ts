@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
+import type { SessionUser } from "@/lib/auth";
 import { timeEntrySchema, type TimeEntryInput } from "@/lib/validation/time-entry";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -18,6 +19,29 @@ function revalidateProject(projectId: string) {
 
 // Time entries deliberately create NO notifications and NO emails — progress
 // surfaces passively on the milestone board and the client's timeline.
+
+/** The invoice line an entry is billed on, when that invoice still counts. */
+const billedSelect = {
+  invoiceItem: { select: { invoice: { select: { invoiceNumber: true, status: true } } } },
+} as const;
+
+type Billed = { invoiceItem: { invoice: { invoiceNumber: string; status: string } } | null };
+
+function liveInvoice(entry: Billed) {
+  const invoice = entry.invoiceItem?.invoice;
+  return invoice && invoice.status !== "CANCELLED" ? invoice : null;
+}
+
+/**
+ * Billed hours are what an invoice charged for, so their hours and date
+ * can't change under it (a cancelled invoice frees them). Staff are
+ * money-blind: they are told the hours are locked, never by which invoice.
+ */
+function lockedMessage(viewer: SessionUser, invoiceNumber: string, change: string): string {
+  return viewer.role === "ADMIN"
+    ? `These hours are billed on ${invoiceNumber}. Take them off that invoice, or cancel it, before ${change}.`
+    : `These hours are locked. Ask an admin if they need ${change === "deleting them" ? "deleting" : "changing"}.`;
+}
 
 export async function createTimeEntry(
   milestoneId: string,
@@ -55,7 +79,7 @@ export async function updateTimeEntry(
   id: string,
   input: TimeEntryInput,
 ): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
   const parsed = timeEntrySchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -64,9 +88,25 @@ export async function updateTimeEntry(
 
   const entry = await prisma.timeEntry.findUnique({
     where: { id },
-    select: { milestone: { select: { projectId: true } } },
+    select: {
+      date: true,
+      hours: true,
+      milestone: { select: { projectId: true } },
+      ...billedSelect,
+    },
   });
   if (!entry) return { ok: false, error: "Time entry not found." };
+  // The note can always be edited; the hours and the date are what was billed.
+  const invoice = liveInvoice(entry);
+  if (
+    invoice &&
+    (Number(entry.hours) !== data.hours || entry.date.toISOString().slice(0, 10) !== data.date)
+  ) {
+    return {
+      ok: false,
+      error: lockedMessage(viewer, invoice.invoiceNumber, "changing their hours or date"),
+    };
+  }
 
   await prisma.timeEntry.update({
     where: { id },
@@ -82,12 +122,16 @@ export async function updateTimeEntry(
 }
 
 export async function deleteTimeEntry(id: string): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
   const entry = await prisma.timeEntry.findUnique({
     where: { id },
-    select: { milestone: { select: { projectId: true } } },
+    select: { milestone: { select: { projectId: true } }, ...billedSelect },
   });
   if (!entry) return { ok: false, error: "Time entry not found." };
+  const invoice = liveInvoice(entry);
+  if (invoice) {
+    return { ok: false, error: lockedMessage(viewer, invoice.invoiceNumber, "deleting them") };
+  }
 
   await prisma.timeEntry.delete({ where: { id } });
 
