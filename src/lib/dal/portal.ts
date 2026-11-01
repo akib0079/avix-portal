@@ -174,6 +174,21 @@ export async function getMyProjectExtras(projectId: string) {
   };
 }
 
+/**
+ * The zone the signed-in client's meeting times render in: their own (captured
+ * from the browser by TimezoneSync), else the agency's. Always a real zone, so
+ * server-rendered times never fall back to the host's UTC and SSR matches
+ * hydration in client components.
+ */
+export async function getMyTimezone(): Promise<string> {
+  const user = await requireClient();
+  const me = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { timezone: true },
+  });
+  return me?.timezone || (await getBookingConfig()).agencyTimezone;
+}
+
 export async function listMyInvoices() {
   const user = await requireClient();
   return prisma.invoice.findMany({

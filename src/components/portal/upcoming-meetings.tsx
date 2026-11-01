@@ -6,18 +6,30 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CalendarDays, Video, Download } from "lucide-react";
 
-/** Renders in the CLIENT's browser, so times show in their own locale/zone. */
-function when(iso: string): string {
+/**
+ * Formats in an explicit zone: this component also renders on the server,
+ * where an unzoned format would print the host's UTC and then mismatch on
+ * hydration in the client's browser.
+ */
+function when(iso: string, timezone: string): string {
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
     weekday: "long",
     month: "long",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   }).format(new Date(iso));
 }
 
-export function UpcomingMeetings({ meetings }: { meetings: MeetingView[] }) {
+export function UpcomingMeetings({
+  meetings,
+  timezone,
+}: {
+  meetings: MeetingView[];
+  timezone: string;
+}) {
   if (meetings.length === 0) return null;
 
   return (
@@ -32,7 +44,7 @@ export function UpcomingMeetings({ meetings }: { meetings: MeetingView[] }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{m.title}</p>
                 <p className="text-xs text-muted-foreground">
-                  {when(m.startsAt)} · {m.durationMins} min
+                  {when(m.startsAt, timezone)} · {m.durationMins} min
                   {m.projectName ? ` · ${m.projectName}` : ""}
                 </p>
               </div>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getPortalOverview } from "@/lib/dal/portal";
+import { getPortalOverview, getMyTimezone } from "@/lib/dal/portal";
 import { requireClient } from "@/lib/dal/session";
 import { Greeting, LiveClock } from "@/components/dashboard/greeting";
 import { TargetDial } from "@/components/dashboard/instruments";
@@ -30,10 +30,12 @@ export default async function PortalOverviewPage() {
     { user, onboardedAt, projects, openInvoices, notifications, checklist },
     meetings,
     pendingActions,
+    timezone,
   ] = await Promise.all([
     getPortalOverview(),
     listMyUpcomingMeetings(),
     countClientActionItems(me.id),
+    getMyTimezone(),
   ]);
   // Balance owed, not headline totals — a part-paid or credited invoice isn't
   // fully open. One total per currency: EUR and USD added together is a
@@ -150,7 +152,7 @@ export default async function PortalOverviewPage() {
 
       <GettingStarted state={checklist} />
 
-      <UpcomingMeetings meetings={meetings} />
+      <UpcomingMeetings meetings={meetings} timezone={timezone} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">

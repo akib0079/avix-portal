@@ -1,5 +1,5 @@
 import { requireClient } from "@/lib/dal/session";
-import { prisma } from "@/lib/prisma";
+import { getMyTimezone } from "@/lib/dal/portal";
 import { deriveOpenSlots } from "@/lib/dal/availability";
 import { PageHeader } from "@/components/page-header";
 import { SlotPicker } from "@/components/portal/slot-picker";
@@ -7,9 +7,11 @@ import { SlotPicker } from "@/components/portal/slot-picker";
 export const metadata = { title: "Book a Meeting" };
 
 export default async function BookMeetingPage() {
-  const user = await requireClient();
-  const [me, { slots, config }] = await Promise.all([
-    prisma.user.findUnique({ where: { id: user.id }, select: { timezone: true } }),
+  await requireClient();
+  // Never null: with no zone, SlotPicker would format in the server's UTC
+  // during SSR and the browser's zone on hydration.
+  const [timezone, { slots, config }] = await Promise.all([
+    getMyTimezone(),
     deriveOpenSlots(),
   ]);
 
@@ -21,7 +23,7 @@ export default async function BookMeetingPage() {
       />
       <SlotPicker
         slots={slots}
-        timezone={me?.timezone ?? null}
+        timezone={timezone}
         slotMinutes={config.slotMinutes}
       />
     </div>
