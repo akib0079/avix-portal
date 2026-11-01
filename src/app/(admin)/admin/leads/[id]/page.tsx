@@ -8,6 +8,7 @@ import { LeadDetailActions } from "@/components/leads/lead-detail-actions";
 import { CopyButton } from "@/components/leads/copy-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usd, formatDate } from "@/lib/format";
+import { formatCurrency } from "@/lib/currency";
 import { leadSourceLabels, leadStageLabels } from "@/lib/validation/lead";
 import { cn } from "@/lib/utils";
 import {
@@ -258,15 +259,15 @@ export default async function LeadDetailPage({
               ) : (
                 <ul className="divide-y">
                   {lead.proposals.map((p) => (
-                    <li key={p.id} className="flex items-center justify-between py-2.5">
+                    <li key={p.id} className="flex items-center justify-between gap-3 py-2.5">
                       <Link
-                        href="/admin/proposals"
-                        className="text-sm font-medium hover:text-primary"
+                        href={`/admin/proposals?id=${p.id}`}
+                        className="min-w-0 text-sm font-medium [overflow-wrap:anywhere] hover:text-primary"
                       >
                         {p.title}
                       </Link>
-                      <span className="text-sm text-muted-foreground">
-                        {usd.format(p.total)} · {p.status.toLowerCase()}
+                      <span className="shrink-0 text-sm text-muted-foreground">
+                        {formatCurrency(p.total, p.currency)} · {p.status.toLowerCase()}
                       </span>
                     </li>
                   ))}

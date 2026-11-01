@@ -31,7 +31,7 @@ export type LeadView = {
 /** A lead + everything the detail page renders. */
 export type LeadDetail = LeadView & {
   entries: LeadEntryView[];
-  proposals: { id: string; title: string; status: string; total: number }[];
+  proposals: { id: string; title: string; status: string; currency: string; total: number }[];
 };
 
 export type LeadEntryView = {
@@ -96,9 +96,17 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
         orderBy: { createdAt: "desc" },
         include: { author: { select: { firstName: true, lastName: true } } },
       },
+      // Archived proposals are off the board, so off the lead too.
       proposals: {
+        where: { archivedAt: null },
         orderBy: { createdAt: "desc" },
-        include: { items: { select: { amount: true } } },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          currency: true,
+          items: { select: { amount: true } },
+        },
       },
     },
   });
@@ -119,6 +127,7 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
       id: p.id,
       title: p.title,
       status: p.status,
+      currency: p.currency,
       total: p.items.reduce((sum, i) => sum + Number(i.amount), 0),
     })),
   };

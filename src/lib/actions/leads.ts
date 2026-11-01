@@ -186,8 +186,28 @@ export async function deleteLeadEntry(id: string): Promise<ActionResult> {
 
 export async function deleteLead(id: string): Promise<ActionResult> {
   await requireAdmin();
-  const lead = await prisma.lead.findUnique({ where: { id } });
+  const [lead, agreed] = await Promise.all([
+    prisma.lead.findUnique({ where: { id }, select: { id: true } }),
+    // Proposals go with their lead (onDelete: Cascade). An accepted or signed
+    // one is the agreement behind a client's project and invoice, so it must
+    // never disappear as a side effect of tidying the pipeline.
+    prisma.proposal.count({
+      where: {
+        leadId: id,
+        OR: [{ status: "ACCEPTED" }, { acceptedAt: { not: null } }, { signatures: { some: {} } }],
+      },
+    }),
+  ]);
   if (!lead) return { ok: false, error: "Lead not found." };
+  if (agreed > 0) {
+    return {
+      ok: false,
+      error:
+        agreed === 1
+          ? "This lead has an accepted proposal, the agreement behind a client project. Keep the lead (mark it Won) instead of deleting it."
+          : `This lead has ${agreed} accepted proposals, the agreements behind client projects. Keep the lead (mark it Won) instead of deleting it.`,
+    };
+  }
 
   await prisma.lead.delete({ where: { id } });
   revalidatePath("/admin/leads");
