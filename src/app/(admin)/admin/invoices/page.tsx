@@ -64,6 +64,7 @@ export default async function InvoicesPage({
           deletable: canDeleteInvoice({
             status: invoice.status,
             sentAt: invoice.sentAt,
+            paymentClaimedAt: invoice.paymentClaimedAt,
             amountPaid: Number(invoice.amountPaid),
             paymentCount: invoice._count.payments,
             creditNoteCount: invoice.creditNotes.length,

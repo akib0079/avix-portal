@@ -31,13 +31,15 @@ export function sendBlocker(invoice: Kind): string | null {
 
 /**
  * Deleting is only for an invoice nobody has been sent and no money has
- * touched: a draft or an unsent one with no payments and no credit notes.
- * Anything else is cancelled instead, so its number and history stay on the
- * record (a hard delete also took its payments and tasks with it).
+ * touched: a draft or an unsent one with no payments, no credit notes and no
+ * client saying they paid it. Anything else is cancelled instead, so its
+ * number and history stay on the record (a hard delete also took its
+ * payments and tasks with it).
  */
 export function canDeleteInvoice(invoice: {
   status: InvoiceStatus;
   sentAt: Date | string | null;
+  paymentClaimedAt: Date | string | null;
   amountPaid: number;
   paymentCount: number;
   creditNoteCount: number;
@@ -45,6 +47,7 @@ export function canDeleteInvoice(invoice: {
   return (
     (invoice.status === "DRAFT" || invoice.status === "ASSIGNED") &&
     !invoice.sentAt &&
+    !invoice.paymentClaimedAt &&
     invoice.amountPaid <= 0 &&
     invoice.paymentCount === 0 &&
     invoice.creditNoteCount === 0

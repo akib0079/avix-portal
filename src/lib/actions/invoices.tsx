@@ -105,7 +105,16 @@ async function resolveRefs(
     data.projectId === "none"
       ? null
       : prisma.project.findFirst({
-          where: { id: data.projectId, OR: [{ clientId: data.clientId }, { clientId: null }] },
+          where: {
+            id: data.projectId,
+            OR: [
+              { clientId: data.clientId },
+              { clientId: null },
+              // An edit may keep the project it already had, even if that
+              // project has since moved to another client.
+              ...(selfId ? [{ invoices: { some: { id: selfId, clientId: data.clientId } } }] : []),
+            ],
+          },
           select: { id: true },
         }),
     // Checked before any PDF is stored: a duplicate number is an ordinary
@@ -872,6 +881,7 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
       sentAt: true,
       amountPaid: true,
       pdfPath: true,
+      paymentClaimedAt: true,
       creditNoteForId: true,
       _count: { select: { payments: true, creditNotes: true } },
     },
@@ -880,6 +890,7 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
   const deletable = canDeleteInvoice({
     status: invoice.status,
     sentAt: invoice.sentAt,
+    paymentClaimedAt: invoice.paymentClaimedAt,
     amountPaid: Number(invoice.amountPaid),
     paymentCount: invoice._count.payments,
     creditNoteCount: invoice._count.creditNotes,
@@ -888,7 +899,7 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
     return {
       ok: false,
       error:
-        "This invoice has been sent, paid or credited, so it can't be deleted. Cancel it instead: it keeps its number and its history.",
+        "This invoice has been sent, paid, credited or reported paid, so it can't be deleted. Cancel it instead: it keeps its number and its history.",
     };
   }
 

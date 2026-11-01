@@ -109,6 +109,7 @@ test("only an untouched, unsent draft can be deleted", () => {
   const fresh = {
     status: "DRAFT" as const,
     sentAt: null,
+    paymentClaimedAt: null,
     amountPaid: 0,
     paymentCount: 0,
     creditNoteCount: 0,
@@ -120,6 +121,7 @@ test("only an untouched, unsent draft can be deleted", () => {
   assert.equal(canDeleteInvoice({ ...fresh, paymentCount: 1 }), false);
   assert.equal(canDeleteInvoice({ ...fresh, amountPaid: 450 }), false);
   assert.equal(canDeleteInvoice({ ...fresh, creditNoteCount: 1 }), false);
+  assert.equal(canDeleteInvoice({ ...fresh, status: "ASSIGNED", paymentClaimedAt: new Date() }), false);
 });
 
 test("an invoice can go back to draft only before the client has had it", () => {
