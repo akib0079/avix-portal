@@ -447,17 +447,25 @@ async function autoSend(pass: PlanPass): Promise<"sent" | "failed" | null> {
   return "failed";
 }
 
-/** A run problem, kept on the plan and told to the admins once, not every pass. */
-async function reportError(plan: PlanRun, message: string, link: string): Promise<void> {
-  if (plan.lastRunError === message) return;
+/**
+ * A run problem, kept on the plan and told to the admins once, not every
+ * pass. lastRunAt moves either way, so a plan that keeps failing goes to the
+ * back of the duty's queue instead of taking a place in every batch.
+ */
+async function reportError(plan: PlanRun, message: string, link: string, now: Date): Promise<void> {
   await Promise.all([
-    prisma.retainer.update({ where: { id: plan.id }, data: { lastRunError: message } }),
-    notifyAllAdmins({
-      type: "RECURRING_INVOICE_FAILED",
-      title: `Recurring plan “${plan.title}” needs you`,
-      body: message,
-      link,
+    prisma.retainer.update({
+      where: { id: plan.id },
+      data: { lastRunError: message, lastRunAt: now },
     }),
+    plan.lastRunError === message
+      ? null
+      : notifyAllAdmins({
+          type: "RECURRING_INVOICE_FAILED",
+          title: `Recurring plan “${plan.title}” needs you`,
+          body: message,
+          link,
+        }),
   ]);
 }
 
@@ -507,6 +515,7 @@ export async function processDuePlan(
           plan,
           pass.error,
           pass.created[0] ? `/admin/invoices/${pass.created[0].id}` : "/admin/retainers",
+          now,
         )
       : null,
   ]);

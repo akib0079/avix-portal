@@ -183,7 +183,12 @@ async function generateScheduledInvoices(now: Date): Promise<void> {
     getBookingConfig(),
     prisma.retainer.findMany({
       where: { active: true, OR: [{ nextRunAt: { lte: now } }, { nextRunAt: null }] },
-      orderBy: { nextRunAt: { sort: "asc", nulls: "first" } },
+      // Least recently run first: a plan whose run keeps failing (it records
+      // the attempt) can't hold a place in every batch.
+      orderBy: [
+        { lastRunAt: { sort: "asc", nulls: "first" } },
+        { nextRunAt: { sort: "asc", nulls: "first" } },
+      ],
       take: PLAN_BATCH,
       select: planRunSelect,
     }),
