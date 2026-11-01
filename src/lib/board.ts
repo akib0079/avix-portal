@@ -427,6 +427,8 @@ export type WorkLink = { tab: string | null; view: WorkView | null; itemId: stri
  *
  *   ?tab=board&task=<id>    an admin board card (v48)    → Milestones, board
  *   ?tab=milestones         the admin milestone list     → Milestones, list
+ *   ?tab=requests           the admin's Requests tab     → Milestones, list (its
+ *                           Requested section is where requests are decided now)
  *   ?view=board&task=<id>   a portal board card (v48)    → Milestones, board
  *   ?view=timeline          the portal timeline          → Milestones, list
  *   ?view=files|billing     portal tabs, before ?tab=    → that tab
@@ -454,7 +456,7 @@ export function resolveWorkLink(params: { get(name: string): string | null }): W
   if (tab === "board") {
     tab = WORK_TAB;
     view = view ?? "board";
-  } else if (tab === "timeline") {
+  } else if (tab === "timeline" || tab === "requests") {
     tab = WORK_TAB;
     view = view ?? "list";
   } else if (tab === WORK_TAB && !view && !itemId) {

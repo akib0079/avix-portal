@@ -1,6 +1,7 @@
 import {
   isAwaitingRating,
   isAwaitingReview,
+  isInvoiceToPay,
   isOpenRequest,
   isPlanItem,
 } from "@/lib/work-scope";
@@ -131,8 +132,13 @@ export type PendingWork = {
   deliverablesNeedingChanges: number;
   /** Client requests still waiting in Requested. */
   openRequests: number;
-  /** Invoices neither PAID nor CANCELLED. */
+  /** Invoices not yet settled: neither paid, cancelled nor still a draft. */
   unpaidInvoices: number;
+  /**
+   * What the client can pay now: sent or part-paid, not reported paid (see
+   * INVOICE_TO_PAY). The client's own count — a draft is never theirs.
+   */
+  invoicesToPay: number;
   total: number;
 };
 
@@ -146,7 +152,12 @@ export function pendingWork(input: {
     clientRating: number | null;
   }[];
   deliverables: { reviewStatus: string | null }[];
-  invoices?: { status: string }[];
+  invoices?: {
+    status: string;
+    paymentClaimedAt?: string | Date | null;
+    amount?: number | null;
+    amountPaid?: number | null;
+  }[];
 }): PendingWork {
   const milestonesAwaitingApproval = input.milestones.filter(isAwaitingReview).length;
   const milestonesAwaitingRating = input.milestones.filter(isAwaitingRating).length;
@@ -157,9 +168,13 @@ export function pendingWork(input: {
     (d) => d.reviewStatus === "CHANGES_REQUESTED",
   ).length;
   const openRequests = input.milestones.filter(isOpenRequest).length;
-  const unpaidInvoices = (input.invoices ?? []).filter(
-    (i) => i.status !== "PAID" && i.status !== "CANCELLED",
+  const invoices = input.invoices ?? [];
+  // A draft is being prepared and owes nothing yet — counting it showed the
+  // client a "settle" nag for an invoice they can't even open.
+  const unpaidInvoices = invoices.filter(
+    (i) => i.status !== "PAID" && i.status !== "CANCELLED" && i.status !== "DRAFT",
   ).length;
+  const invoicesToPay = invoices.filter(isInvoiceToPay).length;
 
   return {
     milestonesAwaitingApproval,
@@ -168,6 +183,7 @@ export function pendingWork(input: {
     deliverablesNeedingChanges,
     openRequests,
     unpaidInvoices,
+    invoicesToPay,
     total:
       milestonesAwaitingApproval +
       milestonesAwaitingRating +

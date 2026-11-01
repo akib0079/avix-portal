@@ -204,6 +204,9 @@ test("old links keep resolving", () => {
   assert.deepEqual(link("tab=board&task=m1"), { tab: "milestones", view: "board", itemId: "m1" });
   assert.deepEqual(link("tab=board"), { tab: "milestones", view: "board", itemId: null });
   assert.deepEqual(link("tab=milestones"), { tab: "milestones", view: "list", itemId: null });
+  // The admin's Requests tab folded into the list, where requests are decided.
+  assert.deepEqual(link("tab=requests"), { tab: "milestones", view: "list", itemId: null });
+  assert.deepEqual(link("tab=requests&item=m1"), { tab: "milestones", view: "list", itemId: "m1" });
   assert.deepEqual(link("view=board&task=m1"), { tab: "milestones", view: "board", itemId: "m1" });
   assert.deepEqual(link("view=timeline"), { tab: "milestones", view: "list", itemId: null });
   assert.deepEqual(link("view=files"), { tab: "files", view: null, itemId: null });

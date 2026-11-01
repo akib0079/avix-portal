@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   AWAITING_RATING,
   AWAITING_REVIEW,
+  INVOICE_TO_PAY,
   OPEN_REQUEST,
   PLAN_ITEM,
   TEAM_QUESTION,
@@ -10,6 +11,7 @@ import {
   hasTeamQuestion,
   isAwaitingRating,
   isAwaitingReview,
+  isInvoiceToPay,
   isOpenRequest,
   isPlanItem,
 } from "./work-scope";
@@ -135,7 +137,13 @@ test("pending work reads the same rules", () => {
   const pending = pendingWork({
     milestones: items,
     deliverables: [{ reviewStatus: null }, { reviewStatus: "CHANGES_REQUESTED" }],
-    invoices: [{ status: "SENT" }, { status: "PAID" }],
+    invoices: [
+      { status: "SENT" },
+      { status: "PAID" },
+      // Drafts owe nothing yet; a claimed one waits on us, not the client.
+      { status: "DRAFT" },
+      { status: "IN_REVIEW", paymentClaimedAt: "2026-11-01T00:00:00Z" },
+    ],
   });
   assert.deepEqual(pending, {
     milestonesAwaitingApproval: 2,
@@ -143,7 +151,31 @@ test("pending work reads the same rules", () => {
     deliverablesAwaitingReview: 1,
     deliverablesNeedingChanges: 1,
     openRequests: 1,
-    unpaidInvoices: 1,
-    total: 7,
+    unpaidInvoices: 2,
+    invoicesToPay: 1,
+    total: 8,
   });
+});
+
+test("an invoice is the client's to pay once it's sent and until they report paying it", () => {
+  assert.deepEqual(INVOICE_TO_PAY, {
+    status: { in: ["SENT", "PARTIALLY_PAID"] },
+    paymentClaimedAt: null,
+  });
+  // Never a draft, or one created but not sent: the client can't open those.
+  for (const status of ["DRAFT", "ASSIGNED", "IN_REVIEW", "PAID", "CANCELLED"]) {
+    assert.equal(isInvoiceToPay({ status }), false, status);
+  }
+  assert.equal(isInvoiceToPay({ status: "SENT" }), true);
+  assert.equal(isInvoiceToPay({ status: "PARTIALLY_PAID", amount: 1000, amountPaid: 400 }), true);
+  assert.equal(
+    isInvoiceToPay({ status: "SENT", paymentClaimedAt: "2026-11-01T00:00:00Z" }),
+    false,
+    "reported paid: it waits on us now",
+  );
+  assert.equal(
+    isInvoiceToPay({ status: "PARTIALLY_PAID", amount: 1000, amountPaid: 1000 }),
+    false,
+    "nothing left to pay",
+  );
 });
