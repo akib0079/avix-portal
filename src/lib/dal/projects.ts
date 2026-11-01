@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
 import { PLAN_ITEM } from "@/lib/work-scope";
@@ -74,6 +75,12 @@ export type ProjectWorkspace = Awaited<ReturnType<typeof getProjectWorkspace>>;
  *
  * Money-bearing pieces are omitted for STAFF, matching getProject.
  */
+const MONEY_ACTIVITY = [
+  { type: { startsWith: "invoice." } },
+  { type: { startsWith: "proposal." } },
+  { type: { startsWith: "retainer." } },
+] satisfies Prisma.ActivityEventWhereInput[];
+
 export async function getProjectWorkspace(projectId: string) {
   const viewer = await requireTeam();
   const isAdmin = viewer.role === "ADMIN";
@@ -117,7 +124,8 @@ export async function getProjectWorkspace(projectId: string) {
         })
       : Promise.resolve([]),
     prisma.activityEvent.findMany({
-      where: { projectId },
+      // Invoice, proposal and plan entries carry amounts in their summaries.
+      where: isAdmin ? { projectId } : { projectId, NOT: MONEY_ACTIVITY },
       orderBy: { createdAt: "desc" },
       take: 20,
       select: { id: true, type: true, summary: true, link: true, createdAt: true },
