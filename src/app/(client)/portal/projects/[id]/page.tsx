@@ -79,6 +79,9 @@ export default async function MyProjectPage({
   // agree on what now is.
   const renderedAt = serverNow();
   const board = { items, people, phases: phasesOf(items), version: version ?? "" };
+  // A draft is being prepared and isn't the client's to see yet — kept off
+  // this page whatever the read hands back.
+  const invoices = extras.invoices.filter((i) => i.status !== "DRAFT");
 
   const health = projectHealth({
     milestones: items,
@@ -89,7 +92,7 @@ export default async function MyProjectPage({
   const pending = pendingWork({
     milestones: items,
     deliverables,
-    invoices: extras.invoices,
+    invoices,
   });
   const waiting = clientWaiting(items);
   const openTasks = items.filter((i) => i.stage !== "DONE").length;
@@ -115,11 +118,11 @@ export default async function MyProjectPage({
       value: "billing",
       label: "Billing & calls",
       icon: "money" as const,
-      count: extras.invoices.length,
+      count: invoices.length,
       alert: pending.invoicesToPay > 0,
       content: (
         <BillingAndCalls
-          invoices={extras.invoices}
+          invoices={invoices}
           meetings={extras.meetings}
           timezone={extras.timezone}
         />
