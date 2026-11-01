@@ -5,89 +5,109 @@ import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { logActivity } from "@/lib/dal/activity";
+import { itemAccess } from "@/lib/dal/project-board";
+import {
+  announceApproval,
+  announceSendBack,
+  later,
+  writeApproval,
+  writeSendBack,
+} from "@/lib/work-items";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+function revalidateProject(projectId: string) {
+  revalidatePath(`/portal/projects/${projectId}`);
+  revalidatePath(`/admin/projects/${projectId}`);
+  revalidatePath("/portal/actions");
+}
+
 /**
- * Client approves a COMPLETED milestone on one of their own projects.
- * In-app admin notification only — no email (anti-spam rule).
+ * Client approves work the team sent for review: it moves to Done, approved.
+ * The same write as approving by dragging the card to Done on the board.
+ * Work finished before v49 (Done, never approved) can still be approved; it
+ * just gets the stamp. In-app admin notification only — no email.
  */
 export async function approveMilestone(id: string): Promise<ActionResult> {
-  const user = await requireClient();
+  await requireClient();
+  const access = await itemAccess(id);
+  if (!access || access.viewer.side !== "CLIENT") return { ok: false, error: "Milestone not found." };
+  const { viewer, item } = access;
+  if (item.archivedAt) return { ok: false, error: "Milestone not found." };
+  if (item.clientApprovedAt) return { ok: true }; // already approved
 
-  const milestone = await prisma.milestone.findFirst({
-    where: { id, project: { clientId: user.id } },
-    include: { project: { select: { id: true, projectName: true } } },
-  });
-  if (!milestone) return { ok: false, error: "Milestone not found." };
-  if (milestone.status !== "COMPLETED") {
-    return { ok: false, error: "Only completed milestones can be approved." };
+  if (item.stage === "REVIEW") {
+    await writeApproval(item);
+  } else if (item.stage === "DONE") {
+    await prisma.milestone.update({ where: { id: item.id }, data: { clientApprovedAt: new Date() } });
+  } else {
+    return { ok: false, error: "Only work that's ready for your review can be approved." };
   }
-  if (milestone.clientApprovedAt) return { ok: true }; // already approved
 
-  await prisma.milestone.update({
-    where: { id },
-    data: { clientApprovedAt: new Date() },
-  });
-  await notifyAllAdmins({
-    type: "MILESTONE_APPROVED",
-    title: `${user.firstName || "Client"} approved: ${milestone.title}`,
-    body: `on ${milestone.project.projectName}`,
-    link: `/admin/projects/${milestone.project.id}`,
-  });
-  await logActivity({
-    type: "milestone.approved",
-    summary: `${user.firstName || "Client"} approved milestone: ${milestone.title}`,
-    actorId: user.id,
-    clientId: user.id,
-    projectId: milestone.project.id,
-    entity: "project",
-    entityId: milestone.project.id,
-    link: `/admin/projects/${milestone.project.id}`,
-  });
-
-  revalidatePath(`/portal/projects/${milestone.project.id}`);
-  revalidatePath(`/admin/projects/${milestone.project.id}`);
+  later(() => announceApproval(viewer, item));
+  revalidateProject(item.projectId);
   return { ok: true };
 }
 
 /**
- * Client rates satisfaction on a COMPLETED milestone: 1 = 👍, -1 = 👎, with an
- * optional note. Idempotent-ish — re-rating overwrites. In-app admin notice only.
+ * Client sends work in review back to the team, saying what needs changing.
+ * The note is posted on the item, where the team will work from it.
+ */
+export async function sendBackMilestone(id: string, comment: string): Promise<ActionResult> {
+  await requireClient();
+  const note = comment.trim().slice(0, 5000);
+  if (!note) return { ok: false, error: "Tell the team what needs changing." };
+  const access = await itemAccess(id);
+  if (!access || access.viewer.side !== "CLIENT") return { ok: false, error: "Milestone not found." };
+  const { viewer, item } = access;
+  if (item.archivedAt || item.stage !== "REVIEW") {
+    return { ok: false, error: "Only work that's waiting for your review can be sent back." };
+  }
+
+  await writeSendBack(viewer, item, "IN_PROGRESS", note);
+  later(() => announceSendBack(viewer, item, "IN_PROGRESS", note));
+  revalidateProject(item.projectId);
+  return { ok: true };
+}
+
+/**
+ * Client rates satisfaction on finished work: 1 = 👍, -1 = 👎, with an
+ * optional note. Top-level items only — a phase or a milestone, not every
+ * small task inside one. Re-rating overwrites. In-app admin notice only.
  */
 export async function rateMilestone(
   id: string,
   rating: 1 | -1,
   note?: string,
 ): Promise<ActionResult> {
-  const user = await requireClient();
+  await requireClient();
   if (rating !== 1 && rating !== -1) {
     return { ok: false, error: "Invalid rating." };
   }
 
-  const milestone = await prisma.milestone.findFirst({
-    where: { id, project: { clientId: user.id } },
-    include: { project: { select: { id: true, projectName: true } } },
-  });
-  if (!milestone) return { ok: false, error: "Milestone not found." };
-  if (milestone.status !== "COMPLETED") {
-    return { ok: false, error: "Only completed milestones can be rated." };
+  const access = await itemAccess(id);
+  if (!access || access.viewer.side !== "CLIENT") return { ok: false, error: "Milestone not found." };
+  const { viewer, item } = access;
+  if (item.archivedAt || item.stage !== "DONE" || item.parentId) {
+    return { ok: false, error: "Only finished milestones can be rated." };
   }
 
   const trimmed = note?.trim().slice(0, 1000) || null;
   await prisma.milestone.update({
-    where: { id },
+    where: { id: item.id },
     data: { clientRating: rating, clientRatingNote: trimmed, ratedAt: new Date() },
   });
-  await notifyAllAdmins({
-    type: "MILESTONE_UPDATED",
-    title: `${user.firstName || "Client"} rated ${rating === 1 ? "👍" : "👎"}: ${milestone.title}`,
-    body: trimmed ? `“${trimmed}”` : `on ${milestone.project.projectName}`,
-    link: `/admin/projects/${milestone.project.id}`,
-  });
+  const firstName = viewer.user.firstName || "Client";
+  later(() =>
+    notifyAllAdmins({
+      type: "MILESTONE_UPDATED",
+      title: `${firstName} rated ${rating === 1 ? "👍" : "👎"}: ${item.title}`,
+      body: trimmed ? `“${trimmed}”` : `on ${viewer.project.projectName}`,
+      link: `/admin/projects/${item.projectId}`,
+    }),
+  );
 
-  revalidatePath(`/portal/projects/${milestone.project.id}`);
-  revalidatePath(`/admin/projects/${milestone.project.id}`);
+  revalidateProject(item.projectId);
   return { ok: true };
 }
 

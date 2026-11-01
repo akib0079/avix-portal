@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { approveMilestone } from "@/lib/actions/portal";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -14,7 +13,6 @@ export function ApproveMilestoneButton({
   milestoneId: string;
   approvedAt: string | null;
 }) {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   // Optimistic: flip to approved immediately, revert on failure.
   const [approved, setApproved] = useState(!!approvedAt);
@@ -43,8 +41,9 @@ export function ApproveMilestoneButton({
           toast.error(result.error);
           return;
         }
+        // approveMilestone revalidates this page; Next applies that render
+        // from the action's response, so no router.refresh().
         toast.success("Milestone approved — thank you!");
-        router.refresh();
       }}
     >
       {busy ? <Loader2 className="animate-spin" /> : <ThumbsUp />}

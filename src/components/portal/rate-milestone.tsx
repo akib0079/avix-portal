@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { rateMilestone } from "@/lib/actions/portal";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,7 +17,6 @@ export function RateMilestone({
   rating: number | null;
   note: string | null;
 }) {
-  const router = useRouter();
   const [current, setCurrent] = useState<number | null>(rating);
   const [pendingChoice, setPendingChoice] = useState<1 | -1 | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -48,8 +46,8 @@ export function RateMilestone({
     }
     setCurrent(choice);
     setPendingChoice(null);
+    // rateMilestone revalidates this page; no router.refresh() needed.
     toast.success("Thanks for your feedback!");
-    router.refresh();
   }
 
   // Picking 👍/👎 opens an optional note, then a confirm.
