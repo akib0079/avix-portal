@@ -315,6 +315,7 @@ function PlanList({
   };
 
   async function onDragEnd(event: DragEndEvent) {
+    work.endDrag();
     const { active, over } = event;
     if (!over) return;
     const next = reorderPlan(tree, String(active.id), String(over.id));
@@ -332,7 +333,15 @@ function PlanList({
 
   return (
     // Stable id keeps dnd-kit's aria ids identical between server and client.
-    <DndContext id={`plan-${work.projectId}`} sensors={sensors} collisionDetection={collisions} onDragEnd={onDragEnd}>
+    <DndContext
+      id={`plan-${work.projectId}`}
+      sensors={sensors}
+      collisionDetection={collisions}
+      // The poll holds off while a row is in the air, as on the board.
+      onDragStart={() => void work.beginDrag()}
+      onDragEnd={onDragEnd}
+      onDragCancel={work.endDrag}
+    >
       <SortableContext items={rows.map((r) => r.item.id)} strategy={verticalListSortingStrategy}>
         <ol className="space-y-2">
           {rows.map((row, index) => (
