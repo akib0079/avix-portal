@@ -59,7 +59,9 @@ export async function renderSignedProposalPdf(
         proposal: { select: { firstViewedAt: true, events: AUDIT_EVENTS } },
       },
     }),
-    getBranding(),
+    // Branding is decoration: failing to read it must not cost the signer
+    // their copy, so the house defaults stand in.
+    getBranding().catch(() => ({ color: null, invoiceLogoFile: null })),
   ]);
   if (!row) return null;
   const snapshot = parseSnapshot(row.snapshot);
