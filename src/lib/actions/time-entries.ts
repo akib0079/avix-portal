@@ -4,11 +4,13 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
 import { timeEntrySchema, type TimeEntryInput } from "@/lib/validation/time-entry";
+import { parseDay } from "@/lib/board";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-function parseDate(value: string): Date {
-  return new Date(`${value}T00:00:00`);
+/** The schema guarantees the shape; parseDay also rejects impossible days. */
+function parseDate(value: string): Date | null {
+  return parseDay(value) ?? null;
 }
 
 function revalidateProject(projectId: string) {
@@ -29,6 +31,8 @@ export async function createTimeEntry(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
+  const date = parseDate(data.date);
+  if (!date) return { ok: false, error: "Pick a valid date" };
 
   const milestone = await prisma.milestone.findUnique({
     where: { id: milestoneId },
@@ -41,7 +45,7 @@ export async function createTimeEntry(
       milestoneId,
       // Attribution powers "my hours this week" and utilisation reporting.
       userId: viewer.id,
-      date: parseDate(data.date),
+      date,
       hours: data.hours,
       note: data.note || null,
     },
@@ -61,6 +65,8 @@ export async function updateTimeEntry(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
+  const date = parseDate(data.date);
+  if (!date) return { ok: false, error: "Pick a valid date" };
 
   const entry = await prisma.timeEntry.findUnique({
     where: { id },
@@ -71,7 +77,7 @@ export async function updateTimeEntry(
   await prisma.timeEntry.update({
     where: { id },
     data: {
-      date: parseDate(data.date),
+      date,
       hours: data.hours,
       note: data.note || null,
     },

@@ -5,7 +5,32 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireTeam } from "@/lib/dal/session";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
 import { logActivity } from "@/lib/dal/activity";
-import type { Prisma, MilestoneStatus } from "@prisma/client";
+import type { Prisma, MilestoneStatus, ProjectTaskStatus } from "@prisma/client";
+import { stageToStatus, stageWrite, statusToStage } from "@/lib/work-stage";
+import {
+  approvalAfterMove,
+  canMoveWorkItem,
+  parentProblem,
+  parseDay,
+  workItemHref,
+  workRole,
+} from "@/lib/board";
+import {
+  NO_PRICING,
+  archiveTree,
+  endOfColumn,
+  hasHistory,
+  later,
+  placeNew,
+  pricingColumns,
+} from "@/lib/work-items";
+
+/**
+ * The Milestones list's writes. A milestone is the one work item (v49): the
+ * board shows the same rows, so every stage change here goes through
+ * stageWrite() and lands at the end of its board column, and the board's own
+ * rules (canMoveWorkItem) apply to it too.
+ */
 
 const clientInclude = {
   project: {
@@ -48,15 +73,6 @@ function stableStringify(value: unknown): string {
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-function pricingData(data: MilestoneInput) {
-  return {
-    pricingType: data.pricingType,
-    hourlyRate: data.pricingType === "HOURLY" ? data.hourlyRate : null,
-    estimatedHours: data.pricingType === "HOURLY" ? (data.estimatedHours ?? null) : null,
-    fixedPrice: data.pricingType === "FIXED" ? data.fixedPrice : null,
-  };
-}
-
 /** "none"/empty clears the field; anything else must be a real team member. */
 async function resolveAssignee(value: string | undefined): Promise<string | null> {
   if (!value || value === "none") return null;
@@ -67,10 +83,29 @@ async function resolveAssignee(value: string | undefined): Promise<string | null
   return user?.id ?? null;
 }
 
-function parseDueDate(value: string | undefined): Date | null {
-  if (!value) return null;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
+/** null/"none" = top level; undefined = not given. */
+function parentChoice(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  return !value || value === "none" ? null : value;
+}
+
+/** Why `parentId` can't hold this item, or null when it can (or isn't set). */
+async function checkParent(
+  parentId: string | null | undefined,
+  projectId: string,
+  item: { id?: string; childCount: number },
+): Promise<string | null> {
+  if (!parentId) return null;
+  const parent = await prisma.milestone.findUnique({
+    where: { id: parentId },
+    select: { id: true, projectId: true, parentId: true, stage: true, archivedAt: true },
+  });
+  return parentProblem(item, parent, projectId);
+}
+
+function revalidateProject(projectId: string) {
+  revalidatePath(`/admin/projects/${projectId}`);
+  revalidatePath(`/portal/projects/${projectId}`);
 }
 
 export async function createMilestone(
@@ -83,31 +118,38 @@ export async function createMilestone(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
+  const stage: ProjectTaskStatus = data.stage ?? "TODO";
+  const parentId = parentChoice(data.parentId) ?? null;
 
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  const [project, assigneeId, parentError, place] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId }, select: { id: true } }),
+    resolveAssignee(data.assigneeId),
+    checkParent(parentId, projectId, { childCount: 0 }),
+    placeNew(projectId, stage),
+  ]);
   if (!project) return { ok: false, error: "Project not found." };
-
-  const last = await prisma.milestone.aggregate({
-    where: { projectId },
-    _max: { position: true },
-  });
+  if (parentError) return { ok: false, error: parentError };
 
   await prisma.milestone.create({
     data: {
       projectId,
       title: data.title,
       description: (data.description as Prisma.InputJsonValue) ?? undefined,
-      position: (last._max.position ?? -1) + 1,
-      assigneeId: await resolveAssignee(data.assigneeId),
-      dueDate: parseDueDate(data.dueDate),
+      ...stageWrite(stage),
+      position: place.position,
+      boardPosition: place.boardPosition,
+      priority: data.priority ?? null,
+      parentId,
+      assigneeId,
+      dueDate: parseDay(data.dueDate) ?? null,
+      createdById: viewer.id,
+      createdByRole: "ADMIN",
       // Staff are money-blind: any pricing they submit is discarded.
-      ...(viewer.role === "ADMIN"
-        ? pricingData(data)
-        : { pricingType: "NONE" as const, hourlyRate: null, estimatedHours: null, fixedPrice: null }),
+      ...(viewer.role === "ADMIN" ? pricingColumns(data) : NO_PRICING),
     },
   });
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProject(projectId);
   return { ok: true };
 }
 
@@ -121,17 +163,32 @@ export async function updateMilestone(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
+  const role = workRole(viewer.role)!;
 
   const milestone = await prisma.milestone.findUnique({
     where: { id },
-    include: clientInclude,
+    include: { ...clientInclude, _count: { select: { children: { where: { archivedAt: null } } } } },
   });
   if (!milestone) return { ok: false, error: "Milestone not found." };
+  if (milestone.archivedAt) return { ok: false, error: "This milestone is archived — restore it first." };
+
+  const nextStage = data.stage && data.stage !== milestone.stage ? data.stage : null;
+  if (nextStage) {
+    const move = canMoveWorkItem({ role }, milestone, milestone.stage, nextStage);
+    if (!move.ok) return { ok: false, error: move.error };
+  }
+  const parentId = parentChoice(data.parentId);
+  const [assigneeId, parentError, boardPosition] = await Promise.all([
+    resolveAssignee(data.assigneeId),
+    checkParent(parentId, milestone.projectId, { id, childCount: milestone._count.children }),
+    nextStage ? endOfColumn(milestone.projectId, nextStage) : null,
+  ]);
+  if (parentError) return { ok: false, error: parentError };
 
   // Staff edits keep the stored pricing untouched (they never see it anyway).
   const pricing =
     viewer.role === "ADMIN"
-      ? pricingData(data)
+      ? pricingColumns(data)
       : {
           pricingType: milestone.pricingType,
           hourlyRate: milestone.hourlyRate,
@@ -143,13 +200,22 @@ export async function updateMilestone(
     data: {
       title: data.title,
       description: (data.description as Prisma.InputJsonValue) ?? undefined,
-      assigneeId: await resolveAssignee(data.assigneeId),
-      dueDate: parseDueDate(data.dueDate),
+      assigneeId,
+      dueDate: parseDay(data.dueDate) ?? null,
+      ...(data.priority !== undefined ? { priority: data.priority } : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
+      ...(nextStage
+        ? {
+            ...stageWrite(nextStage, milestone),
+            clientApprovedAt: approvalAfterMove(nextStage, role, milestone.clientApprovedAt),
+            boardPosition: boardPosition!,
+          }
+        : {}),
       ...pricing,
     },
   });
 
-  // Automated "task details updated" email — only when something actually
+  // Automated "task details updated" notice — only when something actually
   // changed, so re-saving an unchanged dialog doesn't spam the client.
   // description === undefined means "not touched" (Prisma skips the column).
   const descriptionChanged =
@@ -166,69 +232,96 @@ export async function updateMilestone(
 
   // In-app notification only (no email) — clients found per-milestone emails
   // noisy, so milestone changes surface via the notification bell instead.
+  // A request still waiting for a decision isn't the client's work item yet.
   const client = activeClient(milestone);
-  if (changed && client) {
-    await prisma.notification.create({
-      data: {
-        userId: client.id,
-        type: "MILESTONE_UPDATED",
-        title: `Task updated: ${data.title}`,
-        body: `on ${milestone.project.projectName}`,
-        link: `/portal/projects/${milestone.projectId}`,
-      },
-    });
+  if (changed && client && milestone.stage !== "REQUESTED") {
+    later(() =>
+      prisma.notification.create({
+        data: {
+          userId: client.id,
+          type: "MILESTONE_UPDATED",
+          title: `Task updated: ${data.title}`,
+          body: `on ${milestone.project.projectName}`,
+          link: workItemHref(milestone.projectId, milestone.id, "CLIENT", "list"),
+        },
+      }),
+    );
   }
 
-  revalidatePath(`/admin/projects/${milestone.projectId}`);
-  revalidatePath(`/portal/projects/${milestone.projectId}`);
+  revalidateProject(milestone.projectId);
   return { ok: true };
 }
 
+/**
+ * The list's three-state picker. Mapped onto the board's stages: picking the
+ * state an item is already in (In review and Done are both "Completed")
+ * leaves its stage alone.
+ */
 export async function setMilestoneStatus(
   id: string,
   status: MilestoneStatus,
 ): Promise<ActionResult> {
-  await requireTeam();
+  const viewer = await requireTeam();
+  const role = workRole(viewer.role)!;
   const milestone = await prisma.milestone.findUnique({
     where: { id },
     include: clientInclude,
   });
   if (!milestone) return { ok: false, error: "Milestone not found." };
 
-  await prisma.milestone.update({ where: { id }, data: { status } });
+  const next = stageToStatus(milestone.stage) === status ? milestone.stage : statusToStage(status);
+  if (next === milestone.stage) return { ok: true };
+  const move = canMoveWorkItem({ role }, milestone, milestone.stage, next);
+  if (!move.ok) return { ok: false, error: move.error };
+
+  await prisma.milestone.update({
+    where: { id },
+    data: {
+      ...stageWrite(next, milestone),
+      clientApprovedAt: approvalAfterMove(next, role, milestone.clientApprovedAt),
+      boardPosition: await endOfColumn(milestone.projectId, next),
+    },
+  });
 
   // In-app notification only (no email) on the transition into COMPLETED —
   // progress shows in the notification bell; no per-milestone emails.
   const client = activeClient(milestone);
   if (status === "COMPLETED" && milestone.status !== "COMPLETED" && client) {
-    const [done, total] = await Promise.all([
-      prisma.milestone.count({
-        where: { projectId: milestone.projectId, status: "COMPLETED" },
-      }),
-      prisma.milestone.count({ where: { projectId: milestone.projectId } }),
-    ]);
-    await prisma.notification.create({
-      data: {
-        userId: client.id,
-        type: "MILESTONE_COMPLETED",
-        title: `Completed: ${milestone.title}`,
-        body: `${done} of ${total} milestones done on ${milestone.project.projectName}`,
-        link: `/portal/projects/${milestone.projectId}`,
-      },
-    });
-    await logActivity({
-      type: "milestone.completed",
-      summary: `Milestone completed: ${milestone.title} (${milestone.project.projectName})`,
-      clientId: client.id,
-      projectId: milestone.projectId,
-      entity: "project",
-      entityId: milestone.projectId,
-      link: `/admin/projects/${milestone.projectId}`,
+    later(async () => {
+      // Progress counts the plan: accepted, live, top-level work.
+      const plan = {
+        projectId: milestone.projectId,
+        parentId: null,
+        archivedAt: null,
+        stage: { not: "REQUESTED" as const },
+      };
+      const [done, total] = await Promise.all([
+        prisma.milestone.count({ where: { ...plan, status: "COMPLETED" } }),
+        prisma.milestone.count({ where: plan }),
+      ]);
+      await prisma.notification.create({
+        data: {
+          userId: client.id,
+          type: "MILESTONE_COMPLETED",
+          title: `Completed: ${milestone.title}`,
+          body: `${done} of ${total} milestones done on ${milestone.project.projectName}`,
+          link: workItemHref(milestone.projectId, milestone.id, "CLIENT", "list"),
+        },
+      });
+      await logActivity({
+        type: "milestone.completed",
+        summary: `Milestone completed: ${milestone.title} (${milestone.project.projectName})`,
+        actorId: viewer.id,
+        clientId: client.id,
+        projectId: milestone.projectId,
+        entity: "milestone",
+        entityId: milestone.id,
+        link: workItemHref(milestone.projectId, milestone.id, "ADMIN", "list"),
+      });
     });
   }
 
-  revalidatePath(`/admin/projects/${milestone.projectId}`);
-  revalidatePath(`/portal/projects/${milestone.projectId}`);
+  revalidateProject(milestone.projectId);
   return { ok: true };
 }
 
@@ -238,29 +331,44 @@ export async function setMilestoneAssignee(
   assigneeId: string | null,
 ): Promise<ActionResult> {
   await requireTeam();
-  const milestone = await prisma.milestone.findUnique({
-    where: { id },
-    select: { id: true, projectId: true },
-  });
+  const [milestone, resolved] = await Promise.all([
+    prisma.milestone.findUnique({ where: { id }, select: { id: true, projectId: true } }),
+    resolveAssignee(assigneeId ?? undefined),
+  ]);
   if (!milestone) return { ok: false, error: "Milestone not found." };
 
-  await prisma.milestone.update({
-    where: { id },
-    data: { assigneeId: await resolveAssignee(assigneeId ?? undefined) },
-  });
+  await prisma.milestone.update({ where: { id }, data: { assigneeId: resolved } });
   revalidatePath(`/admin/projects/${milestone.projectId}`);
   revalidatePath("/admin/my-work");
   return { ok: true };
 }
 
-export async function deleteMilestone(id: string): Promise<ActionResult> {
+/**
+ * Delete a milestone that has no history; archive one that does. Logged hours
+ * used to vanish with the milestone (the time entries cascade), and invoices
+ * would lose the work they billed.
+ */
+export async function deleteMilestone(
+  id: string,
+): Promise<{ ok: true; archived: boolean } | { ok: false; error: string }> {
   await requireAdmin();
-  const milestone = await prisma.milestone.findUnique({ where: { id } });
+  const milestone = await prisma.milestone.findUnique({
+    where: { id },
+    select: { id: true, projectId: true, stage: true, archivedAt: true, sourceTaskRequestId: true },
+  });
   if (!milestone) return { ok: false, error: "Milestone not found." };
+  if (milestone.stage === "REQUESTED" && !milestone.archivedAt) {
+    return { ok: false, error: "Decline the request instead — the client gets your note." };
+  }
 
-  await prisma.milestone.delete({ where: { id } });
-  revalidatePath(`/admin/projects/${milestone.projectId}`);
-  return { ok: true };
+  const archived = await hasHistory(milestone);
+  if (archived) {
+    if (!milestone.archivedAt) await archiveTree(milestone.id);
+  } else {
+    await prisma.milestone.delete({ where: { id } });
+  }
+  revalidateProject(milestone.projectId);
+  return { ok: true, archived };
 }
 
 export async function reorderMilestones(
@@ -269,23 +377,30 @@ export async function reorderMilestones(
 ): Promise<ActionResult> {
   await requireTeam();
 
+  // The list shows live items only; archived ones keep their old places.
   const milestones = await prisma.milestone.findMany({
-    where: { projectId },
-    select: { id: true },
+    where: { projectId, archivedAt: null },
+    select: { id: true, position: true },
   });
-  const valid = new Set(milestones.map((m) => m.id));
+  const current = new Map(milestones.map((m) => [m.id, m.position]));
   if (
-    orderedIds.length !== valid.size ||
-    !orderedIds.every((id) => valid.has(id))
+    orderedIds.length !== current.size ||
+    !orderedIds.every((id) => current.has(id))
   ) {
     return { ok: false, error: "Milestone list is out of date — refresh the page." };
   }
 
-  await prisma.$transaction(
-    orderedIds.map((id, index) =>
-      prisma.milestone.update({ where: { id }, data: { position: index } }),
-    ),
-  );
+  // One drag moves a handful of rows; only those are written.
+  const changed = orderedIds
+    .map((id, index) => ({ id, index }))
+    .filter(({ id, index }) => current.get(id) !== index);
+  if (changed.length) {
+    await prisma.$transaction(
+      changed.map(({ id, index }) =>
+        prisma.milestone.update({ where: { id }, data: { position: index } }),
+      ),
+    );
+  }
 
   revalidatePath(`/admin/projects/${projectId}`);
   return { ok: true };

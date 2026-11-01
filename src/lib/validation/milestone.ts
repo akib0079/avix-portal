@@ -14,6 +14,12 @@ export const milestoneSchema = z
     /** "none" clears the assignment — Selects can't hold an empty value. */
     assigneeId: z.string().optional(),
     dueDate: z.string().optional(),
+    /** Left out = unchanged. Null clears it. */
+    priority: z.enum(["HIGH", "MEDIUM", "LOW"]).nullable().optional(),
+    /** The phase it sits under. Left out = unchanged; null or "none" = top level. */
+    parentId: z.string().nullable().optional(),
+    /** Board column. Left out = To do on create, unchanged on edit. */
+    stage: z.enum(["BACKLOG", "TODO", "IN_PROGRESS", "REVIEW", "DONE"]).optional(),
     ...pricingFields,
   })
   .superRefine((val, ctx) => {
