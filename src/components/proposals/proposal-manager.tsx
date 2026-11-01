@@ -310,8 +310,9 @@ export function ProposalManager({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         {archived ? (
           <p className="text-sm text-muted-foreground">
-            {board.archivedCount} archived. Restoring one puts it back in its lane; links sent before
-            it was archived stay withdrawn.
+            {board.archivedCount} archived
+            {board.archivedCount > proposals.length ? ` (the latest ${proposals.length} shown)` : ""}.
+            Restoring one puts it back in its lane; links sent before it was archived stay withdrawn.
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">
