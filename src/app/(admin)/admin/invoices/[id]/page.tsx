@@ -16,7 +16,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
 import { Copy, Download, ExternalLink } from "lucide-react";
 import { currencySymbol } from "@/lib/currency";
-import { creditedTotal } from "@/lib/invoice-totals";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
+import { reminderSummary } from "@/lib/invoice-reminders";
+import { serverNow } from "@/lib/server-now";
+import { InvoiceReminders } from "@/components/invoices/invoice-reminders";
 import { canDeleteInvoice, sendBlocker } from "@/lib/invoice-rules";
 import { requireAdmin } from "@/lib/dal/session";
 
@@ -40,6 +43,14 @@ export default async function InvoiceDetailPage({
   if (!invoice) notFound();
 
   const isCreditNote = !!invoice.creditNoteForId;
+  const credited = creditedTotal(invoice.creditNotes);
+  const balance = balanceDue(Number(invoice.amount), Number(invoice.amountPaid), credited);
+  // Only an invoice that can still owe money has reminders to talk about.
+  const showReminders =
+    !isCreditNote && invoice.status !== "PAID" && invoice.status !== "CANCELLED" && balance > 0;
+  const reminders = showReminders
+    ? reminderSummary({ ...invoice, balance }, new Date(serverNow()), (d) => formatDate(d))
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -127,7 +138,7 @@ export default async function InvoiceDetailPage({
           }}
           total={Number(invoice.amount)}
           amountPaid={Number(invoice.amountPaid)}
-          credited={creditedTotal(invoice.creditNotes)}
+          credited={credited}
           currencySymbol={currencySymbol(invoice.currency)}
           payments={invoice.payments.map((p) => ({
             id: p.id,
@@ -137,6 +148,15 @@ export default async function InvoiceDetailPage({
             note: p.note,
           }))}
         />
+        {reminders && (
+          <div className="mt-3">
+            <InvoiceReminders
+              invoiceId={invoice.id}
+              paused={invoice.remindersPaused}
+              summary={reminders}
+            />
+          </div>
+        )}
         {invoice.creditNotes.length > 0 && (
           <p className="mt-2 text-sm text-muted-foreground">
             Credited by{" "}

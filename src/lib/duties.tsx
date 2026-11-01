@@ -2,6 +2,15 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
 import { usdToStore } from "@/lib/invoice-usd";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
+import {
+  OVERDUE_GAP_DAYS,
+  OVERDUE_STEPS,
+  PRE_DUE_DAYS,
+  SENT_QUIET_DAYS,
+  reminderDue,
+} from "@/lib/invoice-reminders";
+import { isSecureLink } from "@/lib/validation/invoice";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
@@ -354,80 +363,174 @@ async function drainCampaigns(now: Date): Promise<void> {
 }
 
 /**
- * Chase overdue invoices. One reminder per invoice per REMINDER_GAP_DAYS, and
- * only for documents that were actually sent and still owe money — stamp-first
- * on lastReminderAt so a re-run can't double-send.
+ * Payment reminders (lib/invoice-reminders): a friendly note three days
+ * before the due date, then reminders 1, 7, 14 and 30 days after it, and
+ * nothing after that. Only invoices that were sent and still owe money, never
+ * one the client says is paid or the owner paused.
+ *
+ * Stamp first, by compare-and-set: the run whose write lands sends, so two
+ * runs at once can't both email, and a send that fails is not retried on
+ * every page load. The query picks only invoices with a reminder due, so the
+ * batch is never crowded out by ones that are merely waiting for their next
+ * step.
  */
-const REMINDER_GAP_DAYS = 7;
 const REMINDER_BATCH = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function chaseOverdueInvoices(now: Date): Promise<void> {
-  const gapAgo = new Date(now.getTime() - REMINDER_GAP_DAYS * 24 * 60 * 60 * 1000);
-
-  const overdue = await prisma.invoice.findMany({
+  const daysAgo = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const candidates = await prisma.invoice.findMany({
     where: {
-      status: { in: ["SENT", "IN_REVIEW", "PARTIALLY_PAID"] },
-      dueDate: { not: null, lt: now },
-      OR: [{ lastReminderAt: null }, { lastReminderAt: { lt: gapAgo } }],
+      status: { in: ["SENT", "PARTIALLY_PAID"] },
+      creditNoteForId: null,
+      remindersPaused: false,
+      paymentClaimedAt: null,
+      client: { status: "ACTIVE" },
+      AND: [
+        // The invoice email itself is the reminder for its first two days.
+        { OR: [{ sentAt: null }, { sentAt: { lte: daysAgo(SENT_QUIET_DAYS) } }] },
+        {
+          OR: [
+            {
+              preDueReminderAt: null,
+              dueDate: { gt: now, lte: new Date(now.getTime() + PRE_DUE_DAYS * DAY_MS) },
+            },
+            // The next overdue step has come due: count n waits for step n,
+            // and never within a few days of the last reminder.
+            ...OVERDUE_STEPS.map((days, taken) => ({
+              reminderCount: taken,
+              dueDate: { lte: daysAgo(days) },
+              OR: [{ lastReminderAt: null }, { lastReminderAt: { lte: daysAgo(OVERDUE_GAP_DAYS) } }],
+            })),
+          ],
+        },
+      ],
     },
+    orderBy: { dueDate: "asc" },
     take: REMINDER_BATCH,
-    include: {
-      client: { select: { id: true, firstName: true, email: true, status: true } },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      amount: true,
+      amountPaid: true,
+      currency: true,
+      status: true,
+      dueDate: true,
+      sentAt: true,
+      reminderCount: true,
+      lastReminderAt: true,
+      preDueReminderAt: true,
+      remindersPaused: true,
+      paymentClaimedAt: true,
+      creditNoteForId: true,
+      payLinkUrl: true,
+      client: { select: { id: true, firstName: true, email: true } },
+      creditNotes: { select: { amount: true, status: true } },
     },
   });
 
-  for (const invoice of overdue) {
-    const balance = Number(invoice.amount) - Number(invoice.amountPaid);
-    if (balance <= 0 || invoice.client.status !== "ACTIVE") {
-      // Nothing owing (or nobody to tell) — stamp so it stops being picked up.
-      await prisma.invoice.update({
-        where: { id: invoice.id },
-        data: { lastReminderAt: now },
-      });
+  for (const invoice of candidates) {
+    const balance = balanceDue(
+      Number(invoice.amount),
+      Number(invoice.amountPaid),
+      creditedTotal(invoice.creditNotes),
+    );
+    const due = reminderDue({ ...invoice, balance }, now);
+    if (!due) {
+      // Nothing left owing although the status says otherwise: stop picking
+      // it up rather than look at it on every run.
+      if (balance <= 0) {
+        await prisma.invoice.update({
+          where: { id: invoice.id },
+          data: { reminderCount: OVERDUE_STEPS.length, preDueReminderAt: invoice.preDueReminderAt ?? now },
+        });
+      }
       continue;
     }
 
-    // Stamp first: a send that fails should not retry on every page load.
-    await prisma.invoice.update({
-      where: { id: invoice.id },
-      data: { lastReminderAt: now },
+    const claimed =
+      due.kind === "upcoming"
+        ? await prisma.invoice.updateMany({
+            where: { id: invoice.id, preDueReminderAt: null },
+            data: { preDueReminderAt: now },
+          })
+        : await prisma.invoice.updateMany({
+            where: { id: invoice.id, reminderCount: invoice.reminderCount },
+            data: { reminderCount: due.step, lastReminderAt: now },
+          });
+    if (claimed.count === 0) continue;
+
+    const amount = formatMoney(balance, invoice.currency);
+    const dueDate = invoice.dueDate!.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
     });
-
-    const daysOverdue = Math.max(
-      1,
-      Math.floor((now.getTime() - invoice.dueDate!.getTime()) / 86_400_000),
-    );
-
+    const payLinkUrl =
+      invoice.payLinkUrl && isSecureLink(invoice.payLinkUrl) ? invoice.payLinkUrl : null;
     await sendEmail({
       to: invoice.client.email,
-      subject: `Reminder: invoice ${invoice.invoiceNumber} is overdue`,
+      subject:
+        due.kind === "upcoming"
+          ? `Invoice ${invoice.invoiceNumber} is due on ${dueDate}`
+          : `Reminder: invoice ${invoice.invoiceNumber} is overdue`,
       react: (
         <InvoiceReminderEmail
+          kind={due.kind}
           firstName={invoice.client.firstName || "there"}
           invoiceNumber={invoice.invoiceNumber}
-          amount={formatMoney(balance, invoice.currency)}
-          dueDate={invoice.dueDate!.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-          daysOverdue={daysOverdue}
+          amount={amount}
+          dueDate={dueDate}
+          daysOverdue={due.kind === "overdue" ? due.daysOverdue : 0}
+          final={due.kind === "overdue" && due.final}
           portalUrl={`${appUrl()}/portal/invoices/${invoice.id}`}
+          payLinkUrl={payLinkUrl}
         />
       ),
-      devHint: `invoice reminder → ${invoice.client.email}`,
+      devHint: `invoice reminder (${due.kind}) → ${invoice.client.email}`,
     });
 
     await prisma.notification.create({
       data: {
         userId: invoice.client.id,
         type: "INVOICE_SENT",
-        title: `Invoice ${invoice.invoiceNumber} is overdue`,
-        body: `${formatMoney(balance, invoice.currency)} was due ${daysOverdue} day${daysOverdue === 1 ? "" : "s"} ago`,
+        title:
+          due.kind === "upcoming"
+            ? `Invoice ${invoice.invoiceNumber} is due on ${dueDate}`
+            : `Invoice ${invoice.invoiceNumber} is overdue`,
+        body:
+          due.kind === "upcoming"
+            ? `${amount} due on ${dueDate}`
+            : `${amount} was due ${due.daysOverdue} day${due.daysOverdue === 1 ? "" : "s"} ago`,
         link: `/portal/invoices/${invoice.id}`,
       },
     });
   }
+}
+
+/**
+ * Closes the invoice to-dos an invoice has outgrown: any on an invoice now
+ * paid or cancelled, and a "Confirm payment" whose claim the owner turned
+ * down. Without this they stayed in Tasks after the money had landed.
+ */
+async function closeSettledInvoiceTasks(now: Date) {
+  return prisma.task.updateMany({
+    where: {
+      origin: "SYSTEM",
+      status: { not: "DONE" },
+      OR: [
+        {
+          systemKey: { startsWith: "invoice-" },
+          invoice: { status: { in: ["PAID", "CANCELLED"] } },
+        },
+        {
+          systemKey: { startsWith: "invoice-confirm:" },
+          invoice: { paymentClaimedAt: null, status: { not: "IN_REVIEW" } },
+        },
+      ],
+    },
+    data: { status: "DONE", completedAt: now },
+  });
 }
 
 /** Entry point — throttled, never throws (a duty failure must not 500 a page). */
@@ -465,21 +568,48 @@ async function generateSystemTasks(now: Date): Promise<void> {
   };
   const seeds: Seed[] = [];
 
-  // Invoices past their due date and still unpaid.
-  const overdue = await prisma.invoice.findMany({
-    // Same status set the email chaser uses, so the task and the chase email
-    // never disagree about which invoices are actually outstanding.
-    where: {
-      status: { in: ["SENT", "IN_REVIEW", "PARTIALLY_PAID"] },
-      dueDate: { not: null, lt: now },
-    },
-    select: { id: true, invoiceNumber: true, clientId: true, dueDate: true, amount: true },
-    take: 50,
-  });
+  // Invoices: chase the overdue ones, confirm the ones the client says are
+  // paid, and close the to-dos of invoices that have moved on. One wave.
+  const [overdue, claimed] = await Promise.all([
+    // Same set the email chaser uses, so the task and the chase email never
+    // disagree about which invoices are actually outstanding. A client who
+    // says they've paid is not chased: they get the confirm task below.
+    prisma.invoice.findMany({
+      where: {
+        status: { in: ["SENT", "PARTIALLY_PAID"] },
+        paymentClaimedAt: null,
+        creditNoteForId: null,
+        dueDate: { not: null, lt: now },
+      },
+      select: { id: true, invoiceNumber: true, clientId: true },
+      take: 50,
+    }),
+    prisma.invoice.findMany({
+      where: {
+        status: { notIn: ["PAID", "CANCELLED", "DRAFT"] },
+        creditNoteForId: null,
+        OR: [{ paymentClaimedAt: { not: null } }, { status: "IN_REVIEW" }],
+      },
+      select: { id: true, invoiceNumber: true, clientId: true, paymentClaimedAt: true },
+      take: 50,
+    }),
+    closeSettledInvoiceTasks(now),
+  ]);
   for (const inv of overdue) {
     seeds.push({
       systemKey: `invoice-overdue:${inv.id}`,
       title: `Chase payment on ${inv.invoiceNumber}`,
+      priority: "HIGH",
+      dueDate: now,
+      clientId: inv.clientId,
+      invoiceId: inv.id,
+    });
+  }
+  for (const inv of claimed) {
+    seeds.push({
+      // One per claim: a claim turned down and then made again is a new to-do.
+      systemKey: `invoice-confirm:${inv.id}:${inv.paymentClaimedAt?.getTime() ?? "review"}`,
+      title: `Confirm payment on ${inv.invoiceNumber}`,
       priority: "HIGH",
       dueDate: now,
       clientId: inv.clientId,

@@ -424,7 +424,10 @@ export async function updateInvoice(
   const data = parsed.data;
 
   const [invoice, refs] = await Promise.all([
-    prisma.invoice.findUnique({ where: { id }, select: { ...moneySelect, pdfPath: true } }),
+    prisma.invoice.findUnique({
+      where: { id },
+      select: { ...moneySelect, pdfPath: true, dueDate: true },
+    }),
     resolveRefs(data, id),
   ]);
   if (!invoice) return { ok: false, error: "Invoice not found." };
@@ -435,6 +438,10 @@ export async function updateInvoice(
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
+
+  // A new due date restarts the reminder schedule against it: the steps
+  // count from the due date, and the old ones were for a date that moved.
+  const dueMoved = (columns.dueDate?.getTime() ?? null) !== (invoice.dueDate?.getTime() ?? null);
 
   // Batched rather than interactive: none of these writes needs another's
   // result. amountPaid moves in place, as it does for any other payment.
@@ -449,6 +456,7 @@ export async function updateInvoice(
         status: next.status,
         ...(next.markPaid > 0 ? { amountPaid: { increment: next.markPaid } } : {}),
         ...(next.clearClaim ? { paymentClaimedAt: null } : {}),
+        ...(dueMoved ? { reminderCount: 0, preDueReminderAt: null } : {}),
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
           : {}),
@@ -823,6 +831,21 @@ export async function createCreditNote(
   );
   revalidateInvoice(invoiceId);
   return { ok: true, data: { id: note.id } };
+}
+
+/**
+ * The invoice page's "Pause reminders": the chaser skips a paused invoice
+ * entirely, before and after its due date, until it is resumed.
+ */
+export async function setInvoiceReminders(id: string, paused: boolean): Promise<ActionResult> {
+  await requireAdmin();
+  const updated = await prisma.invoice.updateMany({
+    where: { id },
+    data: { remindersPaused: paused },
+  });
+  if (updated.count === 0) return { ok: false, error: "Invoice not found." };
+  revalidatePath(invoiceLink(id));
+  return { ok: true };
 }
 
 /**
