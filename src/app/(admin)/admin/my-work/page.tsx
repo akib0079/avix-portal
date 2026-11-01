@@ -1,17 +1,13 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
-import type { MilestoneStatus, Priority, ProjectStatus } from "@prisma/client";
-import { getMyWork } from "@/lib/dal/my-work";
+import type { ProjectStatus } from "@prisma/client";
+import { getMyWork, type MyWorkItem } from "@/lib/dal/my-work";
 import { PageHeader } from "@/components/page-header";
 import { ProjectStatusBadge } from "@/components/status-badges";
 import { Lane, LaneScroller } from "@/components/ui/lanes";
-import { COLUMN_BY_ID, PRIORITY_META } from "@/lib/board";
-import {
-  HUE,
-  milestoneStatusColor,
-  projectStatusColor,
-} from "@/lib/status-colors";
-import { formatDate, milestoneStatusLabels } from "@/lib/format";
+import { COLUMN_BY_ID, PRIORITY_META, workItemHref } from "@/lib/board";
+import { HUE, projectStatusColor } from "@/lib/status-colors";
+import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { requireTeam } from "@/lib/dal/session";
 import {
@@ -35,20 +31,21 @@ function fmtHours(hours: number): string {
 
 type Bucket = "Overdue" | "Today" | "This week" | "Later" | "No date";
 
-/** Overdue → today → this week → later → undated. */
+/** "YYYY-MM-DD" of a local date, so due days compare as the days they name. */
+function localDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Overdue → today → this week → later → undated. Due dates are calendar days. */
 function bucketOf(dueDate: string | null, now: Date): Bucket {
   if (!dueDate) return "No date";
-  const due = new Date(dueDate);
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
-  const endOfWeek = new Date(startOfToday);
-  endOfWeek.setDate(endOfWeek.getDate() + 7);
+  const today = localDay(now);
+  const weekOut = new Date(now);
+  weekOut.setDate(weekOut.getDate() + 7);
 
-  if (due < startOfToday) return "Overdue";
-  if (due < endOfToday) return "Today";
-  if (due < endOfWeek) return "This week";
+  if (dueDate < today) return "Overdue";
+  if (dueDate === today) return "Today";
+  if (dueDate < localDay(weekOut)) return "This week";
   return "Later";
 }
 
@@ -59,33 +56,6 @@ const BUCKETS: { name: Bucket; color: string }[] = [
   { name: "Later", color: HUE.sky },
   { name: "No date", color: HUE.slate },
 ];
-
-/** A milestone or a board card, flattened so one lane can hold both. */
-type Item =
-  | {
-      kind: "milestone";
-      id: string;
-      title: string;
-      status: MilestoneStatus;
-      dueDate: string | null;
-      projectId: string;
-      projectName: string;
-      clientName: string | null;
-      loggedHours: number;
-      estimatedHours: number | null;
-    }
-  | {
-      kind: "task";
-      id: string;
-      title: string;
-      status: string;
-      priority: Priority | null;
-      dueDate: string | null;
-      projectId: string;
-      projectName: string;
-      clientName: string | null;
-      clientNeedsHelp: boolean;
-    };
 
 function Tile({
   icon: Icon,
@@ -111,31 +81,24 @@ function Tile({
   );
 }
 
-function ItemCard({ item, bucket }: { item: Item; bucket: Bucket }) {
-  const isTask = item.kind === "task";
-  const column = isTask ? COLUMN_BY_ID[item.status as keyof typeof COLUMN_BY_ID] : null;
-  const hue = isTask
-    ? (column?.color ?? HUE.slate)
-    : milestoneStatusColor[item.status];
-  const href = isTask
-    ? `/admin/projects/${item.projectId}?task=${item.id}`
-    : `/admin/projects/${item.projectId}?tab=milestones`;
+function ItemCard({ item, bucket }: { item: MyWorkItem; bucket: Bucket }) {
+  const column = COLUMN_BY_ID[item.stage];
 
   return (
     <Link
-      href={href}
-      style={{ "--col": hue } as CSSProperties}
+      href={workItemHref(item.projectId, item.id, "ADMIN")}
+      style={{ "--col": column.color } as CSSProperties}
       className="group/card relative block overflow-hidden rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(15_23_42/0.05)] transition-[box-shadow,border-color] duration-150 outline-none hover:border-[color-mix(in_oklab,var(--col)_45%,var(--border))] hover:shadow-[0_6px_20px_-10px_rgb(15_23_42/0.25)] focus-visible:ring-2 focus-visible:ring-ring/60"
     >
       <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
 
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        {/* What it is and where it stands, in the board's colours. */}
+        {/* Where it stands, in the board's colours. */}
         <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--col)_13%,transparent)] px-2 py-0.5 text-[10px] font-semibold text-[color-mix(in_oklab,var(--col)_72%,var(--foreground))]">
-          {isTask ? <KanbanSquare className="size-3" /> : <Flag className="size-3" />}
-          {isTask ? (column?.label ?? "Task") : `Milestone · ${milestoneStatusLabels[item.status]}`}
+          <KanbanSquare className="size-3" />
+          {column.label}
         </span>
-        {isTask && item.clientNeedsHelp && (
+        {item.clientNeedsHelp && (
           <span className="inline-flex items-center gap-1 rounded-full bg-red-500/12 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-red-600 uppercase dark:text-red-400">
             <LifeBuoy className="size-3" /> Needs help
           </span>
@@ -153,9 +116,9 @@ function ItemCard({ item, bucket }: { item: Item; bucket: Bucket }) {
         </span>
       </p>
 
-      {(item.dueDate || (isTask && item.priority) || (!isTask && item.estimatedHours != null)) && (
+      {(item.dueDate || item.priority || item.loggedHours > 0 || item.estimatedHours != null) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
-          {isTask && item.priority && (
+          {item.priority && (
             <span
               className="inline-flex items-center gap-1 font-medium"
               style={{ color: PRIORITY_META[item.priority].color }}
@@ -175,10 +138,11 @@ function ItemCard({ item, bucket }: { item: Item; bucket: Bucket }) {
               {formatDate(item.dueDate)}
             </span>
           )}
-          {!isTask && item.estimatedHours != null && (
+          {(item.loggedHours > 0 || item.estimatedHours != null) && (
             <span className="inline-flex items-center gap-1 text-muted-foreground tabular-nums">
               <Clock className="size-3" />
-              {fmtHours(item.loggedHours)} / {fmtHours(item.estimatedHours)}
+              {fmtHours(item.loggedHours)}
+              {item.estimatedHours != null ? ` / ${fmtHours(item.estimatedHours)}` : ""}
             </span>
           )}
         </div>
@@ -192,16 +156,9 @@ export default async function MyWorkPage() {
   const work = await getMyWork();
   const now = new Date();
 
-  const items: Item[] = [
-    ...work.milestones.map((m) => ({
-      kind: "milestone" as const,
-      ...m,
-      status: m.status as MilestoneStatus,
-    })),
-    ...work.tasks.map((t) => ({ kind: "task" as const, ...t })),
-  ];
+  const items = work.items;
 
-  const grouped = new Map<Bucket, Item[]>();
+  const grouped = new Map<Bucket, MyWorkItem[]>();
   for (const item of items) {
     const bucket = bucketOf(item.dueDate, now);
     grouped.set(bucket, [...(grouped.get(bucket) ?? []), item]);
@@ -212,21 +169,21 @@ export default async function MyWorkPage() {
   }
 
   const trend = work.hoursThisWeek - work.hoursLastWeek;
-  const helpCount = work.tasks.filter((t) => t.clientNeedsHelp).length;
+  const helpCount = items.filter((t) => t.clientNeedsHelp).length;
+  const inReview = items.filter((t) => t.stage === "REVIEW").length;
 
   return (
     <div>
       <PageHeader
         title="My Work"
-        description={`Everything assigned to ${viewer.name || "you"} — milestones and board cards — soonest first.`}
+        description={`Every milestone assigned to ${viewer.name || "you"}, soonest first.`}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile icon={CheckCircle2} label="Milestones" value={work.milestones.length} />
         <Tile
-          icon={KanbanSquare}
-          label="Board cards"
-          value={work.tasks.length}
+          icon={CheckCircle2}
+          label="Open milestones"
+          value={items.length}
           extra={
             helpCount > 0 ? (
               <span className={cn("ml-2 text-xs font-medium", toneText.bad)}>
@@ -235,6 +192,7 @@ export default async function MyWorkPage() {
             ) : undefined
           }
         />
+        <Tile icon={KanbanSquare} label="With the client" value={inReview} />
         <Tile icon={FolderKanban} label="Projects I own" value={work.ownedProjects.length} />
         <Tile
           icon={Clock}
@@ -262,7 +220,7 @@ export default async function MyWorkPage() {
           <CheckCircle2 className="mx-auto mb-3 size-8 text-muted-foreground/40" />
           <p className="font-medium">Nothing assigned to you yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Milestones and board cards show up here as soon as someone puts your name on them.
+            Milestones show up here as soon as someone puts your name on them.
           </p>
         </div>
       ) : (
@@ -278,7 +236,7 @@ export default async function MyWorkPage() {
                 className="lg:min-w-[250px]"
               >
                 {list.map((item) => (
-                  <ItemCard key={`${item.kind}-${item.id}`} item={item} bucket={b.name} />
+                  <ItemCard key={item.id} item={item} bucket={b.name} />
                 ))}
               </Lane>
             );

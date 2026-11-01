@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { approveMilestone, claimInvoicePayment } from "@/lib/actions/portal";
 import type { ClientActionItems } from "@/lib/dal/portal-actions";
+import { workItemHref } from "@/lib/board";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
@@ -15,9 +16,9 @@ import {
   Milestone as MilestoneIcon,
   Receipt,
   ExternalLink,
-  KanbanSquare,
   LifeBuoy,
   ArrowRight,
+  ThumbsUp,
 } from "lucide-react";
 
 function money(amount: number, currency: string) {
@@ -62,8 +63,8 @@ export function ActionCenter({ items }: { items: ClientActionItems }) {
           <CircleCheckBig className="size-10 text-emerald-500" />
           <p className="font-heading text-lg font-semibold">You&apos;re all caught up</p>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Nothing needs your attention right now. Approvals, tasks to review
-            and invoices to pay will show up here.
+            Nothing needs your attention right now. Work to review, questions
+            from the team and invoices to pay will show up here.
           </p>
         </CardContent>
       </Card>
@@ -72,29 +73,23 @@ export function ActionCenter({ items }: { items: ClientActionItems }) {
 
   return (
     <div className="space-y-6">
-      {items.tasks.length > 0 && (
+      {items.questions.length > 0 && (
         <section>
           <h2 className="font-heading mb-3 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-            <KanbanSquare className="size-4" /> Tasks waiting on you ({items.tasks.length})
+            <LifeBuoy className="size-4" /> Questions from the team ({items.questions.length})
           </h2>
           <div className="space-y-2">
-            {items.tasks.map((t) => (
+            {items.questions.map((t) => (
               <Link
                 key={t.id}
-                href={`/portal/projects/${t.projectId}?view=board&task=${t.id}`}
+                href={workItemHref(t.projectId, t.id, "CLIENT")}
                 className="group flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3.5 transition-colors hover:border-primary/40"
               >
                 <span className="min-w-0">
                   <span className="flex items-center gap-2">
-                    {t.inReview ? (
-                      <span className="rounded-full bg-violet-500/12 px-2 py-0.5 text-[10px] font-semibold text-violet-700 uppercase dark:text-violet-300">
-                        Review
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-600 uppercase dark:text-red-400">
-                        <LifeBuoy className="size-3" /> Question
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-600 uppercase dark:text-red-400">
+                      <LifeBuoy className="size-3" /> Question
+                    </span>
                     <span className="truncate font-medium">{t.title}</span>
                   </span>
                   <span className="mt-0.5 block text-sm text-muted-foreground">{t.projectName}</span>
@@ -106,23 +101,23 @@ export function ActionCenter({ items }: { items: ClientActionItems }) {
         </section>
       )}
 
-      {items.milestones.length > 0 && (
+      {items.reviews.length > 0 && (
         <section>
           <h2 className="font-heading mb-3 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-            <MilestoneIcon className="size-4" /> Approvals ({items.milestones.length})
+            <MilestoneIcon className="size-4" /> Ready for your review ({items.reviews.length})
           </h2>
           <div className="space-y-2">
-            {items.milestones.map((m) => (
+            {items.reviews.map((m) => (
               <Card key={m.id}>
                 <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
                   <div className="min-w-0">
-                    <p className="font-medium">{m.title}</p>
                     <Link
-                      href={`/portal/projects/${m.projectId}`}
-                      className="text-sm text-muted-foreground hover:text-primary"
+                      href={workItemHref(m.projectId, m.id, "CLIENT")}
+                      className="font-medium hover:text-primary"
                     >
-                      {m.projectName}
+                      {m.title}
                     </Link>
+                    <p className="text-sm text-muted-foreground">{m.projectName}</p>
                   </div>
                   <Button
                     size="sm"
@@ -143,6 +138,29 @@ export function ActionCenter({ items }: { items: ClientActionItems }) {
                   </Button>
                 </CardContent>
               </Card>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {items.toRate.length > 0 && (
+        <section>
+          <h2 className="font-heading mb-3 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+            <ThumbsUp className="size-4" /> How did it go? ({items.toRate.length})
+          </h2>
+          <div className="space-y-2">
+            {items.toRate.map((m) => (
+              <Link
+                key={m.id}
+                href={workItemHref(m.projectId, m.id, "CLIENT", "list")}
+                className="group flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3.5 transition-colors hover:border-primary/40"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">Rate “{m.title}”</span>
+                  <span className="mt-0.5 block text-sm text-muted-foreground">{m.projectName}</span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+              </Link>
             ))}
           </div>
         </section>

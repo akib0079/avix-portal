@@ -1,39 +1,44 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { AWAITING_RATING, AWAITING_REVIEW, TEAM_QUESTION } from "@/lib/work-scope";
 
-/** Board cards waiting on the client: sent for review, or carrying our open question. */
-function boardTasksWaiting(clientId: string) {
-  return {
-    project: { clientId },
-    OR: [
-      { status: "REVIEW" as const },
-      { comments: { some: { kind: "HELP" as const, authorRole: "ADMIN" as const, resolvedAt: null } } },
-    ],
-  };
-}
+const itemSelect = {
+  id: true,
+  title: true,
+  updatedAt: true,
+  project: { select: { id: true, projectName: true } },
+} as const;
 
 /**
  * Everything on the client's plate that needs a decision from them:
- *  - completed milestones awaiting their approval
+ *  - work in review, waiting for their approval
+ *  - questions the team asked on a piece of work
+ *  - approved milestones they haven't rated
  *  - sent invoices they haven't reported paying yet
- *  - board tasks in review, or with a question from the team
- * Read-only aggregation — the actions themselves live in actions/portal.ts.
+ * The work rules come from work-scope.ts, which the per-project "Needs you"
+ * box uses too, so the two can't disagree. Read-only aggregation — the
+ * actions themselves live in actions/portal.ts and actions/project-board.tsx.
  */
 export async function getClientActionItems(clientId: string) {
-  const [milestones, invoices, tasks] = await Promise.all([
+  const mine = { project: { clientId } };
+  const [reviews, questions, toRate, invoices] = await Promise.all([
     prisma.milestone.findMany({
-      where: {
-        status: "COMPLETED",
-        clientApprovedAt: null,
-        project: { clientId },
-      },
+      where: { ...AWAITING_REVIEW, ...mine },
       orderBy: { updatedAt: "desc" },
-      select: {
-        id: true,
-        title: true,
-        updatedAt: true,
-        project: { select: { id: true, projectName: true } },
-      },
+      take: 50,
+      select: itemSelect,
+    }),
+    prisma.milestone.findMany({
+      where: { ...TEAM_QUESTION, ...mine },
+      orderBy: { updatedAt: "desc" },
+      take: 50,
+      select: itemSelect,
+    }),
+    prisma.milestone.findMany({
+      where: { ...AWAITING_RATING, ...mine },
+      orderBy: { updatedAt: "desc" },
+      take: 50,
+      select: itemSelect,
     }),
     prisma.invoice.findMany({
       where: {
@@ -51,27 +56,19 @@ export async function getClientActionItems(clientId: string) {
         project: { select: { projectName: true } },
       },
     }),
-    prisma.projectTask.findMany({
-      where: boardTasksWaiting(clientId),
-      orderBy: { updatedAt: "desc" },
-      take: 50,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        project: { select: { id: true, projectName: true } },
-      },
-    }),
   ]);
 
+  const item = (m: (typeof reviews)[number]) => ({
+    id: m.id,
+    title: m.title,
+    projectId: m.project.id,
+    projectName: m.project.projectName,
+    updatedAt: m.updatedAt,
+  });
   return {
-    milestones: milestones.map((m) => ({
-      id: m.id,
-      title: m.title,
-      projectId: m.project.id,
-      projectName: m.project.projectName,
-      updatedAt: m.updatedAt,
-    })),
+    reviews: reviews.map(item),
+    questions: questions.map(item),
+    toRate: toRate.map(item),
     invoices: invoices.map((i) => ({
       id: i.id,
       invoiceNumber: i.invoiceNumber,
@@ -80,29 +77,22 @@ export async function getClientActionItems(clientId: string) {
       dueDate: i.dueDate,
       projectName: i.project?.projectName ?? null,
     })),
-    tasks: tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      inReview: t.status === "REVIEW",
-      projectId: t.project.id,
-      projectName: t.project.projectName,
-    })),
-    count: milestones.length + invoices.length + tasks.length,
+    count: reviews.length + questions.length + toRate.length + invoices.length,
   };
 }
 
 /** Cheap badge count of pending client actions. */
 export async function countClientActionItems(clientId: string): Promise<number> {
-  const [milestones, invoices, tasks] = await Promise.all([
-    prisma.milestone.count({
-      where: { status: "COMPLETED", clientApprovedAt: null, project: { clientId } },
-    }),
+  const mine = { project: { clientId } };
+  const [reviews, questions, toRate, invoices] = await Promise.all([
+    prisma.milestone.count({ where: { ...AWAITING_REVIEW, ...mine } }),
+    prisma.milestone.count({ where: { ...TEAM_QUESTION, ...mine } }),
+    prisma.milestone.count({ where: { ...AWAITING_RATING, ...mine } }),
     prisma.invoice.count({
       where: { clientId, status: "SENT", paymentClaimedAt: null },
     }),
-    prisma.projectTask.count({ where: boardTasksWaiting(clientId) }),
   ]);
-  return milestones + invoices + tasks;
+  return reviews + questions + toRate + invoices;
 }
 
 export type ClientActionItems = Awaited<ReturnType<typeof getClientActionItems>>;

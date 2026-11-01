@@ -1,38 +1,31 @@
 import "server-only";
+import type { Priority, ProjectTaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
+import { dayKey } from "@/lib/board";
 
-export type MyWorkMilestone = {
+/** A piece of project work with this person's name on it. */
+export type MyWorkItem = {
   id: string;
   title: string;
-  status: string;
+  /** Board column; never DONE here. */
+  stage: ProjectTaskStatus;
+  priority: Priority | null;
+  /** "YYYY-MM-DD" — a calendar day. */
   dueDate: string | null;
   projectId: string;
   projectName: string;
   clientName: string | null;
   loggedHours: number;
+  /** Null for STAFF, who are money-blind, and when there's no estimate. */
   estimatedHours: number | null;
-};
-
-/** A card on a project's Kanban board with this person's name on it. */
-export type MyWorkTask = {
-  id: string;
-  title: string;
-  /** Board column: BACKLOG | TODO | IN_PROGRESS | REVIEW. */
-  status: string;
-  priority: "LOW" | "MEDIUM" | "HIGH" | null;
-  dueDate: string | null;
-  projectId: string;
-  projectName: string;
-  clientName: string | null;
   /** The client asked for help on it and nobody has answered. */
   clientNeedsHelp: boolean;
 };
 
 export type MyWork = {
   userId: string;
-  milestones: MyWorkMilestone[];
-  tasks: MyWorkTask[];
+  items: MyWorkItem[];
   ownedProjects: { id: string; projectName: string; status: string; dueDate: string | null }[];
   hoursThisWeek: number;
   hoursLastWeek: number;
@@ -48,27 +41,31 @@ function startOfWeek(date: Date): Date {
 }
 
 /**
- * One person's plate: the milestones assigned to them, the projects they own,
- * and how much time they logged this week vs last. Scoped to the caller —
- * an `of` id is only honoured for admins, so staff can't read each other.
+ * One person's plate: the work assigned to them (one list since v49 — the
+ * board cards and the milestones are the same rows), the projects they own,
+ * and how much time they logged this week vs last. Scoped to the caller — an
+ * `of` id is only honoured for admins, so staff can't read each other.
  */
 export async function getMyWork(of?: string): Promise<MyWork> {
   const viewer = await requireTeam();
   const userId = viewer.role === "ADMIN" && of ? of : viewer.id;
+  const showEstimates = viewer.role === "ADMIN";
 
   const thisWeek = startOfWeek(new Date());
   const lastWeek = new Date(thisWeek);
   lastWeek.setDate(lastWeek.getDate() - 7);
 
-  const [milestones, tasks, ownedProjects, weekEntries] = await Promise.all([
+  const open = { assigneeId: userId, stage: { not: "DONE" as const }, archivedAt: null };
+  const [items, hours, ownedProjects, weekEntries] = await Promise.all([
     prisma.milestone.findMany({
-      where: { assigneeId: userId, status: { not: "COMPLETED" } },
+      where: open,
       orderBy: [{ dueDate: "asc" }, { position: "asc" }],
-      take: 100,
+      take: 150,
       select: {
         id: true,
         title: true,
-        status: true,
+        stage: true,
+        priority: true,
         dueDate: true,
         estimatedHours: true,
         project: {
@@ -78,34 +75,18 @@ export async function getMyWork(of?: string): Promise<MyWork> {
             client: { select: { firstName: true, lastName: true, company: true } },
           },
         },
-        timeEntries: { select: { hours: true } },
-      },
-    }),
-    // Board cards were invisible here: "My Work" only knew about milestones,
-    // so a card pinned on you by a client never reached your list.
-    prisma.projectTask.findMany({
-      where: { assigneeId: userId, status: { not: "DONE" } },
-      orderBy: [{ dueDate: "asc" }, { updatedAt: "desc" }],
-      take: 150,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        priority: true,
-        dueDate: true,
-        project: {
+        _count: {
           select: {
-            id: true,
-            projectName: true,
-            client: { select: { firstName: true, lastName: true, company: true } },
+            comments: { where: { kind: "HELP", resolvedAt: null, authorRole: "CLIENT" } },
           },
         },
-        comments: {
-          where: { kind: "HELP", resolvedAt: null, authorRole: "CLIENT" },
-          select: { id: true },
-          take: 1,
-        },
       },
+    }),
+    // Summed in the database: a long-running item can carry hundreds of entries.
+    prisma.timeEntry.groupBy({
+      by: ["milestoneId"],
+      where: { milestone: open },
+      _sum: { hours: true },
     }),
     prisma.project.findMany({
       where: { ownerId: userId, status: { not: "COMPLETED" } },
@@ -119,6 +100,7 @@ export async function getMyWork(of?: string): Promise<MyWork> {
     }),
   ]);
 
+  const logged = new Map(hours.map((h) => [h.milestoneId, Number(h._sum.hours ?? 0)]));
   const sum = (from: Date, to?: Date) =>
     weekEntries
       .filter((e) => e.date >= from && (!to || e.date < to))
@@ -126,34 +108,22 @@ export async function getMyWork(of?: string): Promise<MyWork> {
 
   return {
     userId,
-    milestones: milestones.map((m) => ({
+    items: items.map((m) => ({
       id: m.id,
       title: m.title,
-      status: m.status,
-      dueDate: m.dueDate?.toISOString() ?? null,
+      stage: m.stage,
+      priority: m.priority,
+      dueDate: m.dueDate ? dayKey(m.dueDate) : null,
       projectId: m.project.id,
       projectName: m.project.projectName,
       clientName: m.project.client
         ? m.project.client.company ||
           `${m.project.client.firstName} ${m.project.client.lastName}`.trim()
         : null,
-      loggedHours: m.timeEntries.reduce((total, e) => total + Number(e.hours), 0),
-      estimatedHours: m.estimatedHours == null ? null : Number(m.estimatedHours),
-    })),
-    tasks: tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      status: t.status,
-      priority: t.priority,
-      // Board due dates are calendar days; keep them as the day they name.
-      dueDate: t.dueDate?.toISOString() ?? null,
-      projectId: t.project.id,
-      projectName: t.project.projectName,
-      clientName: t.project.client
-        ? t.project.client.company ||
-          `${t.project.client.firstName} ${t.project.client.lastName}`.trim()
-        : null,
-      clientNeedsHelp: t.comments.length > 0,
+      loggedHours: logged.get(m.id) ?? 0,
+      estimatedHours:
+        showEstimates && m.estimatedHours != null ? Number(m.estimatedHours) : null,
+      clientNeedsHelp: m._count.comments > 0,
     })),
     ownedProjects: ownedProjects.map((p) => ({
       id: p.id,

@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { formatCurrency } from "@/lib/currency";
 import { requireAdmin } from "@/lib/dal/session";
 import { rangeWindow, type DashboardRange } from "@/lib/dashboard-ranges";
+import { workItemHref } from "@/lib/board";
+import { AWAITING_REVIEW, OPEN_REQUEST, PLAN_ITEM } from "@/lib/work-scope";
 
 export {
   DASHBOARD_RANGES,
@@ -117,7 +119,8 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
     prisma.retainer.aggregate({ where: { active: true }, _sum: { amount: true } }),
     prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
     prisma.project.count({ where: { status: { not: "COMPLETED" } } }),
-    prisma.taskRequest.count({ where: { status: "PENDING" } }),
+    // Client requests waiting in the Requested column (each has a PENDING request).
+    prisma.milestone.count({ where: OPEN_REQUEST }),
   ]);
 
   const mrr = Number(mrrAgg._sum.amount ?? 0);
@@ -180,7 +183,7 @@ export const getDashboardLists = cache(async () => {
         type: true,
         status: true,
         client: { select: { firstName: true, lastName: true } },
-        milestones: { select: { status: true } },
+        milestones: { where: PLAN_ITEM, select: { status: true } },
       },
     }),
     prisma.invoice.findMany({
@@ -296,9 +299,9 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
           client: { select: { firstName: true, lastName: true } },
         },
       }),
-      // Completed work still waiting on the client's approval.
+      // Work sent for the client's review, still waiting on their verdict.
       prisma.milestone.findMany({
-        where: { status: "COMPLETED", clientApprovedAt: null },
+        where: AWAITING_REVIEW,
         orderBy: { updatedAt: "asc" },
         take: 5,
         select: {
@@ -321,16 +324,17 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
           project: { select: { projectName: true } },
         },
       }),
-      // Task requests sitting unanswered for more than three days.
-      prisma.taskRequest.findMany({
-        where: { status: "PENDING", createdAt: { lt: threeDaysAgo } },
+      // Client requests sitting in Requested for more than three days.
+      prisma.milestone.findMany({
+        where: { ...OPEN_REQUEST, createdAt: { lt: threeDaysAgo } },
         orderBy: { createdAt: "asc" },
         take: 5,
         select: {
           id: true,
           title: true,
           createdAt: true,
-          client: { select: { firstName: true, lastName: true } },
+          projectId: true,
+          project: { select: { client: { select: { firstName: true, lastName: true } } } },
         },
       }),
       // Sent proposals about to lapse — worth a nudge.
@@ -357,14 +361,19 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
         take: 5,
         select: { id: true, title: true, dayOfMonth: true },
       }),
-      // A client asked for help on a board card and nobody has answered.
-      prisma.projectTaskComment.findMany({
-        where: { kind: "HELP", authorRole: "CLIENT", resolvedAt: null },
+      // A client asked for help on a piece of work and nobody has answered.
+      prisma.milestoneComment.findMany({
+        where: {
+          kind: "HELP",
+          authorRole: "CLIENT",
+          resolvedAt: null,
+          milestone: { archivedAt: null },
+        },
         orderBy: { createdAt: "asc" },
         take: 5,
         select: {
           createdAt: true,
-          task: { select: { id: true, title: true, projectId: true } },
+          milestone: { select: { id: true, title: true, projectId: true } },
           author: { select: { firstName: true, lastName: true } },
         },
       }),
@@ -376,9 +385,9 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     const who = h.author ? `${h.author.firstName} ${h.author.lastName}`.trim() : "Client";
     items.push({
       kind: "help",
-      label: `${who} needs help — ${h.task.title}`,
+      label: `${who} needs help — ${h.milestone.title}`,
       detail: hours >= 24 ? `waiting ${Math.floor(hours / 24)} day${hours >= 48 ? "s" : ""}` : "asked on the board",
-      link: `/admin/projects/${h.task.projectId}?tab=board&task=${h.task.id}`,
+      link: workItemHref(h.milestone.projectId, h.milestone.id, "ADMIN"),
     });
   }
   for (const inv of overdueInvoices) {
@@ -422,7 +431,7 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
       kind: "approval",
       label: `Awaiting client approval — ${ms.title}`,
       detail: ms.project.projectName,
-      link: `/admin/projects/${ms.projectId}`,
+      link: workItemHref(ms.projectId, ms.id, "ADMIN"),
     });
   }
   for (const d of changeRequests) {
@@ -435,11 +444,12 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
   }
   for (const tr of staleRequests) {
     const days = Math.floor((now.getTime() - tr.createdAt.getTime()) / 86_400_000);
+    const client = tr.project.client;
     items.push({
       kind: "request",
       label: `Answer request — ${tr.title}`,
-      detail: `${tr.client.firstName} ${tr.client.lastName}`.trim() + ` · waiting ${days} days`,
-      link: "/admin/task-requests",
+      detail: `${client ? `${client.firstName} ${client.lastName}`.trim() : "Client"} · waiting ${days} days`,
+      link: workItemHref(tr.projectId, tr.id, "ADMIN"),
     });
   }
   for (const p of expiringProposals) {

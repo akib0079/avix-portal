@@ -64,9 +64,9 @@ export default async function ProjectsPage() {
             projectName: project.projectName,
             sourceLabel: projectSourceLabels[project.source],
             typeLabel: projectTypeLabels[project.type],
-            milestoneCount: project._count.milestones,
-            milestonesDone: project.milestones.filter((m) => m.status === "COMPLETED").length,
-            openTasks: project._count.boardTasks,
+            milestoneCount: project.planTotal,
+            milestonesDone: project.planDone,
+            openTasks: project.openItems,
             openHelp: helpByProject.get(project.id) ?? 0,
             clientName: project.client
               ? `${project.client.firstName} ${project.client.lastName}`

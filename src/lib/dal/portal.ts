@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { getBookingConfig } from "@/lib/dal/availability";
+import { PLAN_ITEM } from "@/lib/work-scope";
 
 /**
  * Every query here is scoped to the signed-in client's own id, taken from the
@@ -19,7 +20,8 @@ export async function getPortalOverview() {
         where: { clientId: user.id },
         orderBy: { updatedAt: "desc" },
         include: {
-          milestones: { select: { status: true } },
+          // The plan only, so progress means the same here as on the project.
+          milestones: { where: PLAN_ITEM, select: { status: true } },
         },
       }),
       prisma.invoice.findMany({
@@ -70,40 +72,30 @@ export async function listMyProjects() {
   return prisma.project.findMany({
     where: { clientId: user.id },
     orderBy: { updatedAt: "desc" },
-    include: { milestones: { select: { status: true } } },
-  });
-}
-
-export async function getMyProject(id: string) {
-  const user = await requireClient();
-  return prisma.project.findFirst({
-    where: { id, clientId: user.id },
-    include: {
-      milestones: {
-        orderBy: { position: "asc" },
-        include: {
-          // Bounded — the timeline only ever shows the recent entries, and a
-          // long milestone can hold hundreds.
-          timeEntries: {
-            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-            take: 20,
-          },
-        },
-      },
-    },
+    include: { milestones: { where: PLAN_ITEM, select: { status: true } } },
   });
 }
 
 /**
- * The extras the project page shows beside the timeline: this project's
- * invoices, its upcoming calls, and true logged-hour totals (the milestone
- * include above is capped). Scoped to the signed-in client.
+ * The client's own project. Its work items load separately, through
+ * getWorkItems (src/lib/dal/project-board.ts), scoped to the same session.
+ */
+export async function getMyProject(id: string) {
+  const user = await requireClient();
+  return prisma.project.findFirst({
+    where: { id, clientId: user.id },
+  });
+}
+
+/**
+ * The extras the project page shows beside the work: this project's invoices
+ * and its upcoming calls. Scoped to the signed-in client.
  */
 export async function getMyProjectExtras(projectId: string) {
   const user = await requireClient();
   const now = new Date();
 
-  const [invoices, meetings, hourTotals, viewer] = await Promise.all([
+  const [invoices, meetings, viewer] = await Promise.all([
     prisma.invoice.findMany({
       where: { projectId, clientId: user.id },
       orderBy: { issueDate: "desc" },
@@ -124,11 +116,6 @@ export async function getMyProjectExtras(projectId: string) {
       orderBy: { startsAt: "asc" },
       take: 5,
       select: { id: true, title: true, startsAt: true, durationMins: true },
-    }),
-    prisma.timeEntry.groupBy({
-      by: ["milestoneId"],
-      where: { milestone: { projectId } },
-      _sum: { hours: true },
     }),
     // The zone their browser reported (TimezoneSync), for rendering call times.
     prisma.user.findUnique({ where: { id: user.id }, select: { timezone: true } }),
@@ -153,9 +140,6 @@ export async function getMyProjectExtras(projectId: string) {
       durationMins: m.durationMins,
     })),
     timezone,
-    loggedHoursByMilestone: Object.fromEntries(
-      hourTotals.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
-    ) as Record<string, number>,
   };
 }
 
