@@ -51,4 +51,4 @@ next-env.d.ts
 
 # server backups
 backups/
-.claude/scheduled_tasks.lock
+.claude/
