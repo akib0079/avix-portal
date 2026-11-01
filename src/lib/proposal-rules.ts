@@ -90,9 +90,13 @@ export function proposalRemovalPlan(
 
 // ---------- Money ----------
 
-/** The deposit percentage of a total, to the cent. */
+/**
+ * The deposit percentage of a total, to the cent, half a cent rounding up.
+ * Worked in whole cents: 1.15 × 50 is 57.4999… in floating point, which
+ * rounded the deposit on £1.15 down to £0.57.
+ */
 export function depositAmount(total: number, depositPercent: number): number {
-  return Math.round(total * depositPercent) / 100;
+  return Math.round((Math.round(total * 100) * depositPercent) / 100) / 100;
 }
 
 export type FirstInvoicePromise =

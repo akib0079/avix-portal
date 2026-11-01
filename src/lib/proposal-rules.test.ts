@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  depositAmount,
   draftInvoiceRemovable,
   dueProposalReminder,
   firstInvoicePromise,
@@ -62,6 +63,15 @@ test("totals are kept per currency and never added across them", () => {
   ]);
   assert.equal(formatTotals(totals), "$3,000.50 + £1,500.00");
   assert.equal(formatTotals(totalsByCurrency([])), "");
+});
+
+test("a deposit is worked out in cents, half a cent rounding up", () => {
+  assert.equal(depositAmount(3000, 50), 1500);
+  assert.equal(depositAmount(1.15, 50), 0.58); // 57.4999… in floats
+  assert.equal(depositAmount(1234.56, 33), 407.4);
+  assert.equal(depositAmount(0.01, 50), 0.01);
+  assert.equal(depositAmount(999.99, 0), 0);
+  assert.equal(depositAmount(999.99, 100), 999.99);
 });
 
 test("the client is promised the invoice that is attached, else the deposit acceptance creates", () => {
