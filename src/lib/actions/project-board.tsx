@@ -422,26 +422,28 @@ export async function moveWorkItem(
     later(async () => {
       if (check.kind === "approve") return announceApproval(viewer, row);
       if (check.kind === "send-back") return announceSendBack(viewer, row, to, comment!);
-      await logActivity({
-        type: "work.moved",
-        summary: `${actor} moved “${row.title}” to ${label}`,
-        actorId: viewer.user.id,
-        clientId: viewer.project.clientId,
-        projectId: viewer.project.id,
-        entity: "milestone",
-        entityId: row.id,
-        link: workItemHref(viewer.project.id, row.id, "ADMIN"),
-      });
-      if (to === "REVIEW" && viewer.project.clientId) {
-        await notifyWork(viewer, row, [viewer.project.clientId], {
-          type: "PROJECT_TASK_REVIEW",
-          title: `Ready for your review: ${row.title}`,
-          body: viewer.project.projectName,
-          heading: "Ready for your review",
-          intro: `the team finished a task on ${viewer.project.projectName} and would like your eyes on it. Approve it if it's right, or send it back with a note if it needs changes.`,
-          email: "always",
-        });
-      }
+      await Promise.all([
+        logActivity({
+          type: "work.moved",
+          summary: `${actor} moved “${row.title}” to ${label}`,
+          actorId: viewer.user.id,
+          clientId: viewer.project.clientId,
+          projectId: viewer.project.id,
+          entity: "milestone",
+          entityId: row.id,
+          link: workItemHref(viewer.project.id, row.id, "ADMIN"),
+        }),
+        to === "REVIEW" && viewer.project.clientId
+          ? notifyWork(viewer, row, [viewer.project.clientId], {
+              type: "PROJECT_TASK_REVIEW",
+              title: `Ready for your review: ${row.title}`,
+              body: viewer.project.projectName,
+              heading: "Ready for your review",
+              intro: `the team finished a task on ${viewer.project.projectName} and would like your eyes on it. Approve it if it's right, or send it back with a note if it needs changes.`,
+              email: "always",
+            })
+          : null,
+      ]);
     });
   }
 
@@ -504,9 +506,6 @@ export async function restoreWorkItem(itemId: string): Promise<BoardResult<{ ite
     return { ok: false, error: "A declined request can't be reopened — the client can send it again." };
   }
 
-  const parent = item.parentId
-    ? await prisma.milestone.findUnique({ where: { id: item.parentId }, select: { archivedAt: true } })
-    : null;
   const [[row], extras] = await Promise.all([
     prisma.$transaction([
       prisma.milestone.update({
@@ -514,7 +513,7 @@ export async function restoreWorkItem(itemId: string): Promise<BoardResult<{ ite
         // Back under its phase only if the phase is still there.
         data: {
           archivedAt: null,
-          ...(item.parentId && (!parent || parent.archivedAt) ? { parentId: null } : {}),
+          ...(item.parentId && (!item.parent || item.parent.archivedAt) ? { parentId: null } : {}),
         },
         select: itemSelect,
       }),

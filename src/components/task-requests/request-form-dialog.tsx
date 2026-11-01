@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { JSONContent } from "@tiptap/react";
@@ -49,7 +48,6 @@ export function RequestFormDialog({
   defaultProjectId?: string;
   triggerLabel?: string;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   const form = useForm<TaskRequestInput>({
@@ -71,7 +69,8 @@ export function RequestFormDialog({
       title: "",
       description: undefined,
     });
-    router.refresh();
+    // submitTaskRequest revalidates the requests page and the project, and
+    // Next applies that render from the action's response — no refresh.
   }
 
   if (projects.length === 0) return null;

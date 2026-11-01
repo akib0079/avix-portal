@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -33,7 +32,6 @@ export function RequestReviewActions({
 }: {
   request: { id: string; title: string; clientName: string };
 }) {
-  const router = useRouter();
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -52,9 +50,8 @@ export function RequestReviewActions({
   async function onApprove(values: ApprovalPricingInput) {
     const result = await approveTaskRequest(request.id, values);
     if (!result.ok) return void toast.error(result.error);
-    toast.success("Approved — added to the project board.");
+    toast.success("Approved — it's in the project plan now.");
     setApproveOpen(false);
-    router.refresh();
   }
 
   async function onReject() {
@@ -64,7 +61,6 @@ export function RequestReviewActions({
     if (!result.ok) return void toast.error(result.error);
     toast.success("Request rejected — the client has been notified.");
     setRejectOpen(false);
-    router.refresh();
   }
 
   return (
@@ -87,8 +83,9 @@ export function RequestReviewActions({
           <DialogHeader>
             <DialogTitle className="font-heading">Approve request</DialogTitle>
             <DialogDescription>
-              Set the pricing for “{request.title}”. It becomes a milestone on
-              the project board and {request.clientName} is notified.
+              Set the pricing for “{request.title}”. It moves from Requested
+              into the plan on the project board, and {request.clientName} is
+              notified.
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>

@@ -265,39 +265,59 @@ export async function announceClientAddition(
 ) {
   const actor = displayName(viewer.user);
   const link = workItemHref(viewer.project.id, item.id, "ADMIN");
-  await logActivity({
-    type: accepted ? "work.created" : "work.requested",
-    summary: accepted
-      ? `${actor} added “${item.title}” to To do`
-      : `${actor} requested “${item.title}”`,
-    actorId: viewer.user.id,
-    clientId: viewer.project.clientId,
-    projectId: viewer.project.id,
-    entity: "milestone",
-    entityId: item.id,
-    link,
+  await Promise.all([
+    logActivity({
+      type: accepted ? "work.created" : "work.requested",
+      summary: accepted
+        ? `${actor} added “${item.title}” to To do`
+        : `${actor} requested “${item.title}”`,
+      actorId: viewer.user.id,
+      clientId: viewer.project.clientId,
+      projectId: viewer.project.id,
+      entity: "milestone",
+      entityId: item.id,
+      link,
+    }),
+    accepted
+      ? announceAcceptedAddition(viewer, item, actor, quote)
+      : announceRequest(viewer, item, actor, quote, link),
+  ]);
+}
+
+/** An auto-accepted addition is ordinary work for whoever is on point. */
+async function announceAcceptedAddition(
+  viewer: BoardViewer,
+  item: { id: string; title: string; assigneeId: string | null },
+  actor: string,
+  quote: string | null,
+) {
+  const pinned = item.assigneeId && item.assigneeId !== viewer.user.id;
+  await notifyWork(viewer, item, await teamOnPoint(viewer, item.assigneeId), {
+    type: pinned ? "PROJECT_TASK_ASSIGNED" : "PROJECT_TASK_CREATED",
+    title: `${actor} added a task: ${item.title}`,
+    body: viewer.project.projectName,
+    heading: pinned ? "You've been pinned on a task" : "New task from your client",
+    intro: `${actor} added a task to ${viewer.project.projectName}${pinned ? " and pinned you on it" : ""}.`,
+    quote,
+    email: "always",
   });
+}
 
+/** A request waits for a decision, so the admins hear, and anyone on point. */
+async function announceRequest(
+  viewer: BoardViewer,
+  item: { id: string; title: string; assigneeId: string | null },
+  actor: string,
+  quote: string | null,
+  link: string,
+) {
   const pinned = item.assigneeId && item.assigneeId !== viewer.user.id ? item.assigneeId : null;
-  if (accepted) {
-    await notifyWork(viewer, item, await teamOnPoint(viewer, item.assigneeId), {
-      type: pinned ? "PROJECT_TASK_ASSIGNED" : "PROJECT_TASK_CREATED",
-      title: `${actor} added a task: ${item.title}`,
-      body: viewer.project.projectName,
-      heading: pinned ? "You've been pinned on a task" : "New task from your client",
-      intro: `${actor} added a task to ${viewer.project.projectName}${pinned ? " and pinned you on it" : ""}.`,
-      quote,
-      email: "always",
-    });
-    return;
-  }
-
   const admins = await prisma.user.findMany({
     where: { role: "ADMIN", status: "ACTIVE" },
     select: { id: true },
   });
-  // The admin inbox gets the request email below; the bells and any staff
-  // member on point are handled here.
+  // The admin inbox gets the request's own email below; the bells, and an
+  // email for a staff member on point, come from here.
   await notifyWork(
     viewer,
     item,

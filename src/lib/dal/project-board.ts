@@ -110,6 +110,7 @@ export async function itemAccess(itemId: string) {
     omit: { description: true },
     include: {
       project: { select: projectSelect },
+      parent: { select: { archivedAt: true } },
       _count: { select: { children: { where: { archivedAt: null } } } },
     },
   });

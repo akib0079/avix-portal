@@ -237,8 +237,9 @@ export async function approveTaskRequest(
         },
       }),
       logActivity({
+        // No price here: the project's activity feed is shown to staff too.
         type: "work.accepted",
-        summary: `${actor} accepted “${request.title}”${pricingLine ? ` · ${pricingLine}` : ""}`,
+        summary: `${actor} accepted “${request.title}”`,
         actorId: user.id,
         clientId: request.clientId,
         projectId: request.projectId,
