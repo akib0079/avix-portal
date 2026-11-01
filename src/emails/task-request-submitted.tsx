@@ -12,16 +12,16 @@ export default function TaskRequestSubmittedEmail({
   adminUrl: string;
 }) {
   return (
-    <EmailShell preview={`New task request from ${clientName}`}>
-      <EmailHeading>New task request</EmailHeading>
+    <EmailShell preview={`New request from ${clientName}`}>
+      <EmailHeading>New request</EmailHeading>
       <EmailBody>
-        <strong>{clientName}</strong> submitted a task request on{" "}
+        <strong>{clientName}</strong> asked for something new on{" "}
         <strong>{projectName}</strong>:
       </EmailBody>
       <EmailBody>“{title}”</EmailBody>
       <EmailBody>
-        Review it in the admin panel to approve it with pricing or reject it
-        with a note.
+        It waits in the project&apos;s Requested section. Accept it into the
+        plan (and price it), or decline it with a note.
       </EmailBody>
       <EmailButton href={adminUrl}>Review request</EmailButton>
     </EmailShell>

@@ -337,7 +337,7 @@ async function announceRequest(
   if (adminEmail) {
     await sendEmail({
       to: adminEmail,
-      subject: `New task request: ${item.title}`,
+      subject: `New request: ${item.title}`,
       react: (
         <TaskRequestSubmittedEmail
           clientName={actor}

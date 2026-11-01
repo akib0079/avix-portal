@@ -33,6 +33,7 @@ import {
 } from "@/lib/board";
 import { stageWrite } from "@/lib/work-stage";
 import { approvalPricingSchema } from "@/lib/validation/task-request";
+import { WITHDRAWN_NOTE } from "@/lib/work-list";
 import {
   EMPTY_DOC,
   NO_PRICING,
@@ -627,7 +628,7 @@ export async function withdrawWorkItem(itemId: string): Promise<BoardResult<{ id
         where: { id: item.sourceTaskRequestId, status: "PENDING" },
         data: {
           status: "REJECTED",
-          adminNote: "Withdrawn by client",
+          adminNote: WITHDRAWN_NOTE,
           resolvedAt: now,
           milestone: { update: { archivedAt: now } },
         },

@@ -231,7 +231,7 @@ export async function approveTaskRequest(
         data: {
           userId: request.clientId,
           type: "TASK_REQUEST_APPROVED",
-          title: `Request approved: ${request.title}`,
+          title: `Request accepted: ${request.title}`,
           body: `Added to ${request.project.projectName}`,
           link: workItemHref(request.projectId, accepted.id, "CLIENT"),
         },
@@ -250,7 +250,7 @@ export async function approveTaskRequest(
     ]);
     await sendEmail({
       to: request.client.email,
-      subject: `Your task request was approved — ${request.title}`,
+      subject: `Your request was accepted — ${request.title}`,
       react: (
         <TaskRequestApprovedEmail
           firstName={request.client.firstName || "there"}
@@ -332,7 +332,7 @@ export async function rejectTaskRequest(
     ]);
     await sendEmail({
       to: request.client.email,
-      subject: `Update on your task request — ${request.title}`,
+      subject: `Update on your request — ${request.title}`,
       react: (
         <TaskRequestRejectedEmail
           firstName={request.client.firstName || "there"}
