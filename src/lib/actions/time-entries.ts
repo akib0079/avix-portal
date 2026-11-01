@@ -60,9 +60,17 @@ export async function createTimeEntry(
 
   const milestone = await prisma.milestone.findUnique({
     where: { id: milestoneId },
-    select: { projectId: true },
+    select: { projectId: true, stage: true, archivedAt: true },
   });
   if (!milestone) return { ok: false, error: "Milestone not found." };
+  // Hours on a request nobody has accepted, or on archived work, would bill
+  // the client for something that isn't on their plan.
+  if (milestone.stage === "REQUESTED") {
+    return { ok: false, error: "Accept the request before logging time on it." };
+  }
+  if (milestone.archivedAt) {
+    return { ok: false, error: "Restore this item before logging time on it." };
+  }
 
   await prisma.timeEntry.create({
     data: {
