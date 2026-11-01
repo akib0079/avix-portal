@@ -213,7 +213,9 @@ export default async function PublicProposalPage({
           <strong className="text-foreground">Preview</strong> — this is what{" "}
           {proposal.contactName} sees{proposal.status === "DRAFT" ? " once it's sent" : ""}. Nothing
           here is recorded or sent.
-          {proposal.archived ? " This proposal is archived: its link shows as withdrawn." : ""}
+          {proposal.archived && proposal.status !== "ACCEPTED"
+            ? " This proposal is archived: its link shows as withdrawn."
+            : ""}
         </div>
         <ProposalDocument proposal={proposal} validUntil={proposal.expiresAt} />
         {proposal.status === "ACCEPTED" ? (
@@ -238,7 +240,9 @@ export default async function PublicProposalPage({
   const proposal = await getPublicProposal(id);
   if (!proposal || proposal.status === "DRAFT") return <InvalidLink />;
 
-  if (proposal.archived) {
+  // Archiving withdraws an offer, but an accepted proposal is the client's
+  // agreement: archiving that one only tidies the owner's board.
+  if (proposal.archived && proposal.status !== "ACCEPTED") {
     return (
       <Notice title="This proposal was withdrawn">
         We&apos;ve withdrawn this proposal, so it can no longer be accepted. If you were

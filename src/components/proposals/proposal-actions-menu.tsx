@@ -81,9 +81,16 @@ export function ProposalActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         {archived ? (
-          <DropdownMenuItem onClick={() => handlers.restore(p)}>
-            <ArchiveRestore /> Restore to the board
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem onClick={() => handlers.restore(p)}>
+              <ArchiveRestore /> Restore to the board
+            </DropdownMenuItem>
+            {p.status === "ACCEPTED" && (
+              <DropdownMenuItem onClick={() => handlers.copyLink(p)}>
+                <Link2 /> Copy client link
+              </DropdownMenuItem>
+            )}
+          </>
         ) : (
           <>
             {p.status === "DRAFT" && (

@@ -22,11 +22,12 @@ import {
   proposalLinks,
   type ProposalDetail,
   type ProposalDraft,
+  type ProposalLinks,
 } from "@/lib/dal/proposals";
 import { getProposalDefaultTerms, listActivePaymentAccounts } from "@/lib/dal/settings";
 import { formatCurrency } from "@/lib/currency";
 import { usdToStore } from "@/lib/invoice-usd";
-import { invoiceTotals } from "@/lib/invoice-totals";
+import { dueDateFromTerms, invoiceTotals } from "@/lib/invoice-totals";
 import { requestMeta } from "@/lib/request-meta";
 import {
   draftInvoiceRemovable,
@@ -478,7 +479,7 @@ export async function createProposal(
 export async function updateProposal(
   id: string,
   formData: FormData,
-): Promise<ActionResult> {
+): Promise<ActionResult<{ invoiceLocked: string | null }>> {
   await requireAdmin();
   const parsed = parsePayload(formData);
   if (!parsed.success) {
@@ -539,9 +540,9 @@ export async function updateProposal(
       ? null
       : existing.invoicePdfOriginalName;
 
-  let movedClient: { removedOld: boolean } | null = null;
+  let outcome: { moved: boolean; invoiceLocked: string | null };
   try {
-    movedClient = await prisma.$transaction(async (tx) => {
+    outcome = await prisma.$transaction(async (tx) => {
       const invoice = existing.convertedInvoiceId
         ? await tx.invoice.findUnique({
             where: { id: existing.convertedInvoiceId },
@@ -561,20 +562,23 @@ export async function updateProposal(
           })
         : null;
 
+      // Still paperwork? Once the invoice has been sent from the invoice
+      // page (or paid against), the builder must not rewrite it.
+      const invoiceIsPaperwork =
+        invoice != null &&
+        draftInvoiceRemovable({
+          status: invoice.status,
+          sentAt: invoice.sentAt,
+          amountPaid: Number(invoice.amountPaid),
+          paymentCount: invoice._count.payments,
+        });
+
       let clientId = existing.convertedClientId;
       let createdClientAccount = existing.createdClientAccount;
       if (recipientMoved) {
         // An invoice the old address has already received can't quietly
         // change hands.
-        if (
-          invoice &&
-          !draftInvoiceRemovable({
-            status: invoice.status,
-            sentAt: invoice.sentAt,
-            amountPaid: Number(invoice.amountPaid),
-            paymentCount: invoice._count.payments,
-          })
-        ) {
+        if (invoice && !invoiceIsPaperwork) {
           throw new ActionAbort(
             `Invoice ${invoice.invoiceNumber} has already gone to the old recipient, so the email can't change here. Start a new proposal for the new address instead.`,
           );
@@ -584,9 +588,10 @@ export async function updateProposal(
         createdClientAccount = next.created;
       }
 
-      await tx.proposalItem.deleteMany({ where: { proposalId: id } });
-      await tx.proposal.update({
-        where: { id },
+      // Conditional on still being an unsent draft, and it holds the row: a
+      // send that lands meanwhile waits for this edit, or wins and stops it.
+      const claimed = await tx.proposal.updateMany({
+        where: { id, status: "DRAFT", archivedAt: null },
         data: {
           ...recipientFields(data),
           title: data.title,
@@ -602,13 +607,19 @@ export async function updateProposal(
           invoicePdfExternalUrl: data.invoicePdfExternalUrl || null,
           convertedClientId: clientId,
           createdClientAccount,
-          items: { create: itemsFromInput(data.items) },
         },
+      });
+      if (claimed.count === 0) {
+        throw new ActionAbort("This proposal was sent or archived a moment ago, so it can no longer be edited.");
+      }
+      await tx.proposalItem.deleteMany({ where: { proposalId: id } });
+      await tx.proposalItem.createMany({
+        data: itemsFromInput(data.items).map((item) => ({ ...item, proposalId: id })),
       });
 
       // Keep the draft invoice created alongside the proposal in sync. A
       // discount or tax set in the invoice editor survives the re-total.
-      if (invoice) {
+      if (invoice && invoiceIsPaperwork) {
         const totals = invoiceTotals({
           items: inv.items,
           discount: Number(invoice.discount),
@@ -650,12 +661,13 @@ export async function updateProposal(
         });
       }
 
-      if (!recipientMoved) return null;
-      const removedOld =
-        existing.createdClientAccount && existing.convertedClientId && existing.convertedClientId !== clientId
-          ? await removeSilentClient(tx, existing.convertedClientId, id)
-          : false;
-      return { removedOld };
+      if (recipientMoved && existing.createdClientAccount && existing.convertedClientId !== clientId) {
+        await removeSilentClient(tx, existing.convertedClientId!, id);
+      }
+      return {
+        moved: recipientMoved,
+        invoiceLocked: invoice && !invoiceIsPaperwork ? invoice.invoiceNumber : null,
+      };
     });
   } catch (err) {
     if (pdf.fileName) await deleteUpload("invoices", pdf.fileName);
@@ -673,8 +685,8 @@ export async function updateProposal(
     revalidatePath(`/admin/leads/${data.leadId}`);
   }
   if (existing.convertedInvoiceId) revalidatePath("/admin/invoices");
-  if (movedClient) revalidatePath("/admin/clients");
-  return { ok: true };
+  if (outcome.moved) revalidatePath("/admin/clients");
+  return { ok: true, data: { invoiceLocked: outcome.invoiceLocked } };
 }
 
 // ---------- Delete, archive, restore ----------
@@ -778,17 +790,21 @@ export async function deleteProposal(
     invoiceRemoved = await prisma.$transaction(async (tx) => {
       const removed = removeInvoice ? await removeDraftInvoice(tx, p.convertedInvoiceId!) : false;
       // Bumping the link version withdraws every link already sent; the
-      // public page recognises them and says the proposal was withdrawn.
+      // public page recognises them and says the proposal was withdrawn. An
+      // accepted proposal only leaves the board: it is the client's
+      // agreement, and their link keeps showing it.
       const claimed = await tx.proposal.updateMany({
-        where: { id, archivedAt: null },
+        where: { id, archivedAt: null, status: p.status },
         data: {
           archivedAt: new Date(),
           archivedById: admin.id,
-          linkVersion: { increment: 1 },
+          ...(p.status === "ACCEPTED" ? {} : { linkVersion: { increment: 1 } }),
           ...(removed ? { convertedInvoiceId: null } : {}),
         },
       });
-      if (claimed.count === 0) throw new ActionAbort("This proposal is already archived.");
+      if (claimed.count === 0) {
+        throw new ActionAbort("This proposal changed a moment ago. Refresh and try again.");
+      }
       await tx.proposalEvent.create({
         data: {
           proposalId: id,
@@ -867,6 +883,7 @@ type SendRow = Prisma.ProposalGetPayload<{ select: typeof SEND_SELECT }>;
  */
 async function shareProposal(
   p: SendRow,
+  links: ProposalLinks | null,
   opts: { days: number; variant: "sent" | "resent" | "extended"; actorId: string },
 ): Promise<ActionResult> {
   const contact = proposalContact(p);
@@ -876,6 +893,18 @@ async function shareProposal(
       error: p.leadId
         ? "Add an email to this lead first — the proposal is sent to it."
         : "Add a recipient email first — the proposal is sent to it.",
+    };
+  }
+  // The lead's email can change on the leads page after the draft was
+  // provisioned. Sending to the new address while the account (and so the
+  // invite on acceptance) keeps the old one would split the client in two.
+  if (links?.client && links.client.email.toLowerCase() !== contact.email.toLowerCase()) {
+    return {
+      ok: false,
+      error:
+        p.status === "DRAFT"
+          ? `The recipient's email is now ${contact.email}, but this draft was set up for ${links.client.email}. Open it and save to move it to the new address, then send.`
+          : `The recipient's email is now ${contact.email}, but this proposal was set up for ${links.client.email}. Duplicate it for the new address instead.`,
     };
   }
 
@@ -947,12 +976,15 @@ async function shareProposal(
  */
 export async function sendProposal(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
-  const p = await prisma.proposal.findUnique({ where: { id }, select: SEND_SELECT });
+  const [p, links] = await Promise.all([
+    prisma.proposal.findUnique({ where: { id }, select: SEND_SELECT }),
+    proposalLinks(id),
+  ]);
   if (!p) return { ok: false, error: "Proposal not found." };
   if (p.archivedAt) return { ok: false, error: "Restore this proposal before sending it." };
   if (p.status === "ACCEPTED") return { ok: false, error: "This proposal was already accepted." };
   if (p.status === "EXPIRED") return { ok: false, error: "This proposal expired — extend it instead." };
-  return shareProposal(p, {
+  return shareProposal(p, links, {
     days: p.expiresInDays,
     variant: p.status === "DRAFT" ? "sent" : "resent",
     actorId: admin.id,
@@ -967,13 +999,16 @@ export async function extendProposal(id: string, days: number): Promise<ActionRe
   const admin = await requireAdmin();
   const parsed = extendProposalSchema.safeParse({ days });
   if (!parsed.success) return { ok: false, error: "Pick how many days to extend by." };
-  const p = await prisma.proposal.findUnique({ where: { id }, select: SEND_SELECT });
+  const [p, links] = await Promise.all([
+    prisma.proposal.findUnique({ where: { id }, select: SEND_SELECT }),
+    proposalLinks(id),
+  ]);
   if (!p) return { ok: false, error: "Proposal not found." };
   if (p.archivedAt) return { ok: false, error: "Restore this proposal before extending it." };
   if (p.status !== "SENT" && p.status !== "EXPIRED") {
     return { ok: false, error: "Only a sent or expired proposal can be extended." };
   }
-  return shareProposal(p, { days: parsed.data.days, variant: "extended", actorId: admin.id });
+  return shareProposal(p, links, { days: parsed.data.days, variant: "extended", actorId: admin.id });
 }
 
 /** Re-derives the public link for "Copy link": the current version, never an old one. */
@@ -984,7 +1019,9 @@ export async function getProposalLink(id: string): Promise<ActionResult<{ url: s
     select: { expiresAt: true, status: true, linkVersion: true, archivedAt: true },
   });
   if (!proposal) return { ok: false, error: "Proposal not found." };
-  if (proposal.archivedAt) return { ok: false, error: "This proposal is archived — its link is withdrawn." };
+  if (proposal.archivedAt && proposal.status !== "ACCEPTED") {
+    return { ok: false, error: "This proposal is archived — its link is withdrawn." };
+  }
   if (!proposal.expiresAt || proposal.status === "DRAFT") {
     return { ok: false, error: "Send the proposal first to create its link." };
   }
@@ -1084,6 +1121,7 @@ export async function duplicateProposal(
   });
   const currency = sourceInvoice?.currency ?? source.currency;
   const title = `${source.title} (copy)`.slice(0, 160);
+  const issueDate = new Date();
 
   let created: { id: string; clientCreated: boolean };
   try {
@@ -1102,8 +1140,13 @@ export async function duplicateProposal(
           paymentTermsDays: sourceInvoice?.paymentTermsDays ?? null,
           amountUsd: usdToStore(currency, totals.total, null),
           currency,
-          issueDate: new Date(),
-          title: sourceInvoice?.title ? title : null,
+          issueDate,
+          // Net terms carry over as terms, not as the source's old due date.
+          dueDate: parseDate(
+            dueDateFromTerms(issueDate.toISOString().slice(0, 10), sourceInvoice?.paymentTermsDays),
+          ),
+          // Client-facing, so no "(copy)" on it.
+          title: sourceInvoice?.title ?? null,
           notes: sourceInvoice?.notes ?? null,
           // The billed-to overrides describe the old client.
           billToCompany: sameRecipient ? (sourceInvoice?.billToCompany ?? null) : null,

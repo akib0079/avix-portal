@@ -167,7 +167,14 @@ export function ProposalManager({
     extend: (p) => setDialog({ kind: "extend", proposal: p }),
     markAccepted: (p) => setDialog({ kind: "accept", proposal: p }),
     remove: (p) => setDialog({ kind: "remove", proposal: p }),
-    restore: (p) => run(p, () => restoreProposal(p.id), "Restored to the board."),
+    restore: (p) =>
+      run(
+        p,
+        () => restoreProposal(p.id),
+        p.status === "SENT"
+          ? "Restored. Its old link stays withdrawn — resend or copy a new link for the client."
+          : "Restored to the board.",
+      ),
     setReminders: (p, enabled) =>
       run(
         p,

@@ -149,7 +149,7 @@ export function ProposalRemoveDialog({
               {plan?.mode === "archive" && proposal.status === "ACCEPTED" && (
                 <p>
                   Accepted proposals are archived, not erased: it leaves the board but stays on
-                  record. The client
+                  record, and the client can still open their copy. The client
                   {detail?.projectName ? `, the project “${detail.projectName}”` : ""}
                   {invoice ? ` and invoice ${invoice.invoiceNumber}` : ""} stay as they are.
                 </p>

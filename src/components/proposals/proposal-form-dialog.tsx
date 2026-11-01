@@ -319,9 +319,22 @@ export function ProposalFormDialog({
 
     // Both actions revalidate the pages that list proposals, which redraws
     // whichever one this dialog was opened from.
-    const result = proposalId ? await updateProposal(proposalId, fd) : await createProposal(fd);
-    if (!result.ok) return void toast.error(result.error);
-    toast.success(proposalId ? "Proposal updated." : "Proposal created.");
+    if (proposalId) {
+      const result = await updateProposal(proposalId, fd);
+      if (!result.ok) return void toast.error(result.error);
+      const locked = result.data?.invoiceLocked;
+      if (locked) {
+        toast.success("Proposal updated.", {
+          description: `Invoice ${locked} was already sent, so it wasn't changed. Edit it from the invoice page.`,
+        });
+      } else {
+        toast.success("Proposal updated.");
+      }
+    } else {
+      const result = await createProposal(fd);
+      if (!result.ok) return void toast.error(result.error);
+      toast.success("Proposal created.");
+    }
     onOpenChange(false);
   }
 
