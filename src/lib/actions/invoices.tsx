@@ -1,11 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { usdToStore } from "@/lib/invoice-usd";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { parseInvoiceForm } from "@/lib/invoice-form-data";
-import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { createWithNextNumber, nextInvoiceNumber } from "@/lib/invoice-number";
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
 import { getBillableWork } from "@/lib/dal/billable";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
@@ -16,6 +17,7 @@ import { logActivity } from "@/lib/dal/activity";
 import { formatCurrency } from "@/lib/currency";
 import { appUrl } from "@/lib/app-url";
 import type { InvoiceStatus } from "@prisma/client";
+import type { InvoiceInput } from "@/lib/validation/invoice";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -25,16 +27,6 @@ function parseDate(value: string | undefined): Date | null {
   if (!value) return null;
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-/** "none"/empty → null; else the id (validated against active accounts). */
-async function resolvePaymentAccountId(value: string | undefined): Promise<string | null> {
-  if (!value || value === "none") return null;
-  const account = await prisma.paymentAccount.findUnique({
-    where: { id: value },
-    select: { id: true },
-  });
-  return account?.id ?? null;
 }
 
 /**
@@ -71,23 +63,97 @@ function itemRows(
   }));
 }
 
-async function validateRelations(clientId: string, projectId: string) {
-  const client = await prisma.user.findFirst({
-    where: { id: clientId, role: "CLIENT" },
-    select: { id: true },
-  });
-  if (!client) return { error: "Selected client not found." };
+/** What a save resolved from the form before writing anything. */
+type Refs = {
+  customNumber: string | null;
+  issueDate: Date;
+  projectId: string | null;
+  paymentAccountId: string | null;
+};
 
-  let resolvedProjectId: string | null = null;
-  if (projectId !== "none") {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
+/**
+ * Everything a save has to check before it writes, in one wave. None of these
+ * lookups depends on another, and they used to run one after the other at
+ * ~228 ms apiece against the production database.
+ *
+ * The project has to be the client's own (or have no client): the portal
+ * prints the project's name beside the invoice, so linking one client's
+ * invoice to another client's project would show them its name.
+ */
+async function resolveRefs(
+  data: InvoiceInput,
+  selfId?: string,
+): Promise<Refs | { error: string }> {
+  const customNumber = data.invoiceNumber?.trim() || null;
+  const accountId =
+    data.paymentAccountId && data.paymentAccountId !== "none" ? data.paymentAccountId : null;
+  const [client, project, clash, account] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: data.clientId, role: "CLIENT" },
       select: { id: true },
-    });
-    if (!project) return { error: "Selected project not found." };
-    resolvedProjectId = project.id;
+    }),
+    data.projectId === "none"
+      ? null
+      : prisma.project.findFirst({
+          where: { id: data.projectId, OR: [{ clientId: data.clientId }, { clientId: null }] },
+          select: { id: true },
+        }),
+    // Checked before any PDF is stored: a duplicate number is an ordinary
+    // typo, and storing first would strand the upload with no row pointing
+    // at it.
+    customNumber
+      ? prisma.invoice.findFirst({
+          where: { invoiceNumber: customNumber, ...(selfId ? { id: { not: selfId } } : {}) },
+          select: { id: true },
+        })
+      : null,
+    // An account deleted since the form loaded just prints no bank details.
+    accountId
+      ? prisma.paymentAccount.findUnique({ where: { id: accountId }, select: { id: true } })
+      : null,
+  ]);
+  if (!client) return { error: "Selected client not found." };
+  if (data.projectId !== "none" && !project) {
+    return { error: "Selected project not found for this client." };
   }
-  return { resolvedProjectId };
+  if (clash) return { error: `Invoice number "${customNumber}" is already used.` };
+  const issueDate = parseDate(data.issueDate);
+  if (!issueDate) return { error: "Enter a valid issue date." };
+  return {
+    customNumber,
+    issueDate,
+    projectId: project?.id ?? null,
+    paymentAccountId: account?.id ?? null,
+  };
+}
+
+/** The columns a form save writes, the same for a new invoice and an edit. */
+function formColumns(data: InvoiceInput, refs: Refs) {
+  const totals = totalsFor(data);
+  const currency = data.currency ?? "USD";
+  return {
+    clientId: data.clientId,
+    projectId: refs.projectId,
+    amount: totals.total,
+    subtotal: totals.subtotal,
+    discount: totals.discount,
+    taxRate: data.taxRate ?? null,
+    taxLabel: data.taxLabel || null,
+    paymentTermsDays: data.paymentTermsDays ?? null,
+    issueDate: refs.issueDate,
+    dueDate: parseDate(
+      data.dueDate || dueDateFromTerms(data.issueDate, data.paymentTermsDays) || "",
+    ),
+    notes: data.notes || null,
+    title: data.title || null,
+    currency,
+    amountUsd: usdToStore(currency, totals.total, data.amountUsd),
+    billToCompany: data.billToCompany || null,
+    billToAddress: data.billToAddress || null,
+    billToEmail: data.billToEmail || null,
+    paymentAccountId: refs.paymentAccountId,
+    pdfExternalUrl: data.pdfExternalUrl || null,
+  };
 }
 
 /** Stores an uploaded PDF, if the form carried one. */
@@ -113,60 +179,30 @@ export async function createInvoice(
   }
   const data = parsed.data;
 
-  const relations = await validateRelations(data.clientId, data.projectId);
-  if ("error" in relations) return { ok: false, error: relations.error! };
-
-  // Custom number if given (must be unique); otherwise auto-assign.
-  // Checked BEFORE the PDF is stored: a duplicate number is an ordinary typo,
-  // and saving first would strand the uploaded file in the bucket with no
-  // invoice row ever pointing at it.
-  const custom = data.invoiceNumber?.trim();
-  if (custom) {
-    const clash = await prisma.invoice.findUnique({
-      where: { invoiceNumber: custom },
-      select: { id: true },
-    });
-    if (clash) return { ok: false, error: `Invoice number "${custom}" is already used.` };
-  }
+  const refs = await resolveRefs(data);
+  if ("error" in refs) return { ok: false, error: refs.error };
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
-  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
-  const invoice = await prisma.$transaction(async (tx) => {
-    const invoiceNumber = custom || (await nextInvoiceNumber(tx));
-    const totals = totalsFor(data);
-    return tx.invoice.create({
+  // One nested create, lines included, under the custom number or the next
+  // free one. This used to be an interactive transaction holding a connection
+  // open across every statement.
+  const create = (invoiceNumber: string) =>
+    prisma.invoice.create({
       data: {
         invoiceNumber,
-        clientId: data.clientId,
-        projectId: relations.resolvedProjectId,
-        amount: totals.total,
-        subtotal: totals.subtotal,
-        discount: totals.discount,
-        taxRate: data.taxRate ?? null,
-        taxLabel: data.taxLabel || null,
-        paymentTermsDays: data.paymentTermsDays ?? null,
+        ...formColumns(data, refs),
         status: data.status,
-        issueDate: parseDate(data.issueDate)!,
-        dueDate: parseDate(
-          data.dueDate || dueDateFromTerms(data.issueDate, data.paymentTermsDays) || "",
-        ),
-        notes: data.notes || null,
-        title: data.title || null,
-        currency: data.currency ?? "USD",
-        amountUsd: usdToStore(data.currency ?? "USD", totals.total, data.amountUsd),
-        billToCompany: data.billToCompany || null,
-        billToAddress: data.billToAddress || null,
-        billToEmail: data.billToEmail || null,
-        paymentAccountId,
         pdfPath: pdf.fileName,
         pdfOriginalName: pdf.originalName,
-        pdfExternalUrl: data.pdfExternalUrl || null,
         items: { create: itemRows(data.items) },
       },
+      select: { id: true },
     });
-  });
+  const invoice = refs.customNumber
+    ? await create(refs.customNumber)
+    : await createWithNextNumber(prisma, create);
 
   revalidatePath("/admin/invoices");
   revalidatePath("/admin");
@@ -184,74 +220,43 @@ export async function updateInvoice(
   }
   const data = parsed.data;
 
-  const invoice = await prisma.invoice.findUnique({ where: { id } });
+  const [invoice, refs] = await Promise.all([
+    prisma.invoice.findUnique({ where: { id }, select: { id: true, pdfPath: true } }),
+    resolveRefs(data, id),
+  ]);
   if (!invoice) return { ok: false, error: "Invoice not found." };
-
-  const relations = await validateRelations(data.clientId, data.projectId);
-  if ("error" in relations) return { ok: false, error: relations.error! };
-
-  // Allow renaming the invoice number; keep it unique. Checked before the new
-  // PDF is stored so a rejected rename doesn't strand an uploaded file.
-  const custom = data.invoiceNumber?.trim();
-  const nextNumber = custom || invoice.invoiceNumber;
-  if (nextNumber !== invoice.invoiceNumber) {
-    const clash = await prisma.invoice.findFirst({
-      where: { invoiceNumber: nextNumber, id: { not: id } },
-      select: { id: true },
-    });
-    if (clash) return { ok: false, error: `Invoice number "${nextNumber}" is already used.` };
-  }
+  if ("error" in refs) return { ok: false, error: refs.error };
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
-  const paymentAccountId = await resolvePaymentAccountId(data.paymentAccountId);
 
-  const totals = totalsFor(data);
-  await prisma.$transaction(async (tx) => {
-    await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
-    await tx.invoice.update({
+  // Batched rather than interactive: neither write needs the other's result.
+  await prisma.$transaction([
+    prisma.invoiceItem.deleteMany({ where: { invoiceId: id } }),
+    prisma.invoice.update({
       where: { id },
       data: {
-        invoiceNumber: nextNumber,
-        clientId: data.clientId,
-        projectId: relations.resolvedProjectId,
-        amount: totals.total,
-        subtotal: totals.subtotal,
-        discount: totals.discount,
-        taxRate: data.taxRate ?? null,
-        taxLabel: data.taxLabel || null,
-        paymentTermsDays: data.paymentTermsDays ?? null,
+        // A blank number field keeps the current number.
+        ...(refs.customNumber ? { invoiceNumber: refs.customNumber } : {}),
+        ...formColumns(data, refs),
         status: data.status,
-        issueDate: parseDate(data.issueDate)!,
-        dueDate: parseDate(
-          data.dueDate || dueDateFromTerms(data.issueDate, data.paymentTermsDays) || "",
-        ),
-        notes: data.notes || null,
-        title: data.title || null,
-        currency: data.currency ?? "USD",
-        amountUsd: usdToStore(data.currency ?? "USD", totals.total, data.amountUsd),
-        billToCompany: data.billToCompany || null,
-        billToAddress: data.billToAddress || null,
-        billToEmail: data.billToEmail || null,
-        paymentAccountId,
-        pdfExternalUrl: data.pdfExternalUrl || null,
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
           : {}),
         items: { create: itemRows(data.items) },
       },
-    });
-  });
+    }),
+  ]);
 
   // Only now is the old file safe to drop. Deleting it before the update meant
   // any later failure — a rejected rename, a transaction rollback — left the
   // invoice row pointing at a PDF that no longer existed.
-  if (pdf.fileName && invoice.pdfPath) {
-    await deleteUpload("invoices", invoice.pdfPath);
-  }
+  const replaced = pdf.fileName ? invoice.pdfPath : null;
+  if (replaced) after(() => deleteUpload("invoices", replaced));
 
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${id}`);
+  revalidatePath("/admin");
   return { ok: true };
 }
 

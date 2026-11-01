@@ -181,18 +181,18 @@ export function InvoiceForm({
     if (file) formData.append("pdf", file);
 
     const label = file ? "Uploading invoice…" : "Saving…";
+    // No router.refresh() after either: both actions revalidate the invoice
+    // pages, so the fresh page arrives with the action's own response, and a
+    // refresh on top rendered the whole page a second time.
     if (isEdit) {
       const result = await track(updateInvoice(invoice.id, formData), label);
       if (!result.ok) return void toast.error(result.error);
       toast.success("Invoice updated.");
-      router.push(`/admin/invoices/${invoice.id}`);
-      router.refresh();
     } else {
       const result = await track(createInvoice(formData), label);
       if (!result.ok) return void toast.error(result.error);
       toast.success("Invoice created.");
       router.push(result.data ? `/admin/invoices/${result.data.id}` : "/admin/invoices");
-      router.refresh();
     }
   }
 
