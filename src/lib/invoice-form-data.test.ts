@@ -7,6 +7,7 @@ import { INVOICE_FORM_KEYS, parseInvoiceForm, serializeInvoiceForm } from "./inv
 const everyField: Required<InvoiceInput> = {
   items: [
     {
+      id: "item_1",
       description: "Website redesign\n• New home page",
       descriptionRich: {
         type: "doc",

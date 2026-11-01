@@ -291,6 +291,8 @@ export default async function InvoiceDetailPage({
               billToAddress: invoice.billToAddress ?? "",
               billToEmail: invoice.billToEmail ?? "",
               items: invoice.items.map((i) => ({
+                // So an edit keeps a line that bills tracked work, and its links.
+                id: i.id,
                 description: i.description,
                 // The editor's own document. Leaving it out made the editor
                 // rebuild one from the plain text, losing bold, italics and

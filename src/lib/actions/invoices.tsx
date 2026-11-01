@@ -38,6 +38,7 @@ import { logActivity } from "@/lib/dal/activity";
 import { sendInvoiceCore } from "@/lib/invoice-send";
 import { formatCurrency } from "@/lib/currency";
 import { getBookingConfig } from "@/lib/dal/availability";
+import { itemWrites } from "@/lib/invoice-items";
 import { repeatSchema, type RepeatInput } from "@/lib/validation/retainer";
 import {
   dayIn,
@@ -227,6 +228,10 @@ export async function updateInvoice(
         dueDate: true,
         retainer: { select: { title: true } },
         retainerTemplateFor: { select: { title: true } },
+        // Which lines bill tracked work, so the edit keeps them (lib/invoice-items).
+        items: {
+          select: { id: true, milestoneId: true, _count: { select: { timeEntries: true } } },
+        },
       },
     }),
     resolveRefs(data, id),
@@ -260,10 +265,26 @@ export async function updateInvoice(
   // count from the due date, and the old ones were for a date that moved.
   const dueMoved = (columns.dueDate?.getTime() ?? null) !== (invoice.dueDate?.getTime() ?? null);
 
+  // Lines that bill tracked work are kept in place, with their links; the
+  // rest are replaced. A linked line the edit dropped frees its work.
+  const linked = new Set(
+    invoice.items.filter((i) => i.milestoneId || i._count.timeEntries > 0).map((i) => i.id),
+  );
+  const lines = itemWrites(data.items ?? [], linked);
+  const rows = itemRows(data.items);
+
   // Batched rather than interactive: none of these writes needs another's
   // result. amountPaid moves in place, as it does for any other payment.
   await prisma.$transaction([
-    prisma.invoiceItem.deleteMany({ where: { invoiceId: id } }),
+    prisma.invoiceItem.deleteMany({
+      where: {
+        invoiceId: id,
+        ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
+      },
+    }),
+    ...lines.update.map((line) =>
+      prisma.invoiceItem.update({ where: { id: line.id }, data: rows[line.index] }),
+    ),
     prisma.invoice.update({
       where: { id },
       data: {
@@ -277,7 +298,7 @@ export async function updateInvoice(
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
           : {}),
-        items: { create: itemRows(data.items) },
+        items: { create: lines.create.map((line) => rows[line.index]) },
       },
     }),
     ...(next.markPaid > 0

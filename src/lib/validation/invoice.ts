@@ -15,6 +15,12 @@ export const paymentTermsOptions = [0, 7, 14, 30, 45, 60] as const;
 
 export const invoiceItemSchema = z.object({
   /**
+   * The saved line this row edits, when it is one. An edit keeps a line that
+   * bills tracked work (lib/invoice-items), so the work stays billed by it;
+   * the server only trusts ids of this invoice's own lines.
+   */
+  id: z.string().trim().max(40).optional(),
+  /**
    * Plain-text projection of `descriptionRich`, derived by the form. The cap is
    * generous because a formatted line item is a small document — a title and
    * half a dozen bullets — not the single sentence 200 characters assumed.
