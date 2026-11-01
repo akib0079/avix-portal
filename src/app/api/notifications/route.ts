@@ -11,7 +11,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Unread chat, so Messages can carry a badge like Task Requests does.
+  // Unread chat, so Messages can carry a badge like Requests does.
   const isTeam = session.user.role === "ADMIN" || session.user.role === "STAFF";
 
   // Every open tab polls this every 30s. The reads are independent, so they
@@ -19,7 +19,8 @@ export async function GET() {
   const [{ unreadCount, notifications }, pendingTaskRequests, pendingActions, unreadMessages] =
     await Promise.all([
       getNotificationsForUser(session.user.id),
-      session.user.role === "ADMIN" ? countPendingTaskRequests() : 0,
+      // The team decides requests (staff at no charge), so both see the count.
+      isTeam ? countPendingTaskRequests() : 0,
       session.user.role === "CLIENT" ? countClientActionItems(session.user.id) : 0,
       prisma.message.count({
         where: isTeam

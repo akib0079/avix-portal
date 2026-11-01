@@ -1,67 +1,100 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ProjectBillingType } from "@prisma/client";
 import { RequestCard } from "./request-card";
 import { ShowMore, useProgressive } from "@/components/ui/progressive";
 import { Input } from "@/components/ui/input";
 import { Lane, LaneEmpty, LaneScroller } from "@/components/ui/lanes";
 import { taskRequestStatusColor } from "@/lib/status-colors";
 import { useLocalSet } from "@/lib/use-local-pref";
-import type { TaskRequestStatus } from "@prisma/client";
+import type { WorkRole } from "@/lib/board";
+import type { RequestOutcome } from "@/lib/work-list";
 import { Search, Inbox, Clock } from "lucide-react";
 
-export type BoardRequest = {
-  id: string;
+/** One request as the inbox shows it — the decision, and where its work is now. */
+export type InboxRequest = {
+  /** The TaskRequest the decision is recorded on. */
+  requestId: string | null;
+  /** The work item it is (or was), for the deep link. */
+  itemId: string | null;
   title: string;
-  description: unknown;
-  status: TaskRequestStatus;
-  adminNote: string | null;
-  createdAt: Date;
-  resolvedAt: Date | null;
-  client: { id: string; firstName: string; lastName: string; company: string | null };
-  project: { id: string; projectName: string };
+  /** The client's own words — waiting requests only. */
+  description?: unknown;
+  client: { id: string; firstName: string; lastName: string; company: string | null } | null;
+  project: { id: string; projectName: string; billingType: ProjectBillingType };
+  /** ISO */
+  createdAt: string;
+  resolvedAt: string | null;
+  outcome: RequestOutcome;
+  comments: number;
 };
 
-const COLUMNS: { status: TaskRequestStatus; label: string; hint: string }[] = [
-  { status: "PENDING", label: "Waiting on us", hint: "Approve with pricing or reject with a note" },
-  { status: "APPROVED", label: "Approved", hint: "Became scheduled work" },
-  { status: "REJECTED", label: "Declined", hint: "Closed with a reason" },
+type LaneKey = "waiting" | "accepted" | "declined";
+
+const LANES: { key: LaneKey; label: string; hint: string; color: string }[] = [
+  {
+    key: "waiting",
+    label: "Waiting on us",
+    hint: "Accept into the plan, or decline with a note",
+    color: taskRequestStatusColor.PENDING,
+  },
+  {
+    key: "accepted",
+    label: "Accepted",
+    hint: "In the plan — where each one is now",
+    color: taskRequestStatusColor.APPROVED,
+  },
+  {
+    key: "declined",
+    label: "Declined",
+    hint: "Closed with a reason, or withdrawn",
+    color: taskRequestStatusColor.REJECTED,
+  },
 ];
+
+function laneOf(outcome: RequestOutcome): LaneKey {
+  if (outcome.kind === "waiting") return "waiting";
+  if (outcome.kind === "accepted" || outcome.kind === "closed") return "accepted";
+  return "declined";
+}
 
 /** Requests older than this without an answer are called out. */
 const SLA_DAYS = 3;
 
 /**
- * Task requests as a board rather than one long list — the point of this page
- * is "what has a client asked for that we haven't answered", and a flat list
- * sorted by date buried that under everything already handled.
+ * Every project's requests as lanes — the point of this page is "what has a
+ * client asked for that we haven't answered", and a flat list sorted by date
+ * buried that under everything already handled. Waiting requests are
+ * decided right here, with the same dialogs as the project page; every card
+ * links to its item.
  */
 export function RequestBoard({
   requests,
   now,
+  role,
 }: {
-  requests: BoardRequest[];
+  requests: InboxRequest[];
   /** Server timestamp, so "waiting N days" is stable across re-renders. */
   now: number;
+  role: WorkRole;
 }) {
   const [search, setSearch] = useState("");
   // Declined only grows and is rarely reopened; it starts folded.
-  const [folded, toggleFold] = useLocalSet("avix.requests.folded", ["REJECTED"]);
+  const [folded, toggleFold] = useLocalSet("avix.requests.folded", ["declined"]);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return requests;
     return requests.filter((r) =>
-      `${r.title} ${r.client.firstName} ${r.client.lastName} ${r.client.company ?? ""} ${r.project.projectName}`
+      `${r.title} ${r.client?.firstName ?? ""} ${r.client?.lastName ?? ""} ${r.client?.company ?? ""} ${r.project.projectName}`
         .toLowerCase()
         .includes(needle),
     );
   }, [requests, search]);
 
-  const byStatus = (status: TaskRequestStatus) =>
-    visible.filter((r) => r.status === status);
-
-  const overdue = byStatus("PENDING").filter(
+  const inLane = (key: LaneKey) => visible.filter((r) => laneOf(r.outcome) === key);
+  const overdue = inLane("waiting").filter(
     (r) => (now - new Date(r.createdAt).getTime()) / 86_400_000 >= SLA_DAYS,
   ).length;
 
@@ -72,8 +105,9 @@ export function RequestBoard({
           <Inbox className="size-6 text-muted-foreground" />
         </div>
         <p className="mt-4 font-medium">No requests yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          When clients request work from the portal, it lands here.
+        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+          When a client asks for something new — from their project page or the portal — it waits here
+          and at the top of that project&apos;s Milestones.
         </p>
       </div>
     );
@@ -100,21 +134,25 @@ export function RequestBoard({
       </div>
 
       <LaneScroller>
-        {COLUMNS.map((column) => {
-          const items = byStatus(column.status);
+        {LANES.map((lane) => {
+          const items = inLane(lane.key);
           return (
             <Lane
-              key={column.status}
-              color={taskRequestStatusColor[column.status]}
-              title={column.label}
+              key={lane.key}
+              color={lane.color}
+              title={lane.label}
               count={items.length}
-              hint={column.hint}
-              collapsed={folded.has(column.status)}
-              onToggle={() => toggleFold(column.status)}
+              hint={lane.hint}
+              collapsed={folded.has(lane.key)}
+              onToggle={() => toggleFold(lane.key)}
               className="lg:min-w-[280px]"
-              empty={items.length === 0 ? <LaneEmpty>Nothing here</LaneEmpty> : undefined}
+              empty={
+                items.length === 0 ? (
+                  <LaneEmpty>{lane.key === "waiting" ? "Nothing waiting — all answered" : "Nothing here"}</LaneEmpty>
+                ) : undefined
+              }
             >
-              <RequestColumn items={items} now={now} resetKey={search} />
+              <RequestColumn items={items} now={now} resetKey={search} role={role} />
             </Lane>
           );
         })}
@@ -123,18 +161,17 @@ export function RequestBoard({
   );
 }
 
-/**
- * One column, rendered a page at a time: every card carries the full rich-text
- * description, and Approved/Declined only ever grow.
- */
+/** One lane, a page at a time: Accepted and Declined only ever grow. */
 function RequestColumn({
   items,
   now,
   resetKey,
+  role,
 }: {
-  items: BoardRequest[];
+  items: InboxRequest[];
   now: number;
   resetKey: string;
+  role: WorkRole;
 }) {
   const page = useProgressive(items, resetKey, 15);
   return (
@@ -143,10 +180,11 @@ function RequestColumn({
         const waitingDays = Math.floor((now - new Date(request.createdAt).getTime()) / 86_400_000);
         return (
           <RequestCard
-            key={request.id}
+            key={request.requestId ?? request.itemId}
             request={request}
             waitingDays={waitingDays}
-            stale={request.status === "PENDING" && waitingDays >= SLA_DAYS}
+            stale={request.outcome.kind === "waiting" && waitingDays >= SLA_DAYS}
+            role={role}
           />
         );
       })}

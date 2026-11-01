@@ -69,7 +69,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/retainers", label: "Retainers", icon: Repeat },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare, badge: "messages" },
   { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: "tasks" },
+  { href: "/admin/task-requests", label: "Requests", icon: Inbox, badge: "tasks" },
   { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
@@ -82,6 +82,8 @@ const staffNav: NavItem[] = [
   { href: "/admin/my-work", label: "My Work", icon: CircleCheckBig },
   { href: "/admin/tasks", label: "Tasks", icon: ListTodo },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
+  // Staff decide requests too — at no charge; pricing stays an admin's.
+  { href: "/admin/task-requests", label: "Requests", icon: Inbox, badge: "tasks" },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare, badge: "messages" },
 ];
 
@@ -89,7 +91,7 @@ const clientNav: NavItem[] = [
   { href: "/portal", label: "Overview", icon: LayoutGrid },
   { href: "/portal/actions", label: "Needs you", icon: CircleCheckBig, badge: "actions" },
   { href: "/portal/projects", label: "My Projects", icon: FolderKanban, section: "Work" },
-  { href: "/portal/requests", label: "Task Requests", icon: MessageSquarePlus },
+  { href: "/portal/requests", label: "My requests", icon: MessageSquarePlus },
   { href: "/portal/invoices", label: "Invoices", icon: FileText, section: "Billing" },
   { href: "/portal/payment", label: "How to Pay", icon: CreditCard },
   {
