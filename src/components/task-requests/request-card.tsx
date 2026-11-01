@@ -72,18 +72,28 @@ export function RequestCard({
         </Link>
       </h3>
       <div className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">
-        {request.client && (
-          <Link
-            href={`/admin/clients/${request.client.id}`}
-            className="flex min-w-0 items-center gap-1 hover:text-primary"
-          >
-            <CircleUser className="size-3 shrink-0" />
-            <span className="truncate">
-              {clientName}
-              {request.client.company ? ` · ${request.client.company}` : ""}
-            </span>
-          </Link>
-        )}
+        {request.client &&
+          (role === "ADMIN" ? (
+            <Link
+              href={`/admin/clients/${request.client.id}`}
+              className="flex min-w-0 items-center gap-1 hover:text-primary"
+            >
+              <CircleUser className="size-3 shrink-0" />
+              <span className="truncate">
+                {clientName}
+                {request.client.company ? ` · ${request.client.company}` : ""}
+              </span>
+            </Link>
+          ) : (
+            // Client pages are an admin's (they carry money), so staff get the name only.
+            <p className="flex min-w-0 items-center gap-1">
+              <CircleUser className="size-3 shrink-0" />
+              <span className="truncate">
+                {clientName}
+                {request.client.company ? ` · ${request.client.company}` : ""}
+              </span>
+            </p>
+          ))}
         <Link
           href={`/admin/projects/${request.project.id}`}
           className="flex min-w-0 items-center gap-1 hover:text-primary"
