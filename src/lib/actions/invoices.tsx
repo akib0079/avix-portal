@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { parseInvoiceForm } from "@/lib/invoice-form-data";
 import { createWithNextNumber } from "@/lib/invoice-number";
-import { creditedTotal, invoiceTotals } from "@/lib/invoice-totals";
+import { creditedTotal, dueDateFromTerms, invoiceTotals } from "@/lib/invoice-totals";
 import { canDeleteInvoice, paymentBlocker } from "@/lib/invoice-rules";
 import {
   MARKED_PAID,
@@ -24,7 +24,14 @@ import {
   settleIfRaced,
   settledStatus,
 } from "@/lib/invoice-write";
-import { getBillableWork } from "@/lib/dal/billable";
+import {
+  contractInvoiceSelect,
+  getBillableWorkToInvoice,
+  toContractInvoice,
+  unbilledHours,
+} from "@/lib/dal/billable";
+import { contractInvoiced } from "@/lib/billable-lines";
+import { todayIn } from "@/lib/invoice-copy";
 import { listInvoiceProjectOptions } from "@/lib/dal/invoices";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { logActivity } from "@/lib/dal/activity";
@@ -397,68 +404,145 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/** Work that was billed on another invoice between reading it and saving. */
+class BilledMeanwhile extends Error {}
+
 /**
- * Draft an invoice straight from work that has happened: completed fixed-price
- * milestones and logged hourly time. Created as a DRAFT, which the client
- * can't see, so it can be reviewed and edited before anything is sent.
+ * Draft an invoice straight from work that has happened and no invoice bills
+ * yet (lib/billable-lines): the lines the owner ticked, from completed
+ * fixed-price work, unbilled hours and what's left of a contract. Each line
+ * is linked to the work it bills in the same transaction (the milestone on
+ * the line, the hours to the line), so pressing "Bill work" again offers
+ * only what's new, and cancelling the invoice frees its work. Created as a
+ * DRAFT, which the client can't see, worth its total in USD.
  */
 export async function createInvoiceFromWork(
   projectId: string,
-  options?: { taxRate?: number | null; taxLabel?: string; paymentTermsDays?: number | null },
+  options?: {
+    /** BillableLine keys to include; all of them when left out. */
+    lines?: string[];
+    taxRate?: number | null;
+    taxLabel?: string;
+    paymentTermsDays?: number | null;
+  },
 ): Promise<ActionResult<{ id: string }>> {
   await requireAdmin();
-  const work = await getBillableWork(projectId);
-  if (!work) return { ok: false, error: "Project not found." };
+  const [loaded, booking] = await Promise.all([
+    getBillableWorkToInvoice(projectId),
+    getBookingConfig(),
+  ]);
+  if (!loaded) return { ok: false, error: "Project not found." };
+  const { work, entries, contractInvoicedUsd } = loaded;
   if (!work.clientId) return { ok: false, error: "Attach a client to this project first." };
   if (work.lines.length === 0) {
     return {
       ok: false,
-      error: "Nothing to bill yet — complete a priced milestone or log some hours.",
+      error: "Nothing to bill yet: every completed piece of work and logged hour is on an invoice already.",
+    };
+  }
+  const picked = options?.lines ? new Set(options.lines) : null;
+  const lines = picked ? work.lines.filter((line) => picked.has(line.key)) : work.lines;
+  if (picked?.size === 0) return { ok: false, error: "Tick at least one line to bill." };
+  // A ticked line that isn't billable any more was billed from another tab.
+  if (picked && lines.length < picked.size) {
+    return {
+      ok: false,
+      error: "Some of this work was just billed on another invoice. Reload the page to see what's left.",
     };
   }
 
-  const totals = invoiceTotals({
-    items: work.lines.map((l) => ({ qty: l.qty, rate: l.rate })),
-    taxRate: options?.taxRate ?? null,
-  });
-  const issueDate = new Date();
+  const taxRate = options?.taxRate ?? null;
+  const totals = invoiceTotals({ items: lines, taxRate });
+  const issueDay = todayIn(booking.agencyTimezone);
   const termsDays = options?.paymentTermsDays ?? null;
-  const dueDate =
-    termsDays == null
-      ? null
-      : new Date(issueDate.getTime() + termsDays * 24 * 60 * 60 * 1000);
-
-  const invoice = await createWithNextNumber(prisma, (invoiceNumber) =>
-    prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        title: `${work.projectName} — work to date`,
-        clientId: work.clientId!,
-        projectId: work.projectId,
-        amount: totals.total,
-        subtotal: totals.subtotal,
-        discount: 0,
-        taxRate: options?.taxRate ?? null,
-        taxLabel: options?.taxLabel || null,
-        paymentTermsDays: termsDays,
-        status: "DRAFT",
-        issueDate,
-        dueDate,
-        // Work is priced in dollars, so the draft is worth its own total.
-        // Leaving this out kept every drafted invoice out of the USD stats.
-        amountUsd: usdToStore("USD", totals.total, null),
-        items: {
-          create: work.lines.map((line, index) => ({
-            description: line.description,
-            qty: line.qty,
-            rate: line.rate,
-            sortOrder: index,
-          })),
-        },
-      },
-      select: { id: true, invoiceNumber: true },
-    }),
+  const fixedIds = lines.flatMap((line) =>
+    line.source === "milestone-fixed" && line.milestoneId ? [line.milestoneId] : [],
   );
+  const billsContract = lines.some((line) => line.source === "contract");
+
+  let invoice: { id: string; invoiceNumber: string };
+  try {
+    invoice = await createWithNextNumber(prisma, (invoiceNumber) =>
+      prisma.$transaction(
+        async (tx) => {
+          // One bill at a time per project: a second click waits here, then
+          // finds its work already billed below instead of billing it again.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`bill-work:${projectId}`}))`;
+          if (fixedIds.length > 0) {
+            const taken = await tx.invoiceItem.count({
+              where: { milestoneId: { in: fixedIds }, invoice: { status: { not: "CANCELLED" } } },
+            });
+            if (taken > 0) throw new BilledMeanwhile();
+          }
+          if (billsContract) {
+            const now = contractInvoiced(
+              (
+                await tx.invoice.findMany({
+                  where: { projectId, status: { not: "CANCELLED" } },
+                  select: contractInvoiceSelect,
+                })
+              ).map(toContractInvoice),
+            );
+            if (now.usd !== contractInvoicedUsd) throw new BilledMeanwhile();
+          }
+
+          const created = await tx.invoice.create({
+            data: {
+              invoiceNumber,
+              title: `${work.projectName} — work to date`,
+              clientId: work.clientId!,
+              projectId: work.projectId,
+              amount: totals.total,
+              subtotal: totals.subtotal,
+              discount: 0,
+              taxRate,
+              taxLabel: options?.taxLabel || null,
+              paymentTermsDays: termsDays,
+              status: "DRAFT",
+              issueDate: parseDate(issueDay)!,
+              dueDate: parseDate(dueDateFromTerms(issueDay, termsDays) ?? ""),
+              // Work is priced in dollars, so the draft is worth its own total.
+              amountUsd: usdToStore("USD", totals.total, null),
+              items: {
+                create: lines.map((line, index) => ({
+                  description: line.description,
+                  qty: line.qty,
+                  rate: line.rate,
+                  sortOrder: index,
+                  milestoneId: line.milestoneId,
+                })),
+              },
+            },
+            select: { id: true, invoiceNumber: true, items: { select: { id: true, sortOrder: true } } },
+          });
+
+          // The hours rolled into each hourly line point at it. Every one has
+          // to be still unbilled, or another invoice got there first.
+          for (const [index, line] of lines.entries()) {
+            if (line.source !== "milestone-hourly" || !line.milestoneId) continue;
+            const ids = entries[line.milestoneId] ?? [];
+            const item = created.items.find((i) => i.sortOrder === index);
+            if (!item || ids.length === 0) continue;
+            const linked = await tx.timeEntry.updateMany({
+              where: { id: { in: ids }, ...unbilledHours },
+              data: { invoiceItemId: item.id },
+            });
+            if (linked.count !== ids.length) throw new BilledMeanwhile();
+          }
+          return { id: created.id, invoiceNumber: created.invoiceNumber };
+        },
+        { maxWait: 10_000, timeout: 20_000 },
+      ),
+    );
+  } catch (err) {
+    if (err instanceof BilledMeanwhile) {
+      return {
+        ok: false,
+        error: "Some of this work was just billed on another invoice. Reload the page to see what's left.",
+      };
+    }
+    throw err;
+  }
 
   after(() =>
     logActivity({
@@ -474,6 +558,7 @@ export async function createInvoiceFromWork(
 
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/projects/${projectId}`);
+  revalidatePath("/admin");
   return { ok: true, data: { id: invoice.id } };
 }
 

@@ -123,7 +123,9 @@ export function ProjectMoney({
   const outstanding = liveInvoices
     .filter((i) => i.status !== "DRAFT")
     .reduce((sum, i) => sum + i.amount - i.amountPaid, 0);
-  const unbilled = Math.max(earned - invoiced, 0);
+  // Work no invoice line bills yet, from the links between them, rather than
+  // the work's value minus every invoice on the project.
+  const unbilled = billable.unbilled;
 
   return (
     <div className="space-y-6">
@@ -137,14 +139,13 @@ export function ProjectMoney({
             </p>
             <p className="text-xs text-muted-foreground">
               {billable.lines.length} line
-              {billable.lines.length === 1 ? "" : "s"} ready — completed fixed
-              milestones and logged hours.
+              {billable.lines.length === 1 ? "" : "s"} no invoice bills yet — completed
+              fixed-price work and logged hours.
             </p>
           </div>
           <BillWorkButton
             projectId={projectId}
             lines={billable.lines}
-            total={billable.total}
             unbilled={billable.unbilled}
           />
         </div>
