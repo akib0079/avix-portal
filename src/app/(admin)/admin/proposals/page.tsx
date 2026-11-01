@@ -1,15 +1,31 @@
-import { listProposals } from "@/lib/dal/proposals";
+import { getProposalCard, listProposalBoard } from "@/lib/dal/proposals";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
+import { serverNow } from "@/lib/server-now";
 import { PageHeader } from "@/components/page-header";
 import { ProposalManager } from "@/components/proposals/proposal-manager";
 
 export const metadata = { title: "Proposals" };
 
-export default async function ProposalsPage() {
+/** ?closed= — how far back the closed lanes reach: 90 days, a year, or everything. */
+function closedWindow(value: string | undefined): number | null {
+  if (value === "all") return null;
+  if (value === "365") return 365;
+  return 90;
+}
+
+export default async function ProposalsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ archived?: string; closed?: string; id?: string }>;
+}) {
   await requireAdmin();
-  const [proposals, leads, paymentAccounts] = await Promise.all([
-    listProposals(),
+  const params = await searchParams;
+  const archived = params.archived === "1";
+  const closedDays = closedWindow(params.closed);
+
+  const [board, leads, linked] = await Promise.all([
+    listProposalBoard({ archived, closedDays }),
     prisma.lead.findMany({
       // Won/lost leads are done — proposals are built for live ones.
       where: { stage: { in: ["NEW", "CONTACTED", "PROPOSAL"] } },
@@ -22,22 +38,21 @@ export default async function ProposalsPage() {
         brandInfo: true,
       },
     }),
-    prisma.paymentAccount.findMany({
-      where: { isActive: true },
-      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-      select: { id: true, title: true },
-    }),
+    // A deep link (?id=) may point at a proposal the board didn't load.
+    params.id ? getProposalCard(params.id) : Promise.resolve(null),
   ]);
 
   return (
     <div>
       <PageHeader
         title="Proposals"
-        description="Send a scope and price. When they accept online, the account, project and deposit invoice are created automatically."
+        description="Send a scope and price. When they accept online, the account, project and first invoice are set up automatically."
       />
       <ProposalManager
-        proposals={proposals}
-        paymentAccounts={paymentAccounts}
+        board={board}
+        archived={archived}
+        linked={linked}
+        now={serverNow()}
         leads={leads.map((l) => ({
           ...l,
           estimatedValue: l.estimatedValue == null ? null : Number(l.estimatedValue),

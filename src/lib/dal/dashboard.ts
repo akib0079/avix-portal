@@ -370,13 +370,18 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
       }),
       // Sent proposals about to lapse — worth a nudge.
       prisma.proposal.findMany({
-        where: { status: "SENT", expiresAt: { not: null, gte: now, lte: inSevenDays } },
+        where: {
+          status: "SENT",
+          archivedAt: null,
+          expiresAt: { not: null, gte: now, lte: inSevenDays },
+        },
         orderBy: { expiresAt: "asc" },
         take: 5,
         select: {
           id: true,
           title: true,
           expiresAt: true,
+          viewCount: true,
           lead: { select: { name: true } },
           recipientName: true,
         },
@@ -499,8 +504,11 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     items.push({
       kind: "proposal",
       label: `Nudge “${p.title}”`,
-      detail: `${p.lead?.name ?? p.recipientName ?? "Recipient"} · expires in ${days} day${days === 1 ? "" : "s"}`,
-      link: "/admin/proposals",
+      // Opened-but-unsigned is the nudge most worth making.
+      detail:
+        `${p.lead?.name ?? p.recipientName ?? "Recipient"} · expires in ${days} day${days === 1 ? "" : "s"}` +
+        (p.viewCount > 0 ? ` · opened ${p.viewCount}x` : " · not opened yet"),
+      link: `/admin/proposals?id=${p.id}`,
     });
   }
   for (const r of undraftedRetainers) {

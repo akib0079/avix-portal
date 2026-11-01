@@ -24,6 +24,7 @@ import InvoiceReminderEmail from "@/emails/invoice-reminder";
 import { renderMergeTags, renderMergeTagsInDoc } from "@/lib/merge-tags";
 import { getBookingConfig } from "@/lib/dal/availability";
 import { planRunSelect, processDuePlan, summarisePlanResults } from "@/lib/recurring-run";
+import { runProposalDuties } from "@/lib/duties-proposals";
 
 /**
  * "Lazy cron": Hostinger has no background jobs, so scheduled work runs
@@ -617,6 +618,7 @@ async function generateSystemTasks(now: Date): Promise<void> {
   const expiring = await prisma.proposal.findMany({
     where: {
       status: "SENT",
+      archivedAt: null,
       expiresAt: { gte: now, lte: new Date(now.getTime() + 3 * 24 * 60 * 60_000) },
     },
     select: { id: true, title: true, expiresAt: true },
@@ -681,6 +683,7 @@ export async function runDueDuties(): Promise<void> {
     await chaseOverdueInvoices(now);
     await drainCampaigns(now);
     await generateSystemTasks(now);
+    await runProposalDuties(now);
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
   }

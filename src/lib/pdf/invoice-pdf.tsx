@@ -20,7 +20,7 @@ import { currencySymbol, type CurrencyCode } from "@/lib/currency";
  * asset location — same as the logo). react-pdf can only parse TTF, so a
  * woff/woff2 package would not work. Registered once per server process.
  */
-const FONT = "Poppins";
+export const FONT = "Poppins";
 let fontsRegistered = false;
 /**
  * Whether an italic face is actually available.
@@ -33,7 +33,8 @@ let fontsRegistered = false;
  * nuance rather than the invoice.
  */
 let italicAvailable = false;
-function ensureFonts() {
+/** Also used by the signed proposal PDF, so both documents share one typeface. */
+export function ensureFonts() {
   if (fontsRegistered) return;
   const dir = path.join(process.cwd(), "public", "fonts");
   const italic = path.join(dir, "Poppins-Italic.ttf");

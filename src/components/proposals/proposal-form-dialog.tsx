@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { proposalSchema, type ProposalInput } from "@/lib/validation/proposal";
-import { createProposal, updateProposal } from "@/lib/actions/proposals";
-import type { ProposalView } from "@/lib/dal/proposals";
+import {
+  proposalSchema,
+  proposalValidityDays,
+  type ProposalInput,
+} from "@/lib/validation/proposal";
+import { createProposal, loadProposalBuilder, updateProposal } from "@/lib/actions/proposals";
+import type { ProposalDraft } from "@/lib/dal/proposals";
 import { projectTypeValues } from "@/lib/validation/project";
-import { projectTypeLabels, usd } from "@/lib/format";
+import { projectTypeLabels } from "@/lib/format";
+import { CURRENCIES, formatCurrency, type CurrencyCode } from "@/lib/currency";
+import { depositAmount } from "@/lib/proposal-rules";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +43,6 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2 } from "lucide-react";
-import { CURRENCIES } from "@/lib/currency";
 
 export type ProposalLeadOption = {
   id: string;
@@ -52,9 +56,9 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-const emptyInvoice = () => ({
+const emptyInvoice = (currency: CurrencyCode = "USD") => ({
   title: "",
-  currency: "USD" as const,
+  currency,
   paymentAccountId: "none",
   invoiceNumber: "",
   issueDate: today(),
@@ -66,26 +70,75 @@ const emptyInvoice = () => ({
   items: [{ description: "", qty: 1, rate: "" as unknown as number }],
 });
 
+function valuesFromDraft(draft: ProposalDraft): ProposalInput {
+  const inv = draft.invoice;
+  return {
+    source: draft.leadId ? "lead" : "manual",
+    leadId: draft.leadId ?? "",
+    recipientName: draft.recipientName ?? "",
+    recipientEmail: draft.recipientEmail ?? "",
+    recipientCompany: draft.recipientCompany ?? "",
+    title: draft.title,
+    intro: draft.intro ?? "",
+    terms: draft.terms ?? "",
+    currency: draft.currency,
+    projectType: draft.projectType,
+    timelineWeeks: draft.timelineWeeks,
+    depositPercent: draft.depositPercent,
+    expiresInDays: draft.expiresInDays,
+    invoicePdfExternalUrl: draft.invoicePdfExternalUrl ?? "",
+    removeInvoicePdf: false,
+    items: draft.items.map((i) => ({ description: i.description, amount: i.amount })),
+    invoice: inv
+      ? {
+          title: inv.title ?? "",
+          currency: inv.currency,
+          paymentAccountId: inv.paymentAccountId ?? "none",
+          invoiceNumber: inv.invoiceNumber ?? "",
+          issueDate: inv.issueDate,
+          dueDate: inv.dueDate ?? "",
+          notes: inv.notes ?? "",
+          billToCompany: inv.billToCompany ?? "",
+          billToAddress: inv.billToAddress ?? "",
+          billToEmail: inv.billToEmail ?? "",
+          items: inv.items.length ? inv.items : emptyInvoice(inv.currency).items,
+        }
+      : emptyInvoice(draft.currency),
+  };
+}
+
+type Loaded = {
+  /** Which opening this belongs to: the proposal id, or "new". */
+  key: string;
+  defaultTerms: string;
+  paymentAccounts: { id: string; title: string }[];
+  draft: ProposalDraft | null;
+};
+
 export function ProposalFormDialog({
-  proposal,
+  proposalId,
   leads,
-  paymentAccounts = [],
   presetLeadId,
   open,
   onOpenChange,
 }: {
-  proposal?: ProposalView | null;
+  /** Edit this proposal; omit (or null) to build a new one. */
+  proposalId?: string | null;
   leads: ProposalLeadOption[];
-  paymentAccounts?: { id: string; title: string }[];
   /** When opened from the leads board, the lead is fixed up front. */
   presetLeadId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
-  const isEdit = !!proposal;
+  const isEdit = !!proposalId;
   const [step, setStep] = useState<1 | 2>(1);
   const invoiceSeeded = useRef(false);
+  // What the builder needs beyond the board's cards — the draft, the payment
+  // accounts, the default terms — arrives when it opens.
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const loadKey = proposalId ?? "new";
+  const ready = !isEdit || loaded?.key === loadKey;
+  const draft = loaded?.key === loadKey ? loaded.draft : null;
 
   const form = useForm<ProposalInput>({
     resolver: zodResolver(proposalSchema),
@@ -97,6 +150,8 @@ export function ProposalFormDialog({
       recipientCompany: "",
       title: "",
       intro: "",
+      terms: "",
+      currency: "USD",
       projectType: "CUSTOM_WEB_DEV",
       timelineWeeks: null,
       depositPercent: 50,
@@ -119,97 +174,116 @@ export function ProposalFormDialog({
   });
   const invoiceItems = useFieldArray({ control: form.control, name: "invoice.items" });
 
+  /** Every opening loads afresh, so a cancelled edit never reappears. */
+  function close() {
+    setLoaded(null);
+    onOpenChange(false);
+  }
+
   useEffect(() => {
     if (!open) return;
     setStep(1);
     invoiceSeeded.current = false;
     setPdfFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (proposal) {
-      const draft = proposal.invoiceDraft;
-      setAttachMode(
-        proposal.invoicePdfPath ? "upload" : proposal.invoicePdfExternalUrl ? "link" : "none",
-      );
+
+    if (!proposalId) {
+      setAttachMode("none");
+      // New proposal — seed from the lead so there's less typing.
+      const lead = leads.find((l) => l.id === presetLeadId);
       form.reset({
-        source: proposal.leadId ? "lead" : "manual",
-        leadId: proposal.leadId ?? "",
-        recipientName: proposal.recipientName ?? "",
-        recipientEmail: proposal.recipientEmail ?? "",
-        recipientCompany: proposal.recipientCompany ?? "",
-        title: proposal.title,
-        intro: proposal.intro ?? "",
-        projectType: proposal.projectType,
-        timelineWeeks: proposal.timelineWeeks,
-        depositPercent: proposal.depositPercent,
-        expiresInDays: proposal.expiresInDays,
-        invoicePdfExternalUrl: proposal.invoicePdfExternalUrl ?? "",
+        // Opened from a lead card → lead mode; opened cold with no leads to pick
+        // from → go straight to manual so the form is never a dead end.
+        source: presetLeadId || leads.length > 0 ? "lead" : "manual",
+        leadId: presetLeadId ?? "",
+        recipientName: "",
+        recipientEmail: "",
+        recipientCompany: "",
+        title: lead?.company ? `${lead.company} — project` : "",
+        intro: lead?.brandInfo ?? "",
+        terms: "",
+        currency: "USD",
+        projectType: "CUSTOM_WEB_DEV",
+        timelineWeeks: null,
+        depositPercent: 50,
+        expiresInDays: 30,
+        invoicePdfExternalUrl: "",
         removeInvoicePdf: false,
-        items: proposal.items.map((i) => ({ description: i.description, amount: i.amount })),
-        invoice: draft
-          ? {
-              title: draft.title ?? "",
-              currency: draft.currency,
-              paymentAccountId: draft.paymentAccountId ?? "none",
-              invoiceNumber: draft.invoiceNumber ?? "",
-              issueDate: draft.issueDate,
-              dueDate: draft.dueDate ?? "",
-              notes: draft.notes ?? "",
-              billToCompany: draft.billToCompany ?? "",
-              billToAddress: draft.billToAddress ?? "",
-              billToEmail: draft.billToEmail ?? "",
-              items: draft.items.length ? draft.items : emptyInvoice().items,
-            }
-          : emptyInvoice(),
+        items: [
+          {
+            description: "Project scope",
+            amount: (lead?.estimatedValue ?? "") as unknown as number,
+          },
+        ],
+        invoice: emptyInvoice(),
       });
-      // An existing proposal already has its invoice — don't re-seed from scope.
-      invoiceSeeded.current = true;
-      return;
     }
-    setAttachMode("none");
-    // New proposal — seed from the lead so there's less typing.
-    const lead = leads.find((l) => l.id === presetLeadId);
-    form.reset({
-      // Opened from a lead card → lead mode; opened cold with no leads to pick
-      // from → go straight to manual so the form is never a dead end.
-      source: presetLeadId || leads.length > 0 ? "lead" : "manual",
-      leadId: presetLeadId ?? "",
-      recipientName: "",
-      recipientEmail: "",
-      recipientCompany: "",
-      title: lead?.company ? `${lead.company} — project` : "",
-      intro: lead?.brandInfo ?? "",
-      projectType: "CUSTOM_WEB_DEV",
-      timelineWeeks: null,
-      depositPercent: 50,
-      expiresInDays: 30,
-      invoicePdfExternalUrl: "",
-      removeInvoicePdf: false,
-      items: [
-        {
-          description: "Project scope",
-          amount: (lead?.estimatedValue ?? "") as unknown as number,
-        },
-      ],
-      invoice: emptyInvoice(),
-    });
+
+    let live = true;
+    const key = proposalId ?? "new";
+    loadProposalBuilder(proposalId ?? null).then(
+      (result) => {
+        if (!live) return;
+        if (!result.ok) {
+          toast.error(result.error);
+          close();
+          return;
+        }
+        const data = result.data!;
+        setLoaded({ key, ...data });
+        if (data.draft) {
+          setAttachMode(
+            data.draft.invoicePdfPath ? "upload" : data.draft.invoicePdfExternalUrl ? "link" : "none",
+          );
+          form.reset(valuesFromDraft(data.draft));
+          // An existing proposal already has its invoice — don't re-seed from scope.
+          invoiceSeeded.current = true;
+        } else if (!form.getFieldState("terms").isDirty) {
+          // Starts from the agency's default terms, still editable here.
+          form.setValue("terms", data.defaultTerms);
+        }
+      },
+      () => {
+        if (!live) return;
+        toast.error("Couldn't load the proposal builder. Try again.");
+        close();
+      },
+    );
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, proposal?.id, presetLeadId]);
+  }, [open, proposalId, presetLeadId]);
 
   const source = form.watch("source");
+  const currency = form.watch("currency");
   const items = form.watch("items");
   const depositPercent = form.watch("depositPercent");
   const total = (items ?? []).reduce(
     (sum, i) => sum + (typeof i.amount === "number" && !Number.isNaN(i.amount) ? i.amount : 0),
     0,
   );
-  const deposit = Math.round(total * (depositPercent || 0)) / 100;
+  const deposit = depositAmount(total, depositPercent || 0);
 
+  const invoiceCurrency = form.watch("invoice.currency");
   const invItems = form.watch("invoice.items");
   const invoiceTotal = (invItems ?? []).reduce((sum, i) => {
     const qty = typeof i.qty === "number" && !Number.isNaN(i.qty) ? i.qty : 0;
     const rate = typeof i.rate === "number" && !Number.isNaN(i.rate) ? i.rate : 0;
     return sum + qty * rate;
   }, 0);
+  const paymentAccounts = loaded?.paymentAccounts ?? [];
+
+  /** The proposal's lines as invoice lines (rate = line amount). */
+  function scopeLines() {
+    return (form.getValues("items") ?? [])
+      .filter((s) => (s.description ?? "").trim() || Number(s.amount) > 0)
+      .map((s) => ({
+        description: s.description || "Project scope",
+        qty: 1,
+        rate: (typeof s.amount === "number" && !Number.isNaN(s.amount) ? s.amount : 0) as number,
+      }));
+  }
 
   // Step 1 → 2: validate the proposal fields, then seed the invoice lines from
   // the scope the first time (so the invoice starts pre-filled, still editable).
@@ -221,21 +295,17 @@ export function ProposalFormDialog({
       "recipientEmail",
       "title",
       "projectType",
+      "currency",
+      "terms",
       "items",
     ]);
     if (!ok) return;
     if (!invoiceSeeded.current) {
-      const scope = form.getValues("items") ?? [];
-      const seeded = scope
-        .filter((s) => (s.description ?? "").trim() || Number(s.amount) > 0)
-        .map((s) => ({
-          description: s.description || "Project scope",
-          qty: 1,
-          rate: (typeof s.amount === "number" && !Number.isNaN(s.amount) ? s.amount : 0) as number,
-        }));
-      if (seeded.length) form.setValue("invoice.items", seeded);
+      const seeded = scopeLines();
+      if (seeded.length) invoiceItems.replace(seeded);
       const title = form.getValues("title");
       if (title) form.setValue("invoice.title", title);
+      form.setValue("invoice.currency", form.getValues("currency"));
       invoiceSeeded.current = true;
     }
     setStep(2);
@@ -253,17 +323,29 @@ export function ProposalFormDialog({
     fd.set("payload", JSON.stringify(payload));
     if (attachMode === "upload" && pdfFile) fd.set("pdf", pdfFile);
 
-    const result = isEdit
-      ? await updateProposal(proposal.id, fd)
-      : await createProposal(fd);
-    if (!result.ok) return void toast.error(result.error);
-    toast.success(isEdit ? "Proposal updated." : "Proposal created.");
-    onOpenChange(false);
-    router.refresh();
+    // Both actions revalidate the pages that list proposals, which redraws
+    // whichever one this dialog was opened from.
+    if (proposalId) {
+      const result = await updateProposal(proposalId, fd);
+      if (!result.ok) return void toast.error(result.error);
+      const locked = result.data?.invoiceLocked;
+      if (locked) {
+        toast.success("Proposal updated.", {
+          description: `Invoice ${locked} was already sent, so it wasn't changed. Edit it from the invoice page.`,
+        });
+      } else {
+        toast.success("Proposal updated.");
+      }
+    } else {
+      const result = await createProposal(fd);
+      if (!result.ok) return void toast.error(result.error);
+      toast.success("Proposal created.");
+    }
+    close();
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="font-heading">
@@ -275,10 +357,15 @@ export function ProposalFormDialog({
           <DialogDescription>
             {step === 1
               ? "Build the scope and price. Creating the proposal sets up the client account and a draft invoice automatically."
-              : "Build the invoice for this client — it's saved as a draft you can send whenever you're ready."}
+              : "Build the client's first invoice — the proposal shows them this total, and it stays a draft until they accept."}
           </DialogDescription>
         </DialogHeader>
 
+        {!ready ? (
+          <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Loading the proposal…
+          </div>
+        ) : (
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className={cn("space-y-4", step !== 1 && "hidden")}>
@@ -289,7 +376,7 @@ export function ProposalFormDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Proposal for</FormLabel>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     {(
                       [
                         { value: "lead", label: "A lead in my pipeline" },
@@ -361,38 +448,35 @@ export function ProposalFormDialog({
               </div>
             )}
 
+            {source === "lead" && (
+              <FormField
+                control={form.control}
+                name="leadId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Lead</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange} disabled={isEdit}>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select lead" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {leads.map((l) => (
+                          <SelectItem key={l.id} value={l.id}>
+                            {l.name}
+                            {l.company ? ` — ${l.company}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {source === "lead" && (
-                <FormField
-                  control={form.control}
-                  name="leadId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Lead</FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        disabled={isEdit}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Select lead" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {leads.map((l) => (
-                            <SelectItem key={l.id} value={l.id}>
-                              {l.name}
-                              {l.company ? ` — ${l.company}` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
               <FormField
                 control={form.control}
                 name="projectType"
@@ -409,6 +493,40 @@ export function ProposalFormDialog({
                         {projectTypeValues.map((t) => (
                           <SelectItem key={t} value={t}>
                             {projectTypeLabels[t]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Currency</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={(next) => {
+                        // The invoice follows the proposal's currency unless
+                        // it was deliberately set to another one.
+                        if (form.getValues("invoice.currency") === field.value) {
+                          form.setValue("invoice.currency", next as CurrencyCode);
+                        }
+                        field.onChange(next);
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {CURRENCIES.map((c) => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -472,7 +590,7 @@ export function ProposalFormDialog({
                       control={form.control}
                       name={`items.${index}.description`}
                       render={({ field }) => (
-                        <FormItem className="flex-1">
+                        <FormItem className="min-w-0 flex-1">
                           <FormControl>
                             <Input placeholder="e.g. Design (6 pages)" {...field} />
                           </FormControl>
@@ -484,7 +602,7 @@ export function ProposalFormDialog({
                       control={form.control}
                       name={`items.${index}.amount`}
                       render={({ field }) => (
-                        <FormItem className="w-32">
+                        <FormItem className="w-28 sm:w-32">
                           <FormControl>
                             <Input
                               type="number"
@@ -520,13 +638,13 @@ export function ProposalFormDialog({
                 ))}
               </div>
 
-              <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
                 <span className="text-muted-foreground">
                   Deposit ({depositPercent || 0}%):{" "}
-                  <span className="font-medium text-foreground">{usd.format(deposit)}</span>
+                  <span className="font-medium text-foreground">{formatCurrency(deposit, currency)}</span>
                 </span>
                 <span className="font-heading text-lg font-bold text-primary">
-                  {usd.format(total)}
+                  {formatCurrency(total, currency)}
                 </span>
               </div>
             </div>
@@ -591,11 +709,13 @@ export function ProposalFormDialog({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {[7, 14, 30, 60, 90].map((d) => (
-                          <SelectItem key={d} value={String(d)}>
-                            {d} days
-                          </SelectItem>
-                        ))}
+                        {[...new Set([...proposalValidityDays, field.value])]
+                          .sort((a, b) => a - b)
+                          .map((d) => (
+                            <SelectItem key={d} value={String(d)}>
+                              {d} days
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -604,12 +724,34 @@ export function ProposalFormDialog({
               />
             </div>
 
-            {/* Invoice document — carried onto the deposit invoice on acceptance */}
+            <FormField
+              control={form.control}
+              name="terms"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Terms</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={6}
+                      placeholder="Payment terms, ownership, revisions, cancellation…"
+                      className="text-sm"
+                      {...field}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Shown to the client under the scope. New proposals start from the default
+                    terms in Settings.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Invoice document — carried onto the first invoice */}
             <div className="rounded-xl border p-3">
               <p className="text-sm font-medium">Invoice document (optional)</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Attach the invoice now and it&apos;s added to the deposit invoice
-                created when they accept.
+                Attach the invoice now and it&apos;s added to the client&apos;s first invoice.
               </p>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -666,8 +808,8 @@ export function ProposalFormDialog({
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     {pdfFile
                       ? `Selected: ${pdfFile.name}`
-                      : proposal?.invoicePdfOriginalName
-                        ? `Currently attached: ${proposal.invoicePdfOriginalName} — choose a file to replace it.`
+                      : draft?.invoicePdfOriginalName
+                        ? `Currently attached: ${draft.invoicePdfOriginalName} — choose a file to replace it.`
                         : "PDF only, up to 25 MB."}
                   </p>
                 </div>
@@ -675,7 +817,7 @@ export function ProposalFormDialog({
             </div>
             </div>
 
-            {/* Step 2 — the full invoice for the client */}
+            {/* Step 2 — the client's first invoice */}
             <div className={cn("space-y-4", step !== 2 && "hidden")}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <FormField
@@ -773,7 +915,7 @@ export function ProposalFormDialog({
 
               {/* Invoice line items (qty × rate) */}
               <div className="rounded-xl border p-3">
-                <div className="mb-2 flex items-center justify-between">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium">Invoice items</p>
                   <Button
                     type="button"
@@ -786,6 +928,37 @@ export function ProposalFormDialog({
                     <Plus className="size-3.5" /> Add line
                   </Button>
                 </div>
+                {/* What to bill first is a choice; these set the lines in one go. */}
+                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span>Start from:</span>
+                  {deposit > 0 && depositPercent < 100 && (
+                    <button
+                      type="button"
+                      className="font-medium text-primary hover:underline"
+                      onClick={() =>
+                        invoiceItems.replace([
+                          {
+                            description: `${form.getValues("title") || "Project"} — ${depositPercent}% deposit`,
+                            qty: 1,
+                            rate: deposit,
+                          },
+                        ])
+                      }
+                    >
+                      the {depositPercent}% deposit ({formatCurrency(deposit, currency)})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    onClick={() => {
+                      const lines = scopeLines();
+                      if (lines.length) invoiceItems.replace(lines);
+                    }}
+                  >
+                    the full scope ({formatCurrency(total, currency)})
+                  </button>
+                </div>
                 <div className="space-y-2">
                   {invoiceItems.fields.map((row, index) => (
                     <div key={row.id} className="flex items-start gap-2">
@@ -793,7 +966,7 @@ export function ProposalFormDialog({
                         control={form.control}
                         name={`invoice.items.${index}.description`}
                         render={({ field }) => (
-                          <FormItem className="flex-1">
+                          <FormItem className="min-w-0 flex-1">
                             <FormControl>
                               <Input placeholder="e.g. Website build" {...field} />
                             </FormControl>
@@ -826,7 +999,7 @@ export function ProposalFormDialog({
                         control={form.control}
                         name={`invoice.items.${index}.rate`}
                         render={({ field }) => (
-                          <FormItem className="w-28">
+                          <FormItem className="w-24 sm:w-28">
                             <FormControl>
                               <Input
                                 type="number"
@@ -860,9 +1033,12 @@ export function ProposalFormDialog({
                   ))}
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
-                  <span className="text-muted-foreground">Invoice total</span>
+                  <span className="text-muted-foreground">
+                    Invoice total
+                    <span className="block text-xs">The client sees this as their first invoice.</span>
+                  </span>
                   <span className="font-heading text-lg font-bold text-primary">
-                    {usd.format(invoiceTotal)}
+                    {formatCurrency(invoiceTotal, invoiceCurrency)}
                   </span>
                 </div>
               </div>
@@ -932,7 +1108,7 @@ export function ProposalFormDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={close}
                 disabled={form.formState.isSubmitting}
               >
                 Cancel
@@ -955,6 +1131,7 @@ export function ProposalFormDialog({
             </DialogFooter>
           </form>
         </Form>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -24,13 +24,16 @@ function uploadRoot(): string {
   return path.resolve(process.env.UPLOAD_DIR ?? "./uploads");
 }
 
-export type UploadKind = "invoices" | "images" | "branding" | "deliverables";
+export type UploadKind = "invoices" | "images" | "branding" | "deliverables" | "contracts";
 
 const limits: Record<UploadKind, number> = {
   invoices: 25 * 1024 * 1024, // 25 MB
   images: 5 * 1024 * 1024, // 5 MB
   branding: 2 * 1024 * 1024, // 2 MB (logo / favicon)
   deliverables: 25 * 1024 * 1024, // 25 MB (PDF or image; else use a link)
+  // Signed proposal PDFs, and the proof (an email as PDF, a screenshot)
+  // behind an acceptance the admin recorded by hand.
+  contracts: 25 * 1024 * 1024,
 };
 
 const imageTypes: Record<string, string> = {
@@ -124,9 +127,10 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
       ext = mapped;
       mimeType = file.type;
     }
-  } else if (kind === "deliverables") {
+  } else if (kind === "deliverables" || kind === "contracts") {
     // A finished asset: PDF or image. Anything else (Figma, zip, AI) is shared
     // as an external link instead, which is the common real-world pattern.
+    // Contracts take the same two: the signed PDF, or a screenshot as proof.
     if (file.type === "application/pdf") {
       ext = "pdf";
       mimeType = "application/pdf";
@@ -149,10 +153,16 @@ export async function saveUpload(kind: UploadKind, file: File): Promise<SaveResu
 
   const buf = Buffer.from(await file.arrayBuffer());
   const svg = mimeType === "image/svg+xml";
-  // Deliverables validate as an invoice (PDF) or image, matching their two
-  // allowed kinds above.
+  // Deliverables and contracts validate as an invoice (PDF) or image,
+  // matching their two allowed kinds above.
   const magicKind: UploadKind =
-    kind === "branding" ? "images" : kind === "deliverables" ? (mimeType === "application/pdf" ? "invoices" : "images") : kind;
+    kind === "branding"
+      ? "images"
+      : kind === "deliverables" || kind === "contracts"
+        ? mimeType === "application/pdf"
+          ? "invoices"
+          : "images"
+        : kind;
   if (svg) {
     const head = buf.subarray(0, 512).toString("utf8").trimStart();
     if (!head.startsWith("<")) {

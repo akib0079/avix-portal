@@ -15,6 +15,8 @@ import { RevenueTargetSetting } from "@/components/settings/revenue-target-setti
 import { TeamManager } from "@/components/settings/team-manager";
 import { AvailabilityManager } from "@/components/settings/availability-manager";
 import { GoogleCalendarSetting } from "@/components/settings/google-calendar-setting";
+import { ProposalTermsSetting } from "@/components/settings/proposal-terms-setting";
+import { DEFAULT_PROPOSAL_TERMS, getProposalDefaultTerms } from "@/lib/dal/settings";
 import { listStaff } from "@/lib/dal/users";
 import { listAvailabilityWindows, getBookingConfig } from "@/lib/dal/availability";
 import { calendarStatus } from "@/lib/google-calendar";
@@ -37,6 +39,7 @@ export default async function SettingsPage({
     [accounts, whatsappUrl, branding, staff, availWindows, bookingConfig, invoiceFooter, paymentGuideUrl],
     gcal,
     targetRow,
+    proposalTerms,
   ] = await Promise.all([
     searchParams,
     Promise.all([
@@ -51,6 +54,7 @@ export default async function SettingsPage({
     ]),
     calendarStatus(),
     prisma.appSetting.findUnique({ where: { key: "monthlyRevenueTarget" } }),
+    getProposalDefaultTerms(),
   ]);
   const revenueTarget = Number(targetRow?.value ?? 0) || 0;
 
@@ -100,6 +104,12 @@ export default async function SettingsPage({
       <Card className="mt-6">
         <CardContent className="pt-6">
           <InvoiceFooterSetting initial={invoiceFooter} />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardContent className="pt-6">
+          <ProposalTermsSetting initial={proposalTerms} defaultText={DEFAULT_PROPOSAL_TERMS} />
         </CardContent>
       </Card>
 

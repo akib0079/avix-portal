@@ -20,9 +20,9 @@ export async function getNotificationsForUser(userId: string) {
  * Which admin notifications are worth an email as well as a bell row.
  *
  * The bell is free and can carry everything; an inbox cannot. These are the
- * ones where a delay costs something real — money won, money claimed, an
- * invoice that was meant to send itself and didn't, and a meeting you are
- * expected to attend. Milestone approvals, thumbs ratings,
+ * ones where a delay costs something real — money won or turned down, money
+ * claimed, an invoice that was meant to send itself and didn't, and a meeting
+ * you are expected to attend. Milestone approvals, thumbs ratings,
  * deliverable reviews and generated retainer drafts stay in-app: they are
  * routine project churn, and mailing every one of them trains you to ignore
  * the whole channel.
@@ -35,6 +35,9 @@ export async function getNotificationsForUser(userId: string) {
  */
 const EMAILED_TYPES = new Set([
   "PROPOSAL_ACCEPTED",
+  // A "no" is worth hearing the same day: there may still be time to save it.
+  // PROPOSAL_VIEWED stays in-app — an open is a hint, not news.
+  "PROPOSAL_DECLINED",
   "PAYMENT_CLAIMED",
   // A client's invoice didn't go out when it was meant to.
   "RECURRING_INVOICE_FAILED",
@@ -47,6 +50,8 @@ export async function notifyAllAdmins(input: {
     | "MILESTONE_APPROVED"
     | "MILESTONE_UPDATED"
     | "MEETING_SCHEDULED"
+    | "PROPOSAL_VIEWED"
+    | "PROPOSAL_DECLINED"
     | "DELIVERABLE_REVIEWED"
     | "PAYMENT_CLAIMED"
     | "RETAINER_GENERATED"
@@ -55,14 +60,20 @@ export async function notifyAllAdmins(input: {
   title: string;
   body?: string;
   link?: string;
+  /**
+   * Files for the email copy only, never stored on the bell row (e.g. the
+   * signed proposal PDF). Ignored for types that aren't emailed.
+   */
+  attachments?: { filename: string; content: Buffer }[];
 }) {
+  const { attachments, ...notification } = input;
   const admins = await prisma.user.findMany({
     where: { role: "ADMIN", status: "ACTIVE" },
     select: { id: true },
   });
   if (admins.length === 0) return;
   await prisma.notification.createMany({
-    data: admins.map((admin) => ({ userId: admin.id, ...input })),
+    data: admins.map((admin) => ({ userId: admin.id, ...notification })),
   });
 
   // Best-effort: the mutation that triggered this has already committed, so a
@@ -81,6 +92,7 @@ export async function notifyAllAdmins(input: {
           actionUrl={`${appUrl()}${input.link ?? "/admin"}`}
         />
       ),
+      attachments,
       devHint: `admin alert (${input.type}) -> ${adminEmail}`,
     });
   } catch (err) {
