@@ -3,13 +3,16 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { PageHeader } from "@/components/page-header";
 import { RetainerManager } from "@/components/retainers/retainer-manager";
-import { serverNow } from "@/lib/server-now";
 
-export const metadata = { title: "Retainers" };
+export const metadata = { title: "Recurring" };
 
+/**
+ * Recurring plans. Still at /admin/retainers so old links and bookmarks
+ * work; a retainer is one kind of recurring plan now, not a separate thing.
+ */
 export default async function RetainersPage() {
   await requireAdmin();
-  const [retainers, clients, projects] = await Promise.all([
+  const [{ plans, today }, clients, projects] = await Promise.all([
     listRetainers(),
     prisma.user.findMany({
       where: { role: "CLIENT", status: "ACTIVE" },
@@ -18,27 +21,18 @@ export default async function RetainersPage() {
     }),
     prisma.project.findMany({
       orderBy: { createdAt: "desc" },
+      take: 500,
       select: { id: true, projectName: true, clientId: true },
     }),
   ]);
 
-  // The billing month as the drafting job reads it: server time, "YYYY-MM".
-  const now = new Date(serverNow());
-  const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-
   return (
     <div>
       <PageHeader
-        title="Retainers"
-        description="Monthly plans — invoices draft themselves, you review and send."
+        title="Recurring"
+        description="Invoices that repeat — each period's is made on its date, for you to review and send."
       />
-      <RetainerManager
-        retainers={retainers}
-        clients={clients}
-        projects={projects}
-        period={period}
-        today={now.getDate()}
-      />
+      <RetainerManager retainers={plans} clients={clients} projects={projects} today={today} />
     </div>
   );
 }

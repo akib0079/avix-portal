@@ -66,7 +66,7 @@ const adminNav: NavItem[] = [
   { href: "/admin/clients", label: "Clients", icon: Users },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/invoices", label: "Invoices", icon: FileText },
-  { href: "/admin/retainers", label: "Retainers", icon: Repeat },
+  { href: "/admin/retainers", label: "Recurring", icon: Repeat },
   { href: "/admin/messages", label: "Messages", icon: MessagesSquare, badge: "messages" },
   { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/admin/task-requests", label: "Task Requests", icon: Inbox, badge: "tasks" },

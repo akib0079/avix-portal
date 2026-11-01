@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { retainerSchema, type RetainerInput } from "@/lib/validation/retainer";
+import { retainerSchema, scheduleSchema, type RetainerInput } from "@/lib/validation/retainer";
 import { createRetainer, updateRetainer } from "@/lib/actions/retainers";
 import type { RetainerView } from "@/lib/dal/retainers";
+import { paymentTermsOptions } from "@/lib/validation/invoice";
+import { CURRENCIES } from "@/lib/currency";
+import { addMonths, type Day } from "@/lib/recurring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,8 +35,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  ScheduleFields,
+  draftFromSchedule,
+  scheduleErrors,
+  scheduleInput,
+  type ScheduleDraft,
+  type ScheduleErrors,
+} from "./schedule-fields";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
+import Link from "next/link";
 
 export type RetainerClientOption = {
   id: string;
@@ -48,75 +59,120 @@ export type RetainerProjectOption = {
   clientId: string | null;
 };
 
+/** The form's own fields; the schedule is held beside them (ScheduleFields). */
+const planFieldsSchema = retainerSchema.omit({ schedule: true });
+type PlanFields = Omit<RetainerInput, "schedule">;
+
+/** A new plan bills on the 1st of next month unless told otherwise. */
+function newSchedule(today: Day): ScheduleDraft {
+  return {
+    frequency: "MONTH",
+    interval: 1,
+    nextDate: `${addMonths(today, 1).slice(0, 7)}-01`,
+    ends: "never",
+    endAfterCount: "",
+    endDate: "",
+    autoSend: false,
+  };
+}
+
+/**
+ * Create or edit a recurring plan. A plan that copies a template invoice
+ * takes its lines, amount, currency and terms from that invoice, so those
+ * fields are shown but locked here; the client is locked with them.
+ */
 export function RetainerFormDialog({
   retainer,
   clients,
   projects,
+  today,
   open,
   onOpenChange,
 }: {
   retainer?: RetainerView | null;
   clients: RetainerClientOption[];
   projects: RetainerProjectOption[];
+  today: Day;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const isEdit = !!retainer;
+  const templated = !!retainer?.template;
+  const [schedule, setSchedule] = useState<ScheduleDraft>(() => newSchedule(today));
+  const [errors, setErrors] = useState<ScheduleErrors>({});
 
-  const form = useForm<RetainerInput>({
-    resolver: zodResolver(retainerSchema),
+  const form = useForm<PlanFields>({
+    resolver: zodResolver(planFieldsSchema),
     defaultValues: {
       title: "",
       clientId: "",
       projectId: "none",
       amount: "" as unknown as number,
-      dayOfMonth: 1,
+      currency: "USD",
+      amountUsd: null,
+      paymentTermsDays: 14,
       active: true,
       notes: "",
     },
   });
 
   useEffect(() => {
-    if (open) {
-      form.reset({
-        title: retainer?.title ?? "",
-        clientId: retainer?.clientId ?? "",
-        projectId: retainer?.projectId ?? "none",
-        amount: retainer?.amount ?? ("" as unknown as number),
-        dayOfMonth: retainer?.dayOfMonth ?? 1,
-        active: retainer?.active ?? true,
-        notes: retainer?.notes ?? "",
-      });
-    }
+    if (!open) return;
+    form.reset({
+      title: retainer?.title ?? "",
+      clientId: retainer?.clientId ?? "",
+      projectId: retainer?.projectId ?? "none",
+      amount: retainer?.amount ?? ("" as unknown as number),
+      currency: retainer?.currency ?? "USD",
+      amountUsd: retainer?.amountUsd ?? null,
+      paymentTermsDays: retainer ? retainer.paymentTermsDays : 14,
+      active: retainer ? retainer.state === "active" : true,
+      notes: retainer?.notes ?? "",
+    });
+    setSchedule(
+      retainer
+        ? draftFromSchedule({
+            frequency: retainer.frequency,
+            interval: retainer.interval,
+            // An ended plan has no next run: saving restarts it from the date picked.
+            nextDate: retainer.nextDay ?? today,
+            endAfterCount: retainer.endAfterCount,
+            endDay: retainer.endDay,
+            autoSend: retainer.autoSend,
+          })
+        : newSchedule(today),
+    );
+    setErrors({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, retainer?.id]);
 
   const clientId = form.watch("clientId");
-  const clientProjects = projects.filter(
-    (p) => p.clientId === clientId || p.clientId === null,
-  );
+  const currency = form.watch("currency");
+  const clientProjects = projects.filter((p) => p.clientId === clientId || p.clientId === null);
 
-  async function onSubmit(values: RetainerInput) {
-    const result = isEdit
-      ? await updateRetainer(retainer.id, values)
-      : await createRetainer(values);
+  async function onSubmit(values: PlanFields) {
+    const next = scheduleInput(schedule);
+    const checked = scheduleSchema.safeParse(next);
+    if (!checked.success) return void setErrors(scheduleErrors(checked.error.issues));
+    setErrors({});
+    const input = { ...values, schedule: checked.data };
+    const result = isEdit ? await updateRetainer(retainer.id, input) : await createRetainer(input);
     if (!result.ok) return void toast.error(result.error);
-    toast.success(isEdit ? "Retainer updated." : "Retainer created.");
+    toast.success(isEdit ? "Plan updated." : "Plan created.");
+    // The action revalidates the page; no refresh on top of it.
     onOpenChange(false);
-    router.refresh();
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="font-heading">
-            {isEdit ? "Edit retainer" : "New retainer"}
+            {isEdit ? "Edit recurring plan" : "New recurring plan"}
           </DialogTitle>
           <DialogDescription>
-            Each month an invoice is drafted automatically on the chosen day —
-            you review and send it, nothing goes out on its own.
+            An invoice is made for every period, on its date. It waits as a draft for you
+            to send, unless you choose to send it automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -143,7 +199,14 @@ export function RetainerFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Client</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
+                    <Select
+                      value={field.value}
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        form.setValue("projectId", "none");
+                      }}
+                      disabled={templated}
+                    >
                       <FormControl>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Select client" />
@@ -189,19 +252,36 @@ export function RetainerFormDialog({
               />
             </div>
 
+            {templated && retainer?.template && (
+              <p className="flex items-start gap-2 rounded-lg border bg-brand-tint/50 px-3 py-2 text-sm">
+                <FileText className="mt-0.5 size-4 shrink-0 text-primary" />
+                <span>
+                  Each invoice copies{" "}
+                  <Link
+                    href={`/admin/invoices/${retainer.template.id}`}
+                    className="font-medium hover:text-primary"
+                  >
+                    {retainer.template.invoiceNumber}
+                  </Link>
+                  : its lines, amount, tax and terms. Edit that invoice to change them.
+                </span>
+              </p>
+            )}
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <FormField
                 control={form.control}
                 name="amount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Monthly amount ($)</FormLabel>
+                    <FormLabel>Amount per invoice</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
                         min={0}
                         step="0.01"
                         placeholder="250.00"
+                        disabled={templated}
                         value={(field.value as number | string) ?? ""}
                         onChange={(e) =>
                           field.onChange(
@@ -218,23 +298,20 @@ export function RetainerFormDialog({
               />
               <FormField
                 control={form.control}
-                name="dayOfMonth"
+                name="currency"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Bill on day</FormLabel>
-                    <Select
-                      value={String(field.value)}
-                      onValueChange={(v) => field.onChange(Number(v))}
-                    >
+                    <FormLabel>Currency</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange} disabled={templated}>
                       <FormControl>
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
                       </FormControl>
-                      <SelectContent className="max-h-64">
-                        {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                          <SelectItem key={d} value={String(d)}>
-                            {d}
+                      <SelectContent>
+                        {CURRENCIES.map((c) => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -243,6 +320,84 @@ export function RetainerFormDialog({
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="paymentTermsDays"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment terms</FormLabel>
+                    <Select
+                      value={field.value == null ? "none" : String(field.value)}
+                      onValueChange={(v) => field.onChange(v === "none" ? null : Number(v))}
+                      disabled={templated}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">Net 14 (default)</SelectItem>
+                        {paymentTermsOptions.map((days) => (
+                          <SelectItem key={days} value={String(days)}>
+                            {days === 0 ? "Due on receipt" : `Net ${days}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            {currency !== "USD" && (
+              <FormField
+                control={form.control}
+                name="amountUsd"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Each invoice is worth (USD)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="For your recurring revenue figure"
+                        disabled={templated}
+                        value={(field.value as number | string | null) ?? ""}
+                        onChange={(e) =>
+                          field.onChange(e.target.value === "" ? null : Number(e.target.value))
+                        }
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Only counts toward MRR. Each invoice still gets the USD value it settles
+                      at, entered when it&apos;s paid.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            <div className="rounded-xl border p-4">
+              <ScheduleFields
+                value={schedule}
+                onChange={setSchedule}
+                errors={errors}
+                today={today}
+                runCount={retainer?.runCount ?? 0}
+                dateLabel={isEdit ? "Next invoice on" : "First invoice on"}
+                countHint={
+                  retainer && retainer.runCount > 0
+                    ? `${retainer.runCount} made so far count toward this.`
+                    : undefined
+                }
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
               <FormField
                 control={form.control}
                 name="active"
@@ -267,25 +422,25 @@ export function RetainerFormDialog({
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Invoice note (optional)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={2}
+                        placeholder="Printed on each invoice. {{period}} names its period."
+                        disabled={templated}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
-
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Invoice note (optional)</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      rows={2}
-                      placeholder="Appears on each generated invoice…"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
             <DialogFooter>
               <Button
@@ -298,7 +453,7 @@ export function RetainerFormDialog({
               </Button>
               <Button type="submit" disabled={form.formState.isSubmitting}>
                 {form.formState.isSubmitting && <Loader2 className="animate-spin" />}
-                {isEdit ? "Save changes" : "Create retainer"}
+                {isEdit ? "Save changes" : "Create plan"}
               </Button>
             </DialogFooter>
           </form>
