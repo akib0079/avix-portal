@@ -1044,8 +1044,9 @@ model Retainer {
   /// Missed (backdated) periods are always left as drafts.
   autoSend            Boolean         @default(false)
   currency            InvoiceCurrency @default(USD)
-  /// Monthly-equivalent value in USD for non-USD plans (MRR only; generated
-  /// invoices still need their settled USD value entered).
+  /// USD value of one of this plan's invoices, for non-USD plans. MRR only:
+  /// it counts the plan's monthly share of it. Generated invoices still need
+  /// their settled USD value entered.
   amountUsd           Decimal?        @db.Decimal(12, 2)
   paymentTermsDays    Int?
   /// The invoice every new period is copied from (lines, tax, notes, account).
