@@ -31,7 +31,16 @@ export type InvoiceListRow = {
   sent: boolean;
   /** Untouched and unsent, so it can be deleted rather than cancelled. */
   deletable: boolean;
+  /** The recurring plan this invoice is part of. */
+  planTitle: string | null;
+  /** A recurring plan copies this invoice for each new period. */
+  isTemplate: boolean;
 };
+
+/** Part of a recurring plan, or the invoice one copies. */
+export function isRecurring(row: InvoiceListRow): boolean {
+  return row.planTitle !== null || row.isTemplate;
+}
 
 /** What's still owed: payments and credit notes off the total, never below zero. */
 export function rowBalance(row: InvoiceListRow): number {
@@ -55,6 +64,7 @@ export const INVOICE_FILTERS = [
   { value: "overdue", label: "Overdue" },
   { value: "paid", label: "Paid" },
   { value: "draft", label: "Draft" },
+  { value: "recurring", label: "Recurring" },
   { value: "needs-usd", label: "Needs USD value" },
 ] as const;
 

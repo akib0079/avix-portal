@@ -35,7 +35,8 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Building2, Paperclip, HandCoins, Loader2 } from "lucide-react";
-import { rowBalance, type InvoiceListRow } from "./invoice-row";
+import { isRecurring, rowBalance, type InvoiceListRow } from "./invoice-row";
+import { RepeatMark } from "./repeat-mark";
 import { InvoiceRowMenu, type InvoiceRowAction } from "./invoice-row-menu";
 import { isReceivable } from "@/lib/invoice-rules";
 
@@ -352,6 +353,7 @@ function InvoiceCardFace({
         <div className="flex items-start justify-between gap-2">
           <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
             <span className="truncate">{row.invoiceNumber}</span>
+            {isRecurring(row) && <RepeatMark row={row} />}
             {row.hasDocument && <Paperclip className="size-3 shrink-0 text-muted-foreground" />}
           </p>
           <p

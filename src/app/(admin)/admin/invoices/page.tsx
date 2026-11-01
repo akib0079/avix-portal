@@ -61,6 +61,8 @@ export default async function InvoicesPage({
           suppliedLink: !!invoice.pdfExternalUrl,
           paymentClaimed: !!invoice.paymentClaimedAt,
           sent: !!invoice.sentAt,
+          planTitle: invoice.retainer?.title ?? null,
+          isTemplate: invoice._count.retainerTemplateFor > 0,
           deletable: canDeleteInvoice({
             status: invoice.status,
             sentAt: invoice.sentAt,

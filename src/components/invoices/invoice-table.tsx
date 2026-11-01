@@ -23,6 +23,7 @@ import { useLocalChoice } from "@/lib/use-local-pref";
 import { InvoiceLanes } from "./invoice-lanes";
 import {
   INVOICE_FILTERS,
+  isRecurring,
   needsUsd,
   rowBalance,
   type InvoiceFilter,
@@ -33,6 +34,7 @@ import { useInvoiceRowActions } from "./invoice-row-actions";
 import { isReceivable } from "@/lib/invoice-rules";
 import { cn } from "@/lib/utils";
 import { Search, Paperclip, FileText } from "lucide-react";
+import { RepeatMark } from "./repeat-mark";
 import { toneText } from "@/lib/tone";
 import { SoftPill } from "@/components/ui/status-pill";
 import { HUE } from "@/lib/status-colors";
@@ -110,6 +112,7 @@ export function InvoiceTable({
       if (filter === "overdue" && !overdue) return false;
       if (filter === "paid" && i.status !== "PAID") return false;
       if (filter === "draft" && i.status !== "DRAFT") return false;
+      if (filter === "recurring" && !isRecurring(i)) return false;
       if (filter === "needs-usd" && !needsUsd(i)) return false;
 
       if (!needle) return true;
@@ -251,6 +254,7 @@ export function InvoiceTable({
                             className="flex items-center gap-1.5 font-medium hover:text-primary"
                           >
                             {invoice.invoiceNumber}
+                            {isRecurring(invoice) && <RepeatMark row={invoice} />}
                             {invoice.hasDocument && (
                               <Paperclip className="size-3 text-muted-foreground" />
                             )}

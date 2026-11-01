@@ -31,7 +31,9 @@ export async function listInvoices() {
       project: { select: { id: true, projectName: true } },
       // Credit notes come off the balance; the counts decide delete vs cancel.
       creditNotes: { select: { amount: true, status: true } },
-      _count: { select: { payments: true } },
+      // The repeat mark and the Recurring filter.
+      retainer: { select: { title: true } },
+      _count: { select: { payments: true, retainerTemplateFor: true } },
     },
   });
 }
