@@ -6,6 +6,7 @@ import { stageToStatus } from "./work-stage";
 import {
   WITHDRAWN_NOTE,
   assigneeGroups,
+  dueBucket,
   endOfColumn,
   formatHours,
   hoursProgress,
@@ -224,6 +225,16 @@ test("stage menus offer exactly the moves the server accepts", () => {
   assert.deepEqual(stageChoices("CLIENT", { stage: "REVIEW", archivedAt: null }), ["TODO", "IN_PROGRESS", "DONE"]);
   assert.deepEqual(stageChoices("ADMIN", { stage: "REQUESTED", archivedAt: null }), [], "accept or decline instead");
   assert.deepEqual(stageChoices("ADMIN", { stage: "TODO", archivedAt: "2026-10-01" }), []);
+});
+
+test("My Work's lanes by due day", () => {
+  const today = "2026-11-02";
+  assert.equal(dueBucket(null, today), "No date");
+  assert.equal(dueBucket("2026-11-01", today), "Overdue");
+  assert.equal(dueBucket("2026-11-02", today), "Today");
+  assert.equal(dueBucket("2026-11-08", today), "This week");
+  assert.equal(dueBucket("2026-11-09", today), "Later", "a week out is later");
+  assert.equal(dueBucket("2026-12-31", "2026-12-28"), "This week", "across a month end");
 });
 
 test("the end of a column is a step past its last live card", () => {

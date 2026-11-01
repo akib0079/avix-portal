@@ -1,5 +1,5 @@
 import "server-only";
-import type { Priority, ProjectTaskStatus } from "@prisma/client";
+import type { Priority, ProjectBillingType, ProjectTaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
 import { dayKey } from "@/lib/board";
@@ -15,12 +15,16 @@ export type MyWorkItem = {
   dueDate: string | null;
   projectId: string;
   projectName: string;
+  /** For accepting a request from here: pricing is off on fixed contracts. */
+  projectBillingType: ProjectBillingType;
   clientName: string | null;
   loggedHours: number;
   /** Null for STAFF, who are money-blind, and when there's no estimate. */
   estimatedHours: number | null;
   /** The client asked for help on it and nobody has answered. */
   clientNeedsHelp: boolean;
+  /** Set while it's a client's request waiting for a decision (stage REQUESTED). */
+  sourceTaskRequestId: string | null;
 };
 
 export type MyWork = {
@@ -68,10 +72,12 @@ export async function getMyWork(of?: string): Promise<MyWork> {
         priority: true,
         dueDate: true,
         estimatedHours: true,
+        sourceTaskRequestId: true,
         project: {
           select: {
             id: true,
             projectName: true,
+            billingType: true,
             client: { select: { firstName: true, lastName: true, company: true } },
           },
         },
@@ -116,6 +122,7 @@ export async function getMyWork(of?: string): Promise<MyWork> {
       dueDate: m.dueDate ? dayKey(m.dueDate) : null,
       projectId: m.project.id,
       projectName: m.project.projectName,
+      projectBillingType: m.project.billingType,
       clientName: m.project.client
         ? m.project.client.company ||
           `${m.project.client.firstName} ${m.project.client.lastName}`.trim()
@@ -124,6 +131,7 @@ export async function getMyWork(of?: string): Promise<MyWork> {
       estimatedHours:
         showEstimates && m.estimatedHours != null ? Number(m.estimatedHours) : null,
       clientNeedsHelp: m._count.comments > 0,
+      sourceTaskRequestId: m.stage === "REQUESTED" ? m.sourceTaskRequestId : null,
     })),
     ownedProjects: ownedProjects.map((p) => ({
       id: p.id,

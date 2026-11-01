@@ -278,6 +278,24 @@ export function stageChoices(
   );
 }
 
+export type DueBucket = "Overdue" | "Today" | "This week" | "Later" | "No date";
+
+/** "YYYY-MM-DD" plus whole days, as a calendar day. */
+function addDays(day: string, days: number): string {
+  const d = new Date(`${day}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** My Work's lanes: overdue → today → the next seven days → later → undated. */
+export function dueBucket(dueDate: string | null, today: string): DueBucket {
+  if (!dueDate) return "No date";
+  if (dueDate < today) return "Overdue";
+  if (dueDate === today) return "Today";
+  if (dueDate < addDays(today, 7)) return "This week";
+  return "Later";
+}
+
 /** Where the end of a board column is: a step past its last card (`except` aside). */
 export function endOfColumn(items: readonly WorkItem[], stage: ProjectTaskStatus, except?: string): number {
   let max: number | null = null;

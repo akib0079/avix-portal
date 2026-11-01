@@ -1,61 +1,30 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import type { ProjectStatus } from "@prisma/client";
-import { getMyWork, type MyWorkItem } from "@/lib/dal/my-work";
+import { getMyWork } from "@/lib/dal/my-work";
 import { PageHeader } from "@/components/page-header";
 import { ProjectStatusBadge } from "@/components/status-badges";
-import { Lane, LaneScroller } from "@/components/ui/lanes";
-import { COLUMN_BY_ID, PRIORITY_META, workItemHref } from "@/lib/board";
-import { HUE, projectStatusColor } from "@/lib/status-colors";
+import { MyWorkLanes } from "@/components/my-work/my-work-lanes";
+import { projectStatusColor } from "@/lib/status-colors";
 import { formatDate } from "@/lib/format";
+import { formatHours } from "@/lib/work-list";
 import { cn } from "@/lib/utils";
 import { requireTeam } from "@/lib/dal/session";
 import {
   Clock,
   FolderKanban,
-  CalendarClock,
   CheckCircle2,
   TrendingUp,
   KanbanSquare,
-  Flag,
-  LifeBuoy,
-  Building2,
 } from "lucide-react";
 import { toneText } from "@/lib/tone";
 
 export const metadata = { title: "My Work" };
 
-function fmtHours(hours: number): string {
-  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
-}
-
-type Bucket = "Overdue" | "Today" | "This week" | "Later" | "No date";
-
 /** "YYYY-MM-DD" of a local date, so due days compare as the days they name. */
 function localDay(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-
-/** Overdue → today → this week → later → undated. Due dates are calendar days. */
-function bucketOf(dueDate: string | null, now: Date): Bucket {
-  if (!dueDate) return "No date";
-  const today = localDay(now);
-  const weekOut = new Date(now);
-  weekOut.setDate(weekOut.getDate() + 7);
-
-  if (dueDate < today) return "Overdue";
-  if (dueDate === today) return "Today";
-  if (dueDate < localDay(weekOut)) return "This week";
-  return "Later";
-}
-
-const BUCKETS: { name: Bucket; color: string }[] = [
-  { name: "Overdue", color: HUE.red },
-  { name: "Today", color: HUE.brand },
-  { name: "This week", color: HUE.blue },
-  { name: "Later", color: HUE.sky },
-  { name: "No date", color: HUE.slate },
-];
 
 function Tile({
   icon: Icon,
@@ -81,92 +50,9 @@ function Tile({
   );
 }
 
-function ItemCard({ item, bucket }: { item: MyWorkItem; bucket: Bucket }) {
-  const column = COLUMN_BY_ID[item.stage];
-
-  return (
-    <Link
-      href={workItemHref(item.projectId, item.id, "ADMIN")}
-      style={{ "--col": column.color } as CSSProperties}
-      className="group/card relative block overflow-hidden rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(15_23_42/0.05)] transition-[box-shadow,border-color] duration-150 outline-none hover:border-[color-mix(in_oklab,var(--col)_45%,var(--border))] hover:shadow-[0_6px_20px_-10px_rgb(15_23_42/0.25)] focus-visible:ring-2 focus-visible:ring-ring/60"
-    >
-      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
-
-      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        {/* Where it stands, in the board's colours. */}
-        <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--col)_13%,transparent)] px-2 py-0.5 text-[10px] font-semibold text-[color-mix(in_oklab,var(--col)_72%,var(--foreground))]">
-          <KanbanSquare className="size-3" />
-          {column.label}
-        </span>
-        {item.clientNeedsHelp && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-red-500/12 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-red-600 uppercase dark:text-red-400">
-            <LifeBuoy className="size-3" /> Needs help
-          </span>
-        )}
-      </div>
-
-      <p className="line-clamp-2 text-[13px] leading-snug font-semibold [overflow-wrap:anywhere]">
-        {item.title}
-      </p>
-      <p className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
-        <Building2 className="size-3 shrink-0" />
-        <span className="truncate">
-          {item.projectName}
-          {item.clientName ? ` · ${item.clientName}` : ""}
-        </span>
-      </p>
-
-      {(item.dueDate || item.priority || item.loggedHours > 0 || item.estimatedHours != null) && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
-          {item.priority && (
-            <span
-              className="inline-flex items-center gap-1 font-medium"
-              style={{ color: PRIORITY_META[item.priority].color }}
-            >
-              <Flag className="size-3" fill="currentColor" />
-              {PRIORITY_META[item.priority].label}
-            </span>
-          )}
-          {item.dueDate && (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 tabular-nums",
-                bucket === "Overdue" ? cn("font-medium", toneText.bad) : "text-muted-foreground",
-              )}
-            >
-              <CalendarClock className="size-3" />
-              {formatDate(item.dueDate)}
-            </span>
-          )}
-          {(item.loggedHours > 0 || item.estimatedHours != null) && (
-            <span className="inline-flex items-center gap-1 text-muted-foreground tabular-nums">
-              <Clock className="size-3" />
-              {fmtHours(item.loggedHours)}
-              {item.estimatedHours != null ? ` / ${fmtHours(item.estimatedHours)}` : ""}
-            </span>
-          )}
-        </div>
-      )}
-    </Link>
-  );
-}
-
 export default async function MyWorkPage() {
-  const viewer = await requireTeam();
-  const work = await getMyWork();
-  const now = new Date();
-
+  const [viewer, work] = await Promise.all([requireTeam(), getMyWork()]);
   const items = work.items;
-
-  const grouped = new Map<Bucket, MyWorkItem[]>();
-  for (const item of items) {
-    const bucket = bucketOf(item.dueDate, now);
-    grouped.set(bucket, [...(grouped.get(bucket) ?? []), item]);
-  }
-  // Soonest first inside each lane; undated items keep their source order.
-  for (const list of grouped.values()) {
-    list.sort((a, b) => (a.dueDate ?? "￿").localeCompare(b.dueDate ?? "￿"));
-  }
 
   const trend = work.hoursThisWeek - work.hoursLastWeek;
   const helpCount = items.filter((t) => t.clientNeedsHelp).length;
@@ -176,13 +62,13 @@ export default async function MyWorkPage() {
     <div>
       <PageHeader
         title="My Work"
-        description={`Every milestone assigned to ${viewer.name || "you"}, soonest first.`}
+        description={`Everything with ${viewer.name || "your"}${viewer.name ? "'s" : ""} name on it, across every project, soonest first — move each one along from here.`}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile
           icon={CheckCircle2}
-          label="Open milestones"
+          label="Open items"
           value={items.length}
           extra={
             helpCount > 0 ? (
@@ -197,7 +83,7 @@ export default async function MyWorkPage() {
         <Tile
           icon={Clock}
           label="Hours this week"
-          value={fmtHours(work.hoursThisWeek)}
+          value={formatHours(work.hoursThisWeek)}
           extra={
             work.hoursLastWeek > 0 ? (
               <span
@@ -208,7 +94,7 @@ export default async function MyWorkPage() {
               >
                 <TrendingUp className="size-3" />
                 {trend >= 0 ? "+" : ""}
-                {fmtHours(trend)}
+                {formatHours(trend)}
               </span>
             ) : undefined
           }
@@ -220,28 +106,16 @@ export default async function MyWorkPage() {
           <CheckCircle2 className="mx-auto mb-3 size-8 text-muted-foreground/40" />
           <p className="font-medium">Nothing assigned to you yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Milestones show up here as soon as someone puts your name on them.
+            Work shows up here as soon as someone puts your name on it.
           </p>
         </div>
       ) : (
-        <LaneScroller>
-          {BUCKETS.filter((b) => grouped.has(b.name)).map((b) => {
-            const list = grouped.get(b.name)!;
-            return (
-              <Lane
-                key={b.name}
-                color={b.color}
-                title={b.name}
-                count={list.length}
-                className="lg:min-w-[250px]"
-              >
-                {list.map((item) => (
-                  <ItemCard key={item.id} item={item} bucket={b.name} />
-                ))}
-              </Lane>
-            );
-          })}
-        </LaneScroller>
+        <MyWorkLanes
+          items={items}
+          // Bucketed by the server's calendar day, as this page always was.
+          today={localDay(new Date())}
+          role={viewer.role === "ADMIN" ? "ADMIN" : "STAFF"}
+        />
       )}
 
       <section className="mt-8">
