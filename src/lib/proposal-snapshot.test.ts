@@ -4,6 +4,7 @@ import {
   SNAPSHOT_VERSION,
   buildProposalSnapshot,
   canonicalJson,
+  documentFromSnapshot,
   moneyString,
   parseSnapshot,
   snapshotHash,
@@ -202,4 +203,22 @@ test("parseSnapshot refuses rows this version didn't write", () => {
   const { title: _title, ...untitled } = snapshot;
   void _title;
   assert.equal(parseSnapshot(untitled), null);
+});
+
+test("the document a page or PDF renders comes straight from the snapshot", () => {
+  const doc = documentFromSnapshot(buildProposalSnapshot(input()));
+  assert.deepEqual(
+    doc.items.map((i) => [i.description, i.amount]),
+    [
+      ["Discovery", 500],
+      ["Theme build", 1500],
+    ],
+  );
+  assert.equal(doc.total, 2000);
+  assert.deepEqual(doc.firstInvoice, { kind: "deposit", percent: 50, amount: 1000, currency: "GBP" });
+  assert.equal(doc.preparedFor, "Verdant");
+  const personal = documentFromSnapshot(
+    buildProposalSnapshot(input({ recipient: { name: "Jane Cooper", email: null, company: null } })),
+  );
+  assert.equal(personal.preparedFor, "Jane Cooper");
 });

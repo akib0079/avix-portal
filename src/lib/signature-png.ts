@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
 import {
+  SIGNATURE_DATA_URL_MAX,
   SIGNATURE_MAX_HEIGHT,
   SIGNATURE_MAX_WIDTH,
   SIGNATURE_MIN_LONG_SIDE,
@@ -20,9 +21,6 @@ import {
 
 const PREFIX = "data:image/png;base64,";
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-/** The longest data URL that can hold SIGNATURE_PNG_MAX_BYTES; the action caps input at this. */
-export const SIGNATURE_DATA_URL_MAX = PREFIX.length + Math.ceil(SIGNATURE_PNG_MAX_BYTES / 3) * 4;
 
 export type SignatureImage = { bytes: Buffer; width: number; height: number };
 

@@ -281,3 +281,56 @@ export function parseSnapshot(value: unknown): ProposalSnapshot | null {
 export function snapshotAmount(value: string): number {
   return toCents(value) / 100;
 }
+
+/**
+ * The proposal laid out as a document: what the public page, the portal and
+ * the signed PDF render. Always made from a snapshot, so the page a client
+ * signs on shows exactly what the hash beside the button covers, and a signed
+ * proposal shows exactly what was signed, whatever happened to the row since.
+ */
+export type ProposalDocumentView = {
+  title: string;
+  intro: string | null;
+  terms: string | null;
+  currency: string;
+  items: { key: string; description: string; amount: number }[];
+  total: number;
+  firstInvoice: FirstInvoicePromise;
+  timelineWeeks: number | null;
+  /** The company when there is one, else the person. */
+  preparedFor: string;
+  recipientName: string;
+  sentAt: string | null;
+  expiresAt: string | null;
+};
+
+export function documentFromSnapshot(snapshot: ProposalSnapshot): ProposalDocumentView {
+  const first = snapshot.firstInvoice;
+  return {
+    title: snapshot.title,
+    intro: snapshot.intro,
+    terms: snapshot.terms,
+    currency: snapshot.currency,
+    items: snapshot.items.map((item, index) => ({
+      key: String(index),
+      description: item.description,
+      amount: snapshotAmount(item.amount),
+    })),
+    total: snapshotAmount(snapshot.total),
+    firstInvoice: !first
+      ? null
+      : first.kind === "invoice"
+        ? { kind: "invoice", amount: snapshotAmount(first.amount), currency: first.currency }
+        : {
+            kind: "deposit",
+            percent: first.percent ?? snapshot.depositPercent,
+            amount: snapshotAmount(first.amount),
+            currency: first.currency,
+          },
+    timelineWeeks: snapshot.timelineWeeks,
+    preparedFor: snapshot.recipient.company ?? snapshot.recipient.name,
+    recipientName: snapshot.recipient.name,
+    sentAt: snapshot.sentAt,
+    expiresAt: snapshot.expiresAt,
+  };
+}
