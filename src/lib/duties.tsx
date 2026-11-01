@@ -522,6 +522,7 @@ async function generateSystemTasks(now: Date): Promise<void> {
   const expiring = await prisma.proposal.findMany({
     where: {
       status: "SENT",
+      archivedAt: null,
       expiresAt: { gte: now, lte: new Date(now.getTime() + 3 * 24 * 60 * 60_000) },
     },
     select: { id: true, title: true, expiresAt: true },
