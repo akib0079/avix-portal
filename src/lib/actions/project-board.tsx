@@ -547,6 +547,10 @@ export async function restoreWorkItem(itemId: string): Promise<BoardResult<{ ite
  * Delete what has no history; archive what does. Logged hours, invoice lines,
  * a thread or a client's request are records someone may need later, so an
  * item carrying any of them is archived instead (and says so).
+ *
+ * Only an admin deletes. Staff can't see what an item is priced at, so a
+ * "delete" from them could quietly take billable scope off a project; theirs
+ * archives instead, which an admin can undo.
  */
 export async function deleteWorkItem(
   itemId: string,
@@ -557,7 +561,7 @@ export async function deleteWorkItem(
   if (viewer.side !== "ADMIN") {
     return { ok: false, error: "Withdraw your request instead — the team will see it was withdrawn." };
   }
-  const history = await hasHistory(item);
+  const history = viewer.role !== "ADMIN" || (await hasHistory(item));
 
   const actor = displayName(viewer.user);
   if (history) {
