@@ -92,7 +92,7 @@ type InvoiceFacts = {
 /** "dadad — November 2026" copied for the period of `day`. */
 function nextTitle(title: string | null, fromPeriod: string | null, draft: ScheduleDraft): string | null {
   if (!title || !fromPeriod || draft.interval === "" || !draft.nextDate) return null;
-  const offset = draft.frequency === "MONTH" ? monthsBetween(fromPeriod, draft.nextDate) : 0;
+  const offset = /^\d{4}-\d{2}$/.test(fromPeriod) ? monthsBetween(fromPeriod, draft.nextDate) : 0;
   const vars = periodVars(draft.nextDate, {
     frequency: draft.frequency,
     interval: draft.interval,

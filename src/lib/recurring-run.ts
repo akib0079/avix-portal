@@ -150,7 +150,9 @@ function buildRunInput(
       template.retainerId === plan.id && /^\d{4}-\d{2}$/.test(template.retainerPeriod ?? "")
         ? template.retainerPeriod!
         : periodKey(dateToDay(template.issueDate), "MONTH");
-    const offset = plan.frequency === "MONTH" ? monthsBetween(from, day) : 0;
+    // Weekly plans too: a "November 2026" in a template issued in November
+    // reads "December 2026" on a run in December.
+    const offset = monthsBetween(from, day);
     const text = (value: string) => renderPeriodTags(shiftMonths(value, offset), vars);
     input = {
       ...copy.input,
