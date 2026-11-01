@@ -73,15 +73,30 @@ function stableStringify(value: unknown): string {
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-/** "none"/empty clears the field; anything else must be a real team member. */
-async function resolveAssignee(value: string | undefined): Promise<string | null> {
+/**
+ * "none"/empty clears the field (null); anything else must be an active team
+ * member or the client of the project in `scope` — the same people the board
+ * lets you pin ("there's a task for you"). undefined means "not allowed", so
+ * the caller can say so: this used to return null for a client, and saving a
+ * client's item from the list silently unassigned them.
+ */
+async function resolveAssignee(
+  value: string | null | undefined,
+  scope: Prisma.ProjectWhereInput,
+): Promise<string | null | undefined> {
   if (!value || value === "none") return null;
   const user = await prisma.user.findFirst({
-    where: { id: value, role: { in: ["ADMIN", "STAFF"] } },
+    where: {
+      id: value,
+      status: "ACTIVE",
+      OR: [{ role: { in: ["ADMIN", "STAFF"] } }, { role: "CLIENT", projects: { some: scope } }],
+    },
     select: { id: true },
   });
-  return user?.id ?? null;
+  return user?.id;
 }
+
+const NOT_ASSIGNABLE = { ok: false as const, error: "That person can't be assigned here." };
 
 /** null/"none" = top level; undefined = not given. */
 function parentChoice(value: string | null | undefined): string | null | undefined {
@@ -123,11 +138,12 @@ export async function createMilestone(
 
   const [project, assigneeId, parentError, place] = await Promise.all([
     prisma.project.findUnique({ where: { id: projectId }, select: { id: true } }),
-    resolveAssignee(data.assigneeId),
+    resolveAssignee(data.assigneeId, { id: projectId }),
     checkParent(parentId, projectId, { childCount: 0 }),
     placeNew(projectId, stage),
   ]);
   if (!project) return { ok: false, error: "Project not found." };
+  if (assigneeId === undefined) return NOT_ASSIGNABLE;
   if (parentError) return { ok: false, error: parentError };
 
   await prisma.milestone.create({
@@ -179,10 +195,11 @@ export async function updateMilestone(
   }
   const parentId = parentChoice(data.parentId);
   const [assigneeId, parentError, boardPosition] = await Promise.all([
-    resolveAssignee(data.assigneeId),
+    resolveAssignee(data.assigneeId, { id: milestone.projectId }),
     checkParent(parentId, milestone.projectId, { id, childCount: milestone._count.children }),
     nextStage ? endOfColumn(milestone.projectId, nextStage) : null,
   ]);
+  if (assigneeId === undefined) return NOT_ASSIGNABLE;
   if (parentError) return { ok: false, error: parentError };
 
   // Staff edits keep the stored pricing untouched (they never see it anyway).
@@ -333,9 +350,11 @@ export async function setMilestoneAssignee(
   await requireTeam();
   const [milestone, resolved] = await Promise.all([
     prisma.milestone.findUnique({ where: { id }, select: { id: true, projectId: true } }),
-    resolveAssignee(assigneeId ?? undefined),
+    // The client of the project this milestone is on, or the team.
+    resolveAssignee(assigneeId, { milestones: { some: { id } } }),
   ]);
   if (!milestone) return { ok: false, error: "Milestone not found." };
+  if (resolved === undefined) return NOT_ASSIGNABLE;
 
   await prisma.milestone.update({ where: { id }, data: { assigneeId: resolved } });
   revalidatePath(`/admin/projects/${milestone.projectId}`);
