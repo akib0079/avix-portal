@@ -1,15 +1,25 @@
 import { NextResponse } from "next/server";
-import { boardAccess, getBoard } from "@/lib/dal/project-board";
+import { currentWorkViewer, getBoard, getWorkVersion } from "@/lib/dal/project-board";
 
 /**
- * The board's poll. Same access rule as the page: the team sees any project's
- * board, a client only their own (anything else reads as 404, not 403, so the
- * endpoint can't be used to probe which project ids exist).
+ * The Milestones tab's poll. Same access rule as the page: the team sees any
+ * project's work, a client only their own (anything else reads as 404, not
+ * 403, so the endpoint can't be used to probe which project ids exist).
+ *
+ * One statement answers both "may you?" and "has anything changed?" (see
+ * getWorkVersion). When the caller's ?v= still matches, the answer is 204
+ * with no body, so a quiet board costs one round trip and no payload.
  */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const viewer = await boardAccess(id);
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const [{ id }, viewer] = await Promise.all([params, currentWorkViewer()]);
   if (!viewer) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const board = await getBoard(viewer.project.id);
-  return NextResponse.json(board, { headers: { "Cache-Control": "no-store" } });
+  const version = await getWorkVersion(id, viewer);
+  if (!version) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const headers = { "Cache-Control": "no-store" };
+  const known = new URL(request.url).searchParams.get("v");
+  if (known === version) return new NextResponse(null, { status: 204, headers });
+
+  const board = await getBoard(id, viewer, version);
+  return NextResponse.json(board, { headers });
 }
