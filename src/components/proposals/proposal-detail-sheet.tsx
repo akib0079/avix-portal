@@ -19,7 +19,18 @@ import {
 } from "@/components/ui/sheet";
 import { useProposalDetail } from "./proposal-dialogs";
 import { ProposalActionsMenu, type ProposalMenuHandlers } from "./proposal-actions-menu";
-import { FolderOpen, Loader2, Pencil, Receipt, Send, UserRound } from "lucide-react";
+import { SignatureCertificate } from "./signature-certificate";
+import {
+  ChevronDown,
+  Download,
+  FolderOpen,
+  Loader2,
+  Paperclip,
+  Pencil,
+  Receipt,
+  Send,
+  UserRound,
+} from "lucide-react";
 
 function formatDay(iso: string | null) {
   if (!iso) return null;
@@ -61,11 +72,24 @@ function eventLabel(e: ProposalEventView): { label: string; detail: string | nul
         label: "Reminder emailed",
         detail: str(e.meta, "daysBefore") ? `${str(e.meta, "daysBefore")} day(s) before expiry` : null,
       };
-    case "SIGNED":
+    case "SIGNED": {
+      const method = str(e.meta, "method");
+      const proof = str(e.meta, "evidenceName");
       return {
-        label: str(e.meta, "method") === "ADMIN_RECORDED" ? "Marked accepted by you" : "Accepted online",
-        detail: str(e.meta, "name") ? `as ${str(e.meta, "name")}` : null,
+        label:
+          method === "ADMIN_RECORDED"
+            ? "Marked accepted by you"
+            : method === "DRAWN"
+              ? "Signed online, drawn"
+              : method === "TYPED" && str(e.meta, "signatureId")
+                ? "Signed online, typed"
+                : "Accepted online",
+        detail:
+          [str(e.meta, "name") ? `as ${str(e.meta, "name")}` : null, proof ? `proof: ${proof}` : null]
+            .filter(Boolean)
+            .join(" · ") || null,
       };
+    }
     case "DECLINED":
       return { label: "Declined", detail: str(e.meta, "reason") ? `“${str(e.meta, "reason")}”` : null };
     case "EXPIRED":
@@ -260,6 +284,44 @@ export function ProposalDetailSheet({
               )}
 
               {error && <p className="text-sm text-destructive">{error}</p>}
+
+              {detail?.certificate && (
+                <section>
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">Signature</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <Button asChild variant="outline" size="sm">
+                        <a href={`/api/files/proposal-signed/${p.id}`}>
+                          <Download className="size-4" /> Signed PDF
+                        </a>
+                      </Button>
+                      {detail.evidenceName && (
+                        <Button asChild variant="outline" size="sm">
+                          <a href={`/api/files/proposal-evidence/${p.id}`} className="max-w-56">
+                            <Paperclip className="size-4" />
+                            <span className="truncate">{detail.evidenceName}</span>
+                          </a>
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <details className="group rounded-lg border">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
+                      <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                      <span className="min-w-0 [overflow-wrap:anywhere]">
+                        {detail.certificate.method === "ADMIN_RECORDED"
+                          ? `Recorded on behalf of ${detail.certificate.signerName}`
+                          : `Signed by ${detail.certificate.signerName}`}
+                        <span className="text-muted-foreground"> · {formatDay(detail.certificate.signedAt)}</span>
+                      </span>
+                    </summary>
+                    <SignatureCertificate
+                      certificate={detail.certificate}
+                      className="rounded-none rounded-b-lg border-0 border-t"
+                    />
+                  </details>
+                </section>
+              )}
 
               {detail && (
                 <>
