@@ -1,6 +1,11 @@
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
+  // relationJoins: an include/select tree is one SQL statement (LATERAL joins)
+  // instead of one statement per relation, run one after another. Each of
+  // those cost a full round trip to the database, so a 6-relation invoice took
+  // 6 round trips; now it takes 1. Opt a query out with
+  // relationLoadStrategy: "query" if it ever regresses.
+  previewFeatures = ["driverAdapters", "relationJoins"]
 }
 
 datasource db {
