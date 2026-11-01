@@ -185,6 +185,18 @@ function AcceptedBanner({ proposal }: { proposal: PublicProposalView }) {
   );
 }
 
+function DeclinedPanel({ proposal }: { proposal: PublicProposalView }) {
+  return (
+    <div className="rounded-2xl border bg-card p-6 text-center">
+      <p className="font-heading text-lg font-bold text-foreground">You declined this proposal</p>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+        {proposal.declinedAt ? `On ${formatDate(proposal.declinedAt)}. ` : ""}Thanks for
+        letting us know. Changed your mind, or want a different scope? Reply to our email.
+      </p>
+    </div>
+  );
+}
+
 function Footer() {
   return (
     <p className="mt-8 text-center text-xs text-muted-foreground">Avix Digital · avixdigital.com</p>
@@ -204,7 +216,7 @@ export default async function PublicProposalPage({
   // sending, with every action switched off and nothing recorded.
   if (preview === "1") {
     const session = await getSession();
-    if (session?.user.role !== "ADMIN") return <InvalidLink />;
+    if (session?.user.role !== "ADMIN" || session.user.status === "INACTIVE") return <InvalidLink />;
     const proposal = await getPublicProposal(id);
     if (!proposal) return <InvalidLink />;
     return (
@@ -220,6 +232,12 @@ export default async function PublicProposalPage({
         <ProposalDocument proposal={proposal} validUntil={proposal.expiresAt} />
         {proposal.status === "ACCEPTED" ? (
           <AcceptedBanner proposal={proposal} />
+        ) : proposal.status === "DECLINED" ? (
+          <DeclinedPanel proposal={proposal} />
+        ) : proposal.status === "EXPIRED" ? (
+          <div className="rounded-2xl border bg-card p-6 text-center text-sm text-muted-foreground">
+            The client sees &ldquo;This proposal has expired&rdquo; instead of this page.
+          </div>
         ) : (
           <PublicProposalAccept
             proposalId={proposal.id}
@@ -287,13 +305,7 @@ export default async function PublicProposalPage({
     return (
       <Shell>
         <ProposalDocument proposal={proposal} validUntil={null} />
-        <div className="rounded-2xl border bg-card p-6 text-center">
-          <p className="font-heading text-lg font-bold text-foreground">You declined this proposal</p>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {proposal.declinedAt ? `On ${formatDate(proposal.declinedAt)}. ` : ""}Thanks for
-            letting us know. Changed your mind, or want a different scope? Reply to our email.
-          </p>
-        </div>
+        <DeclinedPanel proposal={proposal} />
         <Footer />
       </Shell>
     );

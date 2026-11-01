@@ -174,6 +174,12 @@ export function ProposalFormDialog({
   });
   const invoiceItems = useFieldArray({ control: form.control, name: "invoice.items" });
 
+  /** Every opening loads afresh, so a cancelled edit never reappears. */
+  function close() {
+    setLoaded(null);
+    onOpenChange(false);
+  }
+
   useEffect(() => {
     if (!open) return;
     setStep(1);
@@ -220,7 +226,7 @@ export function ProposalFormDialog({
         if (!live) return;
         if (!result.ok) {
           toast.error(result.error);
-          onOpenChange(false);
+          close();
           return;
         }
         const data = result.data!;
@@ -240,7 +246,7 @@ export function ProposalFormDialog({
       () => {
         if (!live) return;
         toast.error("Couldn't load the proposal builder. Try again.");
-        onOpenChange(false);
+        close();
       },
     );
     return () => {
@@ -335,11 +341,11 @@ export function ProposalFormDialog({
       if (!result.ok) return void toast.error(result.error);
       toast.success("Proposal created.");
     }
-    onOpenChange(false);
+    close();
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="font-heading">
@@ -1102,7 +1108,7 @@ export function ProposalFormDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={close}
                 disabled={form.formState.isSubmitting}
               >
                 Cancel

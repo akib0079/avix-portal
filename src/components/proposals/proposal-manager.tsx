@@ -73,12 +73,16 @@ type OpenDialog =
   | { kind: "remove" | "accept" | "duplicate" | "extend" | "lost"; proposal: ProposalCard }
   | null;
 
-/** Keeps ?id= in the address bar in step with the open sheet, without a navigation. */
+/**
+ * Keeps ?id= in the address bar in step with the open sheet, without a
+ * navigation. Passing null (not history.state) is what lets Next fold the
+ * change into its router, so a later revalidation renders the same URL.
+ */
 function syncOpenParam(id: string | null) {
   const url = new URL(window.location.href);
   if (id) url.searchParams.set("id", id);
   else url.searchParams.delete("id");
-  window.history.replaceState(window.history.state, "", url);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
 
 export function ProposalManager({
