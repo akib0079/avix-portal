@@ -558,7 +558,18 @@ async function generateSystemTasks(now: Date): Promise<void> {
   });
 }
 
+/**
+ * Per-process gate in front of the database throttle. runDueDuties is called
+ * after every admin page render (and every router.refresh), and each call used
+ * to cost a database round trip just to read the 15-minute stamp. Checking at
+ * most once a minute per process keeps that query off nearly every request.
+ */
+let nextCheckAt = 0;
+
 export async function runDueDuties(): Promise<void> {
+  const nowMs = Date.now();
+  if (nowMs < nextCheckAt) return;
+  nextCheckAt = nowMs + 60_000;
   try {
     const now = new Date();
     const stamp = await prisma.appSetting.findUnique({ where: { key: THROTTLE_KEY } });
