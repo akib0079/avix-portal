@@ -42,8 +42,13 @@ export default async function NewInvoicePage({
   // Today in the agency's zone: the server runs on UTC, the agency doesn't.
   const copy =
     source && booking ? invoiceCopyDefaults(source, { today: todayIn(booking.agencyTimezone) }) : null;
+  // A copy for a client who has since been deactivated waits for the owner to
+  // pick who it is for, rather than quietly billing an inactive account.
+  const clientGone = !!copy?.ok && !clients.some((c) => c.id === copy.input.clientId);
   const initial = copy?.ok
-    ? copy.input
+    ? clientGone
+      ? { ...copy.input, clientId: "", projectId: "none" }
+      : copy.input
     : client && clients.some((c) => c.id === client)
       ? { clientId: client }
       : undefined;
@@ -66,6 +71,11 @@ export default async function NewInvoicePage({
             {source.invoiceNumber}
           </Link>
           · new number, today&apos;s date, nothing paid
+        </p>
+      )}
+      {clientGone && (
+        <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+          The client on {source?.invoiceNumber} is no longer active. Pick who this copy is for.
         </p>
       )}
       {from && !copy?.ok && (
