@@ -141,6 +141,8 @@ export async function reviewDeliverable(
 
   revalidatePath(`/portal/projects/${deliverable.project.id}`);
   revalidatePath(`/admin/projects/${deliverable.project.id}`);
+  // A reviewed file leaves the client's "needs you" list.
+  revalidatePath("/portal/actions");
   return { ok: true };
 }
 

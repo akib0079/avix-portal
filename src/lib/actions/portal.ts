@@ -149,6 +149,8 @@ export async function claimInvoicePayment(id: string): Promise<ActionResult> {
 
   revalidatePath(`/portal/invoices/${id}`);
   revalidatePath("/portal/invoices");
+  // It leaves the client's "needs you" list once they've said they paid.
+  revalidatePath("/portal/actions");
   revalidatePath(`/admin/invoices/${id}`);
   revalidatePath("/admin/invoices");
   return { ok: true };
