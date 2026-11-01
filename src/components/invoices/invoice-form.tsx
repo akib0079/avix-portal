@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,7 +15,7 @@ import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { richTextToLines, linesToRichDoc } from "@/lib/rich-text";
 import type { JSONContent } from "@tiptap/react";
-import { createInvoice, updateInvoice } from "@/lib/actions/invoices";
+import { createInvoice, listInvoiceProjects, updateInvoice } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,15 +63,29 @@ export function InvoiceForm({
   projects,
   paymentAccounts,
   invoice,
+  initial,
+  copiedFrom,
 }: {
   clients: InvoiceClientOption[];
+  /**
+   * Projects for the client the form opens with (theirs and unassigned ones).
+   * Another client's are fetched when the client changes, rather than every
+   * project in the system being sent with the page.
+   */
   projects: InvoiceProjectOption[];
   paymentAccounts: InvoicePaymentAccountOption[];
+  /** Edit mode: the saved invoice. */
   invoice?: InvoiceInput & { id: string; pdfOriginalName: string | null };
+  /** Create mode, prefilled: a duplicate, or a new invoice for one client. */
+  initial?: Partial<InvoiceInput>;
+  /** The invoice a duplicate came from, for the "last time" USD hint. */
+  copiedFrom?: { invoiceNumber: string; lastAmountUsd: number | null };
 }) {
   const router = useRouter();
   const { track } = useActivity();
   const isEdit = !!invoice;
+  // Edit reads the saved invoice; a prefilled create reads its starting values.
+  const start: Partial<InvoiceInput> | undefined = invoice ?? initial;
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
 
@@ -86,29 +100,30 @@ export function InvoiceForm({
   const form = useForm<InvoiceInput>({
     resolver: zodResolver(invoiceSchema),
     defaultValues: {
-      clientId: invoice?.clientId ?? "",
-      projectId: invoice?.projectId ?? "none",
-      amount: invoice?.amount ?? ("" as unknown as number),
-      status: invoice?.status ?? "ASSIGNED",
-      issueDate: invoice?.issueDate ?? new Date().toISOString().slice(0, 10),
-      dueDate: invoice?.dueDate ?? "",
-      discount: invoice?.discount ?? 0,
-      taxRate: invoice?.taxRate ?? null,
-      taxLabel: invoice?.taxLabel ?? "",
-      paymentTermsDays: invoice?.paymentTermsDays ?? null,
-      notes: invoice?.notes ?? "",
-      payLinkUrl: invoice?.payLinkUrl ?? "",
-      pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
-      invoiceNumber: invoice?.invoiceNumber ?? "",
-      title: invoice?.title ?? "",
-      currency: invoice?.currency ?? "USD",
-      amountUsd: invoice?.amountUsd ?? null,
-      paymentAccountId: invoice?.paymentAccountId ?? "none",
-      billToCompany: invoice?.billToCompany ?? "",
-      billToAddress: invoice?.billToAddress ?? "",
-      billToEmail: invoice?.billToEmail ?? "",
-      items: invoice?.items?.length
-        ? invoice.items
+      clientId: start?.clientId ?? "",
+      projectId: start?.projectId ?? "none",
+      amount: start?.amount ?? ("" as unknown as number),
+      status: start?.status ?? "ASSIGNED",
+      issueDate: start?.issueDate ?? new Date().toISOString().slice(0, 10),
+      dueDate: start?.dueDate ?? "",
+      discount: start?.discount ?? 0,
+      taxRate: start?.taxRate ?? null,
+      taxLabel: start?.taxLabel ?? "",
+      paymentTermsDays: start?.paymentTermsDays ?? null,
+      notes: start?.notes ?? "",
+      payLinkUrl: start?.payLinkUrl ?? "",
+      duplicatedFromId: start?.duplicatedFromId ?? "",
+      pdfExternalUrl: start?.pdfExternalUrl ?? "",
+      invoiceNumber: start?.invoiceNumber ?? "",
+      title: start?.title ?? "",
+      currency: start?.currency ?? "USD",
+      amountUsd: start?.amountUsd ?? null,
+      paymentAccountId: start?.paymentAccountId ?? "none",
+      billToCompany: start?.billToCompany ?? "",
+      billToAddress: start?.billToAddress ?? "",
+      billToEmail: start?.billToEmail ?? "",
+      items: start?.items?.length
+        ? start.items
         : [{ description: "", descriptionRich: null, qty: 1, rate: "" as unknown as number }],
     },
   });
@@ -119,9 +134,23 @@ export function InvoiceForm({
   });
 
   const selectedClient = form.watch("clientId");
-  const clientProjects = projects.filter(
-    (p) => p.clientId === selectedClient || p.clientId === null,
-  );
+  // Each client's projects, fetched the first time that client is picked.
+  const [projectsByClient, setProjectsByClient] = useState<
+    Record<string, InvoiceProjectOption[]>
+  >(() => (start?.clientId ? { [start.clientId]: projects } : {}));
+  const [loadingProjects, startLoadingProjects] = useTransition();
+  const clientProjects = projectsByClient[selectedClient] ?? [];
+
+  function pickClient(clientId: string, onChange: (value: string) => void) {
+    onChange(clientId);
+    // A project belongs to one client, so it can't follow the invoice to another.
+    form.setValue("projectId", "none");
+    if (!clientId || projectsByClient[clientId]) return;
+    startLoadingProjects(async () => {
+      const list = await listInvoiceProjects(clientId);
+      setProjectsByClient((known) => ({ ...known, [clientId]: list }));
+    });
+  }
 
   const watchedItems = form.watch("items");
   const currency = form.watch("currency");
@@ -207,7 +236,10 @@ export function InvoiceForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Client</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={(value) => pickClient(value, field.onChange)}
+                >
                   <FormControl>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select client" />
@@ -232,10 +264,20 @@ export function InvoiceForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Project (optional)</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  disabled={loadingProjects}
+                >
                   <FormControl>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Link a project" />
+                      {loadingProjects ? (
+                        <span className="flex items-center gap-1.5 text-muted-foreground">
+                          <Loader2 className="size-3.5 animate-spin" /> Loading projects…
+                        </span>
+                      ) : (
+                        <SelectValue placeholder="Link a project" />
+                      )}
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -306,6 +348,22 @@ export function InvoiceForm({
                     figure your reports count — leave it blank and the invoice stays
                     outside your totals.
                   </p>
+                  {/* A copy never carries the USD value over (it is the rate
+                      the payment settles at), but last time's is a fair start. */}
+                  {copiedFrom?.lastAmountUsd != null && field.value == null && (
+                    <button
+                      type="button"
+                      onClick={() => field.onChange(copiedFrom.lastAmountUsd)}
+                      className="mt-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      Last time {copiedFrom.invoiceNumber} was{" "}
+                      {copiedFrom.lastAmountUsd.toLocaleString("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                      })}{" "}
+                      · use the same
+                    </button>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}

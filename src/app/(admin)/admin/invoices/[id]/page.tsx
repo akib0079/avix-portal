@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInvoice } from "@/lib/dal/invoices";
+import { getInvoice, listInvoiceProjectOptions } from "@/lib/dal/invoices";
+import { listActivePaymentAccounts } from "@/lib/dal/settings";
 import { listActiveClientOptions } from "@/lib/dal/users";
-import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/page-header";
 import { InvoiceForm } from "@/components/invoices/invoice-form";
 import {
@@ -14,9 +14,10 @@ import { InvoicePayments } from "@/components/invoices/invoice-payments";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
-import { Download, ExternalLink } from "lucide-react";
+import { Copy, Download, ExternalLink } from "lucide-react";
 import { currencySymbol } from "@/lib/currency";
 import { creditedTotal } from "@/lib/invoice-totals";
+import { sendBlocker } from "@/lib/invoice-rules";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Invoice" };
@@ -28,73 +29,84 @@ export default async function InvoiceDetailPage({
 }) {
   await requireAdmin();
   const { id } = await params;
+  // One wave: the projects are the invoice's client's (found through the
+  // invoice itself, so they needn't wait for it), and the accounts are cached.
   const [invoice, clients, projects, paymentAccounts] = await Promise.all([
     getInvoice(id),
     listActiveClientOptions(),
-    prisma.project.findMany({
-      orderBy: { createdAt: "desc" },
-      select: { id: true, projectName: true, clientId: true },
-    }),
-    prisma.paymentAccount.findMany({
-      where: { isActive: true },
-      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-      select: { id: true, title: true },
-    }),
+    listInvoiceProjectOptions({ ofInvoice: id }),
+    listActivePaymentAccounts(),
   ]);
   if (!invoice) notFound();
+
+  const isCreditNote = !!invoice.creditNoteForId;
 
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title={invoice.invoiceNumber}
         description={`${invoice.client.firstName} ${invoice.client.lastName} · issued ${formatDate(invoice.issueDate)}${invoice.sentAt ? ` · sent ${formatDate(invoice.sentAt)}` : ""}`}
-        action={
-          <div className="flex items-center gap-2">
-            {invoice.paymentClaimedAt && invoice.status !== "PAID" && (
-              <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-                Client says paid · {formatDate(invoice.paymentClaimedAt)}
-              </span>
-            )}
-            <InvoiceStatusBadge status={invoice.status} />
-            {invoice.pdfExternalUrl || invoice.pdfPath ? (
-              /* An admin-supplied document (link or upload) takes precedence. */
-              <Button asChild variant="outline" size="sm">
-                <Link
-                  href={`/api/files/invoice/${invoice.id}`}
-                  prefetch={false}
-                  target={invoice.pdfExternalUrl ? "_blank" : undefined}
-                >
-                  {invoice.pdfExternalUrl ? (
-                    <>
-                      <ExternalLink /> View PDF
-                    </>
-                  ) : (
-                    <>
-                      <Download /> PDF
-                    </>
-                  )}
-                </Link>
-              </Button>
-            ) : (
-              /* No supplied file → the generated document. */
-              <Button asChild variant="outline" size="sm">
-                <Link href={`/api/invoices/${invoice.id}/pdf`} prefetch={false} target="_blank">
-                  <Download /> Download PDF
-                </Link>
-              </Button>
-            )}
-            <SendInvoiceButton
-              invoiceId={invoice.id}
-              clientEmail={invoice.client.email}
-            />
-            <DeleteInvoiceButton
-              invoiceId={invoice.id}
-              invoiceNumber={invoice.invoiceNumber}
-              redirectAfterDelete="/admin/invoices"
-            />
-          </div>
-        }
       />
+      {/* Its own wrapping row rather than the header's action slot, which
+          doesn't wrap: five buttons overflowed a phone. */}
+      <div className="-mt-5 mb-6 flex flex-wrap items-center gap-2">
+        {invoice.paymentClaimedAt && invoice.status !== "PAID" && (
+          <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+            Client says paid · {formatDate(invoice.paymentClaimedAt)}
+          </span>
+        )}
+        <InvoiceStatusBadge status={invoice.status} />
+        {invoice.status === "DRAFT" && (
+          <span className="text-xs text-muted-foreground">Hidden from the client until sent</span>
+        )}
+        <span className="flex-1" />
+        {invoice.pdfExternalUrl || invoice.pdfPath ? (
+          /* An admin-supplied document (link or upload) takes precedence. */
+          <Button asChild variant="outline" size="sm">
+            <Link
+              href={`/api/files/invoice/${invoice.id}`}
+              prefetch={false}
+              target={invoice.pdfExternalUrl ? "_blank" : undefined}
+            >
+              {invoice.pdfExternalUrl ? (
+                <>
+                  <ExternalLink /> View PDF
+                </>
+              ) : (
+                <>
+                  <Download /> PDF
+                </>
+              )}
+            </Link>
+          </Button>
+        ) : (
+          /* No supplied file → the generated document. */
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/api/invoices/${invoice.id}/pdf`} prefetch={false} target="_blank">
+              <Download /> Download PDF
+            </Link>
+          </Button>
+        )}
+        {!isCreditNote && (
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/admin/invoices/new?from=${invoice.id}`}>
+              <Copy /> Duplicate
+            </Link>
+          </Button>
+        )}
+        {!sendBlocker(invoice) && (
+          <SendInvoiceButton
+            invoiceId={invoice.id}
+            clientEmail={invoice.client.email}
+            sent={!!invoice.sentAt}
+          />
+        )}
+        <DeleteInvoiceButton
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoiceNumber}
+          redirectAfterDelete="/admin/invoices"
+        />
+      </div>
 
       {/* Money first: what's owed is the question you open an invoice with. */}
       <div className="mb-6">
@@ -131,6 +143,17 @@ export default async function InvoiceDetailPage({
             ))}
           </p>
         )}
+        {invoice.duplicatedFrom && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Copied from{" "}
+            <Link
+              href={`/admin/invoices/${invoice.duplicatedFrom.id}`}
+              className="hover:text-primary"
+            >
+              {invoice.duplicatedFrom.invoiceNumber}
+            </Link>
+          </p>
+        )}
         {invoice.creditNoteFor && (
           <p className="mt-2 text-sm text-muted-foreground">
             Credit note against{" "}
@@ -152,7 +175,7 @@ export default async function InvoiceDetailPage({
           <InvoiceForm
             clients={clients}
             projects={projects}
-            paymentAccounts={paymentAccounts}
+            paymentAccounts={paymentAccounts.map((a) => ({ id: a.id, title: a.title }))}
             invoice={{
               id: invoice.id,
               clientId: invoice.clientId,

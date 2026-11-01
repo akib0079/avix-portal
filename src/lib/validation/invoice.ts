@@ -114,6 +114,11 @@ export const invoiceSchema = z.object({
     })
     .optional()
     .or(z.literal("")),
+  /**
+   * The invoice this one was duplicated from, posted by the prefilled form.
+   * Provenance only ("Copied from INV-014"); the server checks it exists.
+   */
+  duplicatedFromId: z.string().trim().max(40).optional().or(z.literal("")),
   // External file link (Drive/Dropbox); empty string = none
   pdfExternalUrl: z
     .string()

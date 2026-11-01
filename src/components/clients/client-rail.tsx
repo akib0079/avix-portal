@@ -15,6 +15,7 @@ import {
   ReceiptText,
   ThumbsUp,
   AlertTriangle,
+  Copy,
 } from "lucide-react";
 import { toneChip, toneText } from "@/lib/tone";
 
@@ -34,6 +35,7 @@ function daysSince(iso: string | null): number | null {
 export function ClientRail({
   client,
   snapshot,
+  lastInvoice = null,
 }: {
   client: {
     id: string;
@@ -47,6 +49,8 @@ export function ClientRail({
     emailVerified: boolean;
   };
   snapshot: ClientSnapshot;
+  /** Their latest invoice (never a credit note), for "like the last one". */
+  lastInvoice?: { id: string; invoiceNumber: string } | null;
 }) {
   const quietFor = daysSince(snapshot.lastContactAt);
   const isQuiet = quietFor === null || quietFor >= QUIET_DAYS;
@@ -126,10 +130,20 @@ export function ClientRail({
             </Link>
           </Button>
           <Button asChild size="sm" variant="outline" className="col-span-2">
-            <Link href="/admin/invoices/new">
+            <Link href={`/admin/invoices/new?client=${client.id}`}>
               <ReceiptText className="size-3.5" /> New invoice
             </Link>
           </Button>
+          {/* Most invoices to a client repeat the last one: same lines, same
+              terms, a new date. Opens a prefilled draft; nothing is saved yet. */}
+          {lastInvoice && (
+            <Button asChild size="sm" variant="ghost" className="col-span-2 text-muted-foreground">
+              <Link href={`/admin/invoices/new?from=${lastInvoice.id}`}>
+                <Copy className="size-3.5" />
+                <span className="truncate">Like the last one ({lastInvoice.invoiceNumber})</span>
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
 

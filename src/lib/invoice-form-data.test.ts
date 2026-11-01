@@ -36,6 +36,7 @@ const everyField: Required<InvoiceInput> = {
   dueDate: "2026-11-16",
   notes: "Thank you",
   payLinkUrl: "https://pay.example.com/inv-900",
+  duplicatedFromId: "inv_source",
   pdfExternalUrl: "https://drive.example.com/file",
 };
 

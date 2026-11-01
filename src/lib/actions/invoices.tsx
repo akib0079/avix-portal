@@ -17,6 +17,7 @@ import {
 } from "@/lib/invoice-totals";
 import { draftBlocker, paymentBlocker } from "@/lib/invoice-rules";
 import { getBillableWork } from "@/lib/dal/billable";
+import { listInvoiceProjectOptions } from "@/lib/dal/invoices";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { logActivity } from "@/lib/dal/activity";
 import { sendInvoiceCore } from "@/lib/invoice-send";
@@ -74,6 +75,8 @@ type Refs = {
   issueDate: Date;
   projectId: string | null;
   paymentAccountId: string | null;
+  /** A new invoice's source when it was duplicated; null on edits. */
+  duplicatedFromId: string | null;
 };
 
 /**
@@ -92,7 +95,9 @@ async function resolveRefs(
   const customNumber = data.invoiceNumber?.trim() || null;
   const accountId =
     data.paymentAccountId && data.paymentAccountId !== "none" ? data.paymentAccountId : null;
-  const [client, project, clash, account] = await Promise.all([
+  // Provenance is set once, when a copy is created; an edit never moves it.
+  const sourceId = !selfId && data.duplicatedFromId ? data.duplicatedFromId : null;
+  const [client, project, clash, account, source] = await Promise.all([
     prisma.user.findFirst({
       where: { id: data.clientId, role: "CLIENT" },
       select: { id: true },
@@ -116,6 +121,14 @@ async function resolveRefs(
     accountId
       ? prisma.paymentAccount.findUnique({ where: { id: accountId }, select: { id: true } })
       : null,
+    // A source deleted meanwhile (or a credit note, which is never copied)
+    // just leaves the copy without a "Copied from" line.
+    sourceId
+      ? prisma.invoice.findFirst({
+          where: { id: sourceId, creditNoteForId: null },
+          select: { id: true },
+        })
+      : null,
   ]);
   if (!client) return { error: "Selected client not found." };
   if (data.projectId !== "none" && !project) {
@@ -129,6 +142,7 @@ async function resolveRefs(
     issueDate,
     projectId: project?.id ?? null,
     paymentAccountId: account?.id ?? null,
+    duplicatedFromId: source?.id ?? null,
   };
 }
 
@@ -372,6 +386,7 @@ export async function createInvoice(
       data: {
         invoiceNumber,
         ...columns,
+        duplicatedFromId: refs.duplicatedFromId,
         status: next.status,
         // Created as already paid: the payment it stands for is on the record.
         ...(next.markPaid > 0
@@ -520,6 +535,15 @@ export async function setInvoiceStatus(
   }
   revalidateInvoice(id);
   return { ok: true };
+}
+
+/**
+ * Project choices for the invoice form when the client changes: that client's
+ * projects and unassigned ones, instead of every project loaded up front.
+ */
+export async function listInvoiceProjects(clientId: string) {
+  await requireAdmin();
+  return listInvoiceProjectOptions({ clientId });
 }
 
 /**
