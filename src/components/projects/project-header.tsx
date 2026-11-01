@@ -7,6 +7,9 @@ import type { Priority, ProjectStatus } from "@prisma/client";
 import { setProjectStatus, setProjectPriority, setProjectOwner } from "@/lib/actions/projects";
 import type { TeamOption } from "@/lib/dal/users";
 import { projectHealth } from "@/lib/project-health";
+import { isPlanItem } from "@/lib/work-scope";
+import { useWorkOptional } from "@/components/board/work-store";
+import type { WorkItem } from "@/lib/board";
 import { projectStatusColor, priorityColor } from "@/lib/status-colors";
 import {
   Select,
@@ -141,6 +144,32 @@ function Dot({ color }: { color: string }) {
   );
 }
 
+type HeaderStats = {
+  openTasks: number;
+  doneTasks: number;
+  helpRequests: number;
+  hoursLogged: number;
+  /** Admin only; null hides it. */
+  unbilled: number | null;
+};
+
+/** The header's figures, worked out from the live items (unbilled stays the server's). */
+function liveFigures(items: WorkItem[], server: HeaderStats) {
+  const open = items.filter((i) => i.stage !== "DONE").length;
+  return {
+    milestones: items
+      .filter(isPlanItem)
+      .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position })),
+    stats: {
+      ...server,
+      openTasks: open,
+      doneTasks: items.length - open,
+      helpRequests: items.filter((i) => i.helpFrom === "CLIENT").length,
+      hoursLogged: items.reduce((sum, i) => sum + i.loggedHours, 0),
+    },
+  };
+}
+
 /**
  * The project's header, across the full width of the page.
  *
@@ -152,11 +181,11 @@ function Dot({ color }: { color: string }) {
  */
 export function ProjectHeader({
   project,
-  milestones,
+  milestones: serverMilestones,
   team = [],
   canEdit,
   renderedAt,
-  stats,
+  stats: serverStats,
   attention,
   brief,
 }: {
@@ -186,20 +215,20 @@ export function ProjectHeader({
   canEdit: boolean;
   /** Server time, so "due in N days" matches between server and browser. */
   renderedAt: number;
-  stats: {
-    openTasks: number;
-    doneTasks: number;
-    helpRequests: number;
-    hoursLogged: number;
-    /** Admin only; null hides it. */
-    unbilled: number | null;
-  };
+  stats: HeaderStats;
   /** What's waiting on someone, rendered in the header's footer. */
   attention?: React.ReactNode;
   /** The project brief, folded under the header. */
   brief?: React.ReactNode;
 }) {
   const router = useRouter();
+  // On the project page the work is live (the Milestones tab's store), so the
+  // ring and the counts follow a drag on the board at once instead of waiting
+  // for the next page load. Elsewhere, the server's figures.
+  const work = useWorkOptional();
+  const live = work ? liveFigures(work.items, serverStats) : null;
+  const milestones = live?.milestones ?? serverMilestones;
+  const stats = live?.stats ?? serverStats;
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ProjectStatus>(project.status);
   const [priority, setPriority] = useState<Priority>(project.priority);
@@ -450,7 +479,7 @@ export function ProjectHeader({
           <Stat
             icon={KanbanSquare}
             label={`open · ${stats.doneTasks} done`}
-            value={`${stats.openTasks} task${stats.openTasks === 1 ? "" : "s"}`}
+            value={`${stats.openTasks} item${stats.openTasks === 1 ? "" : "s"}`}
           />
           <Stat
             icon={LifeBuoy}

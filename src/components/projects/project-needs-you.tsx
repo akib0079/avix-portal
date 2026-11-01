@@ -1,5 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import type { PendingWork } from "@/lib/project-health";
+import { WORK_TAB, workItemHref, type WorkItem } from "@/lib/board";
+import { hasTeamQuestion, isAwaitingRating, isAwaitingReview } from "@/lib/work-scope";
+import { useWorkOptional } from "@/components/board/work-store";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, ArrowRight } from "lucide-react";
 
@@ -9,7 +14,9 @@ import { CheckCircle2, ArrowRight } from "lucide-react";
  * and it was previously buried inside the timeline and the deliverables list.
  *
  * The counts come from the same rules as the portal's action centre
- * (work-scope.ts), so this box and that page always agree.
+ * (work-scope.ts), so this box and that page always agree. On the project
+ * page the work counts follow the live items: approving the last item in
+ * review clears its line at once.
  */
 export function ProjectNeedsYou({
   pending,
@@ -19,27 +26,32 @@ export function ProjectNeedsYou({
 }: {
   pending: PendingWork;
   projectId: string;
-  /** Items carrying a question from the team that the client hasn't answered. */
+  /** Items carrying a question from the team that the client hasn't answered (server count). */
   questions?: number;
   className?: string;
 }) {
+  const work = useWorkOptional();
   const items: { label: string; href: string }[] = [];
   const base = `/portal/projects/${projectId}`;
-  const work = (view: "board" | "list") => `${base}?tab=milestones&view=${view}`;
+  const list = `${base}?tab=${WORK_TAB}&view=list`;
   const tab = (t: string) => `${base}?tab=${t}`;
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  // One item: straight to it. Several: the list, where each has its buttons.
+  const to = (found: WorkItem[]) => (found.length === 1 ? workItemHref(projectId, found[0]!.id, "CLIENT", "list") : list);
 
-  if (questions > 0) {
-    items.push({
-      label: `Answer ${plural(questions, "question")} from the team`,
-      href: work("board"),
-    });
+  const live = work?.items ?? null;
+  const review = live ? live.filter(isAwaitingReview) : null;
+  const asked = live ? live.filter(hasTeamQuestion) : null;
+  const rate = live ? live.filter(isAwaitingRating) : null;
+  const reviewCount = review?.length ?? pending.milestonesAwaitingApproval;
+  const questionCount = asked?.length ?? questions;
+  const rateCount = rate?.length ?? pending.milestonesAwaitingRating;
+
+  if (questionCount > 0) {
+    items.push({ label: `Answer ${plural(questionCount, "question")}`, href: asked ? to(asked) : list });
   }
-  if (pending.milestonesAwaitingApproval > 0) {
-    items.push({
-      label: `Review ${plural(pending.milestonesAwaitingApproval, "finished item")}`,
-      href: work("board"),
-    });
+  if (reviewCount > 0) {
+    items.push({ label: `Review ${plural(reviewCount, "item")}`, href: review ? to(review) : list });
   }
   if (pending.deliverablesAwaitingReview > 0) {
     items.push({
@@ -47,17 +59,11 @@ export function ProjectNeedsYou({
       href: tab("files"),
     });
   }
-  if (pending.milestonesAwaitingRating > 0) {
-    items.push({
-      label: `Rate ${plural(pending.milestonesAwaitingRating, "finished milestone")}`,
-      href: work("list"),
-    });
+  if (rateCount > 0) {
+    items.push({ label: `Rate ${plural(rateCount, "item")}`, href: rate ? to(rate) : list });
   }
-  if (pending.unpaidInvoices > 0) {
-    items.push({
-      label: `Settle ${plural(pending.unpaidInvoices, "open invoice")}`,
-      href: tab("billing"),
-    });
+  if (pending.invoicesToPay > 0) {
+    items.push({ label: `Pay ${plural(pending.invoicesToPay, "invoice")}`, href: tab("billing") });
   }
 
   if (items.length === 0) {
@@ -77,7 +83,7 @@ export function ProjectNeedsYou({
   return (
     <div className={cn("rounded-2xl border border-primary/30 bg-brand-tint p-4", className)}>
       <p className="font-heading text-sm font-semibold">Needs you</p>
-      <ul className="mt-2 space-y-1.5">
+      <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5">
         {items.map((item) => (
           <li key={item.label}>
             <Link
