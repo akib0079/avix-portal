@@ -40,6 +40,7 @@ import {
   NO_PRICING,
   announceApproval,
   announceClientAddition,
+  announceCompleted,
   announceSendBack,
   archiveTree,
   checkWorkRefs,
@@ -495,6 +496,9 @@ export async function moveWorkItem(
               email: "always",
             })
           : null,
+        // A milestone of the plan closed by the team: the client hears, in
+        // the bell, with where the project now stands.
+        to === "DONE" && !row.parentId ? announceCompleted(viewer, row) : null,
       ]);
     });
   }

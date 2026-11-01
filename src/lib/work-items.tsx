@@ -9,6 +9,7 @@ import { appUrl } from "@/lib/app-url";
 import { logActivity } from "@/lib/dal/activity";
 import { COLUMN_BY_ID, parentProblem, positionBetween, workItemHref } from "@/lib/board";
 import { stageWrite } from "@/lib/work-stage";
+import { PLAN_ITEM } from "@/lib/work-scope";
 import {
   itemSelect,
   type AccessedItem,
@@ -402,6 +403,30 @@ export async function announceApproval(viewer: BoardViewer, item: { id: string; 
       email: "never",
     }),
   ]);
+}
+
+/**
+ * A plan milestone the team closed: a bell for the client, saying how far
+ * the project has come ("3 of 7 milestones done"). What the list's old
+ * "Completed" did, for every way of getting there. No email — progress
+ * shows in the bell, as it always has.
+ */
+export async function announceCompleted(viewer: BoardViewer, item: { id: string; title: string }) {
+  const clientId = viewer.project.clientId;
+  if (!clientId) return;
+  const plan = { projectId: viewer.project.id, ...PLAN_ITEM };
+  const [done, total] = await Promise.all([
+    prisma.milestone.count({ where: { ...plan, status: "COMPLETED" } }),
+    prisma.milestone.count({ where: plan }),
+  ]);
+  await notifyWork(viewer, item, [clientId], {
+    type: "MILESTONE_COMPLETED",
+    title: `Completed: ${item.title}`,
+    body: `${done} of ${total} milestones done on ${viewer.project.projectName}`,
+    heading: "A milestone is done",
+    intro: `the team finished a milestone on ${viewer.project.projectName}.`,
+    email: "never",
+  });
 }
 
 /**
