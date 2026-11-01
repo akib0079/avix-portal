@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/dal/session";
+import { requireAdmin, requireClient } from "@/lib/dal/session";
 import {
   firstInvoicePromise,
   proposalRemovalPlan,
@@ -711,4 +711,47 @@ export async function getPublicProposal(id: string): Promise<PublicProposalView 
     documentHash: snapshotHash(snapshot),
     signed: signedRecordOf(p.signatures[0], p.events, p.firstViewedAt),
   };
+}
+
+/**
+ * The client's own accepted proposal, for the portal: as signed, with its
+ * certificate. Scoped to the session, and to ACCEPTED: a proposal provisioned
+ * for this client but still a draft or an open offer is simply not found, so
+ * neither ever shows in the portal. One accepted before signatures were
+ * recorded shows as it stands, without a certificate (and without a
+ * first-invoice line, which only a signature's snapshot pins down).
+ */
+export async function getMySignedProposal(id: string) {
+  const user = await requireClient();
+  const p = await prisma.proposal.findFirst({
+    where: { id, convertedClientId: user.id, status: "ACCEPTED" },
+    include: {
+      items: { orderBy: { sortOrder: "asc" } },
+      lead: { select: { name: true, company: true, email: true } },
+      signatures: CLIENT_SIGNATURE,
+      events: AUDIT_EVENTS,
+    },
+  });
+  if (!p) return null;
+  const signed = signedRecordOf(p.signatures[0], p.events, p.firstViewedAt);
+  return {
+    id: p.id,
+    title: p.title,
+    acceptedAt: p.acceptedAt?.toISOString() ?? null,
+    acceptedName: p.acceptedName,
+    projectId: p.convertedProjectId,
+    document: signed?.document ?? { ...documentFromSnapshot(proposalSnapshotOf(p, null)), firstInvoice: null },
+    certificate: signed?.certificate ?? null,
+  };
+}
+
+/** The accepted proposal behind one of the client's projects, for a link from it. */
+export async function getMyProjectProposalId(projectId: string): Promise<string | null> {
+  const user = await requireClient();
+  const p = await prisma.proposal.findFirst({
+    where: { convertedProjectId: projectId, convertedClientId: user.id, status: "ACCEPTED" },
+    orderBy: { acceptedAt: "desc" },
+    select: { id: true },
+  });
+  return p?.id ?? null;
 }

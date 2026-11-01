@@ -33,6 +33,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { toneChip } from "@/lib/tone";
+import { Suspense } from "react";
+import { SignedProposalLink } from "@/components/portal/signed-proposal-link";
 
 export const metadata = { title: "Project" };
 
@@ -231,6 +233,9 @@ export default async function MyProjectPage({
               {usd.format(Number(project.contractPrice))} fixed contract
             </span>
           )}
+          <Suspense fallback={null}>
+            <SignedProposalLink projectId={project.id} />
+          </Suspense>
         </div>
 
         {hasRichTextContent(project.description) && (
