@@ -18,10 +18,10 @@ import {
 
 /**
  * Server-side pieces the work-item actions share: the board and list writes
- * (actions/project-board.tsx), client requests (actions/task-requests.tsx),
- * the milestone list (actions/milestones.ts) and the portal's approve / send
- * back (actions/portal.ts). They live outside those "use server" files on
- * purpose — anything a "use server" file exports becomes a callable endpoint.
+ * (actions/project-board.tsx), client requests (actions/task-requests.tsx)
+ * and the portal's approve / send back (actions/portal.ts). They live
+ * outside those "use server" files on purpose — anything a "use server" file
+ * exports becomes a callable endpoint.
  */
 
 export type WorkResult<T> = { ok: true; data: T } | { ok: false; error: string };

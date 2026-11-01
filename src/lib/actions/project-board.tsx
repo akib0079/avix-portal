@@ -24,6 +24,7 @@ import {
   COLUMN_BY_ID,
   approvalAfterMove,
   canMoveWorkItem,
+  canSeePricing,
   parseDay,
   placeInColumn,
   positionBetween,
@@ -223,6 +224,9 @@ const updateSchema = z.object({
 /** What a client may change on their own request while it waits. */
 const CLIENT_FIELDS = new Set(["title", "description", "priority", "dueDate"]);
 
+/** One "updated" bell per item for this long, however many fields change. */
+const UPDATE_QUIET_MINUTES = 30;
+
 export async function updateWorkItem(
   itemId: string,
   patch: z.input<typeof updateSchema>,
@@ -317,6 +321,41 @@ export async function updateWorkItem(
         email: crossSide ? "always" : "never",
       }),
     );
+  }
+
+  // The team changed what the client agreed to — what it is, what it says,
+  // or (where they see prices) what it costs: tell them, in the bell only.
+  // The drawer saves one field at a time, so one bell per item covers a
+  // stretch of editing rather than one per field.
+  const clientId = viewer.project.clientId;
+  const pricingSeen = canSeePricing("CLIENT", viewer.project.billingType);
+  const clientFacing =
+    (p.title !== undefined && p.title !== item.title) ||
+    descriptionTouched ||
+    (!!p.pricing && pricingSeen);
+  if (viewer.side === "ADMIN" && clientId && clientFacing && item.stage !== "REQUESTED") {
+    later(async () => {
+      // The link notifyWork writes, so the window finds its own bells.
+      const link = workItemHref(viewer.project.id, row.id, "CLIENT");
+      const recent = await prisma.notification.findFirst({
+        where: {
+          userId: clientId,
+          type: "MILESTONE_UPDATED",
+          link,
+          createdAt: { gte: new Date(Date.now() - UPDATE_QUIET_MINUTES * 60_000) },
+        },
+        select: { id: true },
+      });
+      if (recent) return;
+      await notifyWork(viewer, row, [clientId], {
+        type: "MILESTONE_UPDATED",
+        title: `Updated: ${row.title}`,
+        body: `on ${viewer.project.projectName}`,
+        heading: "A task was updated",
+        intro: `the team updated a task on ${viewer.project.projectName}.`,
+        email: "never",
+      });
+    });
   }
 
   return { ok: true, data: { item: toWorkItem(row, extras, viewer, viewer.project.billingType) } };
