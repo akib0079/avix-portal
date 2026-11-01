@@ -113,7 +113,7 @@ export type PendingWork = {
   deliverablesNeedingChanges: number;
   /** Task requests still PENDING. */
   openRequests: number;
-  /** Invoices neither PAID nor CANCELLED. */
+  /** Invoices neither PAID, CANCELLED nor still a DRAFT (nothing is owed on one). */
   unpaidInvoices: number;
   total: number;
 };
@@ -122,7 +122,8 @@ export function pendingWork(input: {
   milestones: { status: string; clientApprovedAt: string | null; clientRating: number | null }[];
   deliverables: { reviewStatus: string | null }[];
   requests?: { status: string }[];
-  invoices?: { status: string }[];
+  /** A credit note (creditNoteForId set) is money back, never unpaid. */
+  invoices?: { status: string; creditNoteForId?: string | null }[];
 }): PendingWork {
   const milestonesAwaitingApproval = input.milestones.filter(
     (m) => m.status === "COMPLETED" && !m.clientApprovedAt,
@@ -138,7 +139,8 @@ export function pendingWork(input: {
   ).length;
   const openRequests = (input.requests ?? []).filter((r) => r.status === "PENDING").length;
   const unpaidInvoices = (input.invoices ?? []).filter(
-    (i) => i.status !== "PAID" && i.status !== "CANCELLED",
+    (i) =>
+      i.status !== "PAID" && i.status !== "CANCELLED" && i.status !== "DRAFT" && !i.creditNoteForId,
   ).length;
 
   return {

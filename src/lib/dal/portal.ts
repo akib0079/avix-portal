@@ -146,6 +146,7 @@ export async function getMyProjectExtras(projectId: string) {
         // it showed dollars for everything.
         currency: true,
         status: true,
+        creditNoteForId: true,
       },
     }),
     prisma.meeting.findMany({
@@ -174,6 +175,7 @@ export async function getMyProjectExtras(projectId: string) {
       amount: Number(i.amount),
       currency: i.currency,
       status: i.status,
+      creditNoteForId: i.creditNoteForId,
     })),
     meetings: meetings.map((m) => ({
       id: m.id,
