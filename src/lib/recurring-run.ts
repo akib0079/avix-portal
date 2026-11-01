@@ -605,27 +605,35 @@ export async function generatePlanNow(
   const nextDay = dayIn(seen, timeZone);
   const current = periodKey(today, plan.frequency);
 
+  const next = longDay(nextDay);
   let outcome: RunOutcome | null = null;
   if (periodKey(nextDay, plan.frequency) === current) {
     outcome = await createRunInvoice(plan, nextDay, { kind: "scheduled", seen }, ctx);
   } else {
     const previous = previousRunDay(nextDay, schedule);
     const startDay = plan.startDate ? dateToDay(plan.startDate) : null;
-    if (periodKey(previous, plan.frequency) <= current && (!startDay || previous >= startDay)) {
-      outcome = await createRunInvoice(plan, previous, { kind: "fill" }, ctx);
+    if (periodKey(previous, plan.frequency) > current) {
+      return { ok: false, error: `Nothing is due this period. The next invoice is due on ${next}.` };
     }
+    if (startDay && previous < startDay) {
+      return {
+        ok: false,
+        error: `This plan's first invoice is due on ${next}. Edit the plan to start it sooner.`,
+      };
+    }
+    outcome = await createRunInvoice(plan, previous, { kind: "fill" }, ctx);
   }
 
-  if (outcome?.kind === "created") {
+  if (outcome.kind === "created") {
     return { ok: true, created: [{ ...outcome.invoice, period: outcome.period }] };
   }
-  if (outcome?.kind === "invalid") return { ok: false, error: outcome.error };
-  if (outcome?.kind === "taken") {
+  if (outcome.kind === "invalid") return { ok: false, error: outcome.error };
+  if (outcome.kind === "taken") {
     return { ok: false, error: "This period's invoice was just drafted." };
   }
   return {
     ok: false,
-    error: `This period is already invoiced. The next invoice is due on ${longDay(nextDay)}.`,
+    error: `This period is already invoiced. The next invoice is due on ${next}.`,
   };
 }
 

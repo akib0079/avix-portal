@@ -91,6 +91,77 @@ function dueNow(nextDate: Day, timeZone: string): boolean {
   return runInstant(nextDate, timeZone).getTime() <= Date.now();
 }
 
+/** What an edit reads about a plan's schedule as it stands. */
+const storedScheduleSelect = {
+  active: true,
+  frequency: true,
+  interval: true,
+  dayOfMonth: true,
+  nextRunAt: true,
+  startDate: true,
+  runCount: true,
+  endAfterCount: true,
+  endDate: true,
+  lastGeneratedPeriod: true,
+} as const;
+
+type StoredSchedule = {
+  active: boolean;
+  frequency: ScheduleInput["frequency"];
+  dayOfMonth: number;
+  nextRunAt: Date | null;
+  startDate: Date | null;
+  runCount: number;
+  endAfterCount: number | null;
+  endDate: Date | null;
+  lastGeneratedPeriod: string | null;
+};
+
+/**
+ * The columns an edited schedule writes, or what's wrong with it. The next
+ * date a plan already has may stay even once it has passed (the duty hasn't
+ * reached it yet), and so may the one a plan from before schedules would
+ * pick up at. While that date is unchanged a monthly plan keeps its day of
+ * the month, so a plan on the 31st isn't moved to the 28th by an edit in
+ * February. startDate only moves earlier.
+ */
+function editedSchedule(
+  existing: StoredSchedule,
+  schedule: ScheduleInput,
+  timeZone: string,
+  taken: { invoiceNumber: string } | null,
+):
+  | { error: string }
+  | { columns: ReturnType<typeof scheduleColumns> & { startDate?: Date } } {
+  const today = dayIn(new Date(), timeZone);
+  const storedDay = existing.nextRunAt
+    ? dayIn(existing.nextRunAt, timeZone)
+    : planState(existing) === "ended"
+      ? null
+      : legacyNextRunDay(existing, today);
+  const problem = scheduleProblem(schedule, { today, runCount: existing.runCount, storedDay });
+  if (problem) return { error: problem };
+  const unchanged = schedule.nextDate === storedDay;
+  if (taken && !unchanged) {
+    return {
+      error: `${periodVars(schedule.nextDate, { ...schedule, dayOfMonth: 1 }).period} already has ${taken.invoiceNumber}. Pick a date in a later period.`,
+    };
+  }
+  const keepDay =
+    unchanged && existing.frequency === "MONTH" && schedule.frequency === "MONTH"
+      ? existing.dayOfMonth
+      : undefined;
+  const startDay = existing.startDate ? dateToDay(existing.startDate) : null;
+  return {
+    columns: {
+      ...scheduleColumns(schedule, timeZone, keepDay),
+      ...(startDay && schedule.nextDate < startDay
+        ? { startDate: dayToDate(schedule.nextDate) }
+        : {}),
+    },
+  };
+}
+
 /** A new plan from the Recurring page: one line of its title and amount per invoice. */
 export async function createRetainer(input: RetainerInput): Promise<ActionResult> {
   await requireAdmin();
@@ -141,11 +212,7 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
     prisma.retainer.findUnique({
       where: { id },
       select: {
-        id: true,
-        nextRunAt: true,
-        dayOfMonth: true,
-        startDate: true,
-        runCount: true,
+        ...storedScheduleSelect,
         templateInvoice: {
           select: {
             invoiceNumber: true,
@@ -173,19 +240,8 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
   }
 
   const timeZone = booking.agencyTimezone;
-  const storedDay = existing.nextRunAt ? dayIn(existing.nextRunAt, timeZone) : null;
-  const problem = scheduleProblem(data.schedule, {
-    today: dayIn(new Date(), timeZone),
-    runCount: existing.runCount,
-    storedDay,
-  });
-  if (problem) return { ok: false, error: problem };
-  if (taken && data.schedule.nextDate !== storedDay) {
-    return {
-      ok: false,
-      error: `${periodVars(data.schedule.nextDate, { ...data.schedule, dayOfMonth: 1 }).period} already has ${taken.invoiceNumber}. Pick a date in a later period.`,
-    };
-  }
+  const edited = editedSchedule(existing, data.schedule, timeZone, taken);
+  if ("error" in edited) return { ok: false, error: edited.error };
 
   const money = template
     ? {
@@ -204,7 +260,6 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
         amountUsd: usdToStore(data.currency, data.amount, data.amountUsd),
         paymentTermsDays: data.paymentTermsDays ?? null,
       };
-  const startDay = existing.startDate ? dateToDay(existing.startDate) : null;
 
   await prisma.retainer.update({
     where: { id },
@@ -214,14 +269,7 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
       ...money,
       notes: data.notes || null,
       active: data.active,
-      ...scheduleColumns(
-        data.schedule,
-        timeZone,
-        data.schedule.nextDate === storedDay ? existing.dayOfMonth : undefined,
-      ),
-      ...(startDay && startDay <= data.schedule.nextDate
-        ? {}
-        : { startDate: dayToDate(data.schedule.nextDate) }),
+      ...edited.columns,
     },
   });
   if (data.active && dueNow(data.schedule.nextDate, timeZone)) {
@@ -242,51 +290,19 @@ export async function updatePlanSchedule(id: string, input: RepeatInput): Promis
   const { title, schedule } = parsed.data;
 
   const [existing, booking, taken] = await Promise.all([
-    prisma.retainer.findUnique({
-      where: { id },
-      select: {
-        active: true,
-        nextRunAt: true,
-        dayOfMonth: true,
-        startDate: true,
-        runCount: true,
-        endAfterCount: true,
-        endDate: true,
-      },
-    }),
+    prisma.retainer.findUnique({ where: { id }, select: storedScheduleSelect }),
     getBookingConfig(),
     invoiceForPeriod(id, schedule),
   ]);
   if (!existing) return { ok: false, error: "Plan not found." };
   const timeZone = booking.agencyTimezone;
-  const storedDay = existing.nextRunAt ? dayIn(existing.nextRunAt, timeZone) : null;
-  const problem = scheduleProblem(schedule, {
-    today: dayIn(new Date(), timeZone),
-    runCount: existing.runCount,
-    storedDay,
-  });
-  if (problem) return { ok: false, error: problem };
-  if (taken && schedule.nextDate !== storedDay) {
-    return {
-      ok: false,
-      error: `${periodVars(schedule.nextDate, { ...schedule, dayOfMonth: 1 }).period} already has ${taken.invoiceNumber}. Pick a date in a later period.`,
-    };
-  }
+  const edited = editedSchedule(existing, schedule, timeZone, taken);
+  if ("error" in edited) return { ok: false, error: edited.error };
 
   const restart = planState(existing) === "ended";
-  const startDay = existing.startDate ? dateToDay(existing.startDate) : null;
   await prisma.retainer.update({
     where: { id },
-    data: {
-      title,
-      ...scheduleColumns(
-        schedule,
-        timeZone,
-        schedule.nextDate === storedDay ? existing.dayOfMonth : undefined,
-      ),
-      ...(startDay && startDay <= schedule.nextDate ? {} : { startDate: dayToDate(schedule.nextDate) }),
-      ...(restart ? { active: true } : {}),
-    },
+    data: { title, ...edited.columns, ...(restart ? { active: true } : {}) },
   });
   if ((existing.active || restart) && dueNow(schedule.nextDate, timeZone)) {
     after(() => runPlanIfDue(id, timeZone));
