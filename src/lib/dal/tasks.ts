@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
 
@@ -28,6 +29,26 @@ export type TaskView = {
   createdAt: string;
 };
 
+/**
+ * STAFF are money-blind, and invoice to-dos are money: "Chase payment on
+ * INV-014" tells them which invoices exist and which are late. So anyone who
+ * isn't an admin never gets a task linked to an invoice, or a SYSTEM task the
+ * invoice duties made (systemKey "invoice-…"), from any read here, and the
+ * task actions refuse to touch one. Keyed on "not ADMIN" rather than on
+ * STAFF, so a role added later sees nothing about invoices either.
+ *
+ * Meant to sit in an AND list: it carries its own OR.
+ */
+export function taskVisibility(viewer: { role: string }): Prisma.TaskWhereInput {
+  if (viewer.role === "ADMIN") return {};
+  return {
+    invoiceId: null,
+    // NOT on its own would drop rows whose systemKey is null (SQL NULL), and
+    // those are every task a person wrote.
+    OR: [{ systemKey: null }, { NOT: { systemKey: { startsWith: "invoice" } } }],
+  };
+}
+
 const include = {
   assignee: { select: { id: true, name: true } },
   client: { select: { id: true, name: true } },
@@ -36,6 +57,11 @@ const include = {
   lead: { select: { id: true, name: true } },
   subtasks: { orderBy: { position: "asc" } as const },
 } as const;
+
+/** The invoice link is admin-only, so it isn't even loaded for anyone else. */
+function includeFor(viewer: { role: string }) {
+  return viewer.role === "ADMIN" ? include : { ...include, invoice: false as const };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toView(t: any): TaskView {
@@ -85,12 +111,15 @@ export async function listTasks(filter: TaskFilter = {}): Promise<TaskView[]> {
 
   const rows = await prisma.task.findMany({
     where: {
-      ...(filter.includeDone ? {} : { status: { not: "DONE" as const } }),
-      ...(filter.mine
-        ? { OR: [{ assigneeId: viewer.id }, { assigneeId: null, createdById: viewer.id }] }
-        : {}),
+      AND: [
+        filter.includeDone ? {} : { status: { not: "DONE" as const } },
+        filter.mine
+          ? { OR: [{ assigneeId: viewer.id }, { assigneeId: null, createdById: viewer.id }] }
+          : {},
+        taskVisibility(viewer),
+      ],
     },
-    include,
+    include: includeFor(viewer),
     orderBy: [{ dueDate: { sort: "asc", nulls: "last" } }, { position: "asc" }, { createdAt: "desc" }],
     take: 500,
   });
@@ -99,10 +128,10 @@ export async function listTasks(filter: TaskFilter = {}): Promise<TaskView[]> {
 
 /** Recently finished work, for the "Done" drawer. Bounded on purpose. */
 export async function listRecentlyDone(limit = 25): Promise<TaskView[]> {
-  await requireTeam();
+  const viewer = await requireTeam();
   const rows = await prisma.task.findMany({
-    where: { status: "DONE" },
-    include,
+    where: { AND: [{ status: "DONE" }, taskVisibility(viewer)] },
+    include: includeFor(viewer),
     orderBy: { completedAt: "desc" },
     take: limit,
   });
@@ -110,8 +139,11 @@ export async function listRecentlyDone(limit = 25): Promise<TaskView[]> {
 }
 
 export async function getTask(id: string): Promise<TaskView | null> {
-  await requireTeam();
-  const row = await prisma.task.findUnique({ where: { id }, include });
+  const viewer = await requireTeam();
+  const row = await prisma.task.findFirst({
+    where: { AND: [{ id }, taskVisibility(viewer)] },
+    include: includeFor(viewer),
+  });
   return row ? toView(row) : null;
 }
 
@@ -124,25 +156,29 @@ export async function countOpenTasks(): Promise<{ due: number; overdue: number }
 
   const notSnoozed = { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] };
   const mine = { OR: [{ assigneeId: viewer.id }, { assigneeId: null }] };
+  const visible = taskVisibility(viewer);
 
   // AND, not spread: both clauses are keyed `OR`, so spreading them into one
   // object silently drops the first and the snooze filter stops applying.
   const [overdue, due] = await Promise.all([
     prisma.task.count({
-      where: { status: { not: "DONE" }, dueDate: { lt: now }, AND: [notSnoozed, mine] },
+      where: { status: { not: "DONE" }, dueDate: { lt: now }, AND: [notSnoozed, mine, visible] },
     }),
     prisma.task.count({
       where: {
         status: { not: "DONE" },
         dueDate: { gte: now, lte: endOfToday },
-        AND: [notSnoozed, mine],
+        AND: [notSnoozed, mine, visible],
       },
     }),
   ]);
   return { due, overdue };
 }
 
-/** Context pickers for the task form. */
+/**
+ * Context pickers for the task form. There is deliberately no invoice list
+ * here: the form is shared with STAFF, who must not see invoices.
+ */
 export async function listTaskTargets() {
   await requireTeam();
   const [clients, projects, staff] = await Promise.all([
