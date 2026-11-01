@@ -15,6 +15,7 @@ import MeetingScheduledEmail from "@/emails/meeting-scheduled";
 import CampaignEmail from "@/emails/campaign";
 import InvoiceReminderEmail from "@/emails/invoice-reminder";
 import { renderMergeTags, renderMergeTagsInDoc } from "@/lib/merge-tags";
+import { runProposalDuties } from "@/lib/duties-proposals";
 
 /**
  * "Lazy cron": Hostinger has no background jobs, so scheduled work runs
@@ -587,6 +588,7 @@ export async function runDueDuties(): Promise<void> {
     await chaseOverdueInvoices(now);
     await drainCampaigns(now);
     await generateSystemTasks(now);
+    await runProposalDuties(now);
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
   }
