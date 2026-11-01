@@ -5,6 +5,7 @@ import {
   canMoveWorkItem,
   positionBetween,
   type BoardPerson,
+  type BoardPhase,
   type BoardSide,
   type WorkItem,
   type WorkRole,
@@ -118,6 +119,18 @@ export function reorderPlan(tree: PlanTree, activeId: string, overId: string): P
   return null;
 }
 
+/**
+ * What other work can be grouped under: live, accepted, top-level items, in
+ * plan order — the same rule as phasesOf in the DAL, applied to the items a
+ * page already holds, so a phase added a moment ago is pickable at once.
+ */
+export function planPhases(items: readonly WorkItem[]): BoardPhase[] {
+  return items
+    .filter((i) => !i.parentId && !i.archivedAt && i.stage !== "REQUESTED")
+    .sort(byPlan)
+    .map((i) => ({ id: i.id, title: i.title }));
+}
+
 /** The new plan positions, applied to the items (an optimistic reorder). */
 export function withPlanPositions(items: readonly WorkItem[], order: readonly string[]): WorkItem[] {
   const index = new Map(order.map((id, i) => [id, i]));
@@ -212,6 +225,30 @@ export function assigneeGroups(items: readonly WorkItem[], people: readonly Boar
 /* ------------------------------------------------------------------------ */
 /* What a row shows                                                         */
 /* ------------------------------------------------------------------------ */
+
+const usdWhole = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+const usdCents = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+/** Dollars as a chip says them: no cents unless there are some. */
+function chipMoney(value: number): string {
+  return Number.isInteger(value) ? usdWhole.format(value) : usdCents.format(value);
+}
+
+/**
+ * A price as a chip says it — "$400", "$80/h" — or null when unpriced. The
+ * full working ("$80/hr × 5h = $400") is the drawer's and the timeline's.
+ */
+export function priceLabel(
+  item: Pick<WorkItem, "pricingType" | "hourlyRate" | "fixedPrice">,
+): string | null {
+  if (item.pricingType === "FIXED" && item.fixedPrice != null) return chipMoney(item.fixedPrice);
+  if (item.pricingType === "HOURLY" && item.hourlyRate != null) return `${chipMoney(item.hourlyRate)}/h`;
+  return null;
+}
 
 /** "2h", "2.5h" — logged time, as every work surface writes it. */
 export function formatHours(hours: number): string {

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getMyProject, getMyProjectExtras, listMyProjectOptions } from "@/lib/dal/portal";
+import { getMyProject, getMyProjectExtras } from "@/lib/dal/portal";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { listByProject } from "@/lib/dal/deliverables";
 import {
@@ -12,15 +12,14 @@ import {
 import { requireClient } from "@/lib/dal/session";
 import { DeliverablesList } from "@/components/deliverables/deliverables-list";
 import { getWhatsappSupportUrl } from "@/lib/dal/settings";
-import { ClientProjectTimeline } from "@/components/projects/client-project-timeline";
 import { ProjectNeedsYou } from "@/components/projects/project-needs-you";
+import { PortalPulse, PortalUpNext } from "@/components/projects/portal-pulse";
 import { ProjectTabs } from "@/components/projects/project-tabs";
-import { ProjectBoard } from "@/components/board/project-board";
+import { WorkProvider } from "@/components/board/work-store";
 import { WorkTab } from "@/components/board/work-tab";
 import { ChatWidget } from "@/components/messages/chat-widget";
-import { toMilestoneView } from "@/components/milestones/milestone-types";
 import { WORK_TAB, resolveWorkLink } from "@/lib/board";
-import { clientWaiting, isPlanItem } from "@/lib/work-scope";
+import { clientWaiting } from "@/lib/work-scope";
 import { ProjectStatusBadge, InvoiceStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { RequestFormDialog } from "@/components/task-requests/request-form-dialog";
@@ -34,7 +33,6 @@ import {
   ArrowLeft,
   CalendarDays,
   BadgeDollarSign,
-  CircleDot,
   CalendarClock,
   ReceiptText,
   AlertTriangle,
@@ -64,11 +62,10 @@ export default async function MyProjectPage({
   // scope themselves to the session; the messages and deliverables don't, so
   // nothing is rendered unless getMyProject — scoped to the session — found
   // the project.
-  const [user, project, options, whatsappUrl, items, version, people, messages, deliverables, extras] =
+  const [user, project, whatsappUrl, items, version, people, messages, deliverables, extras] =
     await Promise.all([
       requireClient(),
       getMyProject(id),
-      listMyProjectOptions(),
       getWhatsappSupportUrl(),
       getWorkItems(id),
       getWorkVersion(id),
@@ -78,15 +75,16 @@ export default async function MyProjectPage({
       getMyProjectExtras(id),
     ]);
   if (!project) notFound();
+  // Read once: the header's "due in N days" and the store's freshness check
+  // agree on what now is.
+  const renderedAt = serverNow();
   const board = { items, people, phases: phasesOf(items), version: version ?? "" };
-
-  // The timeline follows the plan: accepted, top-level work in order.
-  const milestones = items.filter(isPlanItem).map(toMilestoneView);
 
   const health = projectHealth({
     milestones: items,
     status: project.status,
     dueDate: project.dueDate,
+    now: new Date(renderedAt),
   });
   const pending = pendingWork({
     milestones: items,
@@ -95,11 +93,6 @@ export default async function MyProjectPage({
   });
   const waiting = clientWaiting(items);
   const openTasks = items.filter((i) => i.stage !== "DONE").length;
-  const viewer = {
-    id: user.id,
-    side: "CLIENT" as const,
-    name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.name,
-  };
 
   const tabs = [
     {
@@ -108,27 +101,7 @@ export default async function MyProjectPage({
       icon: "milestones" as const,
       count: openTasks,
       alert: waiting.review + waiting.questions + waiting.rating > 0,
-      content: (
-        <WorkTab
-          initialView={link.view}
-          board={
-            <ProjectBoard
-              projectId={project.id}
-              viewer={viewer}
-              initial={board}
-              renderedAt={serverNow()}
-              initialItemId={link.itemId}
-            />
-          }
-          list={
-            <Card>
-              <CardContent className="pt-6">
-                <ClientProjectTimeline milestones={milestones} billingType={project.billingType} />
-              </CardContent>
-            </Card>
-          }
-        />
-      ),
+      content: <WorkTab initialView={link.view} />,
     },
     {
       value: "files",
@@ -143,7 +116,7 @@ export default async function MyProjectPage({
       label: "Billing & calls",
       icon: "money" as const,
       count: extras.invoices.length,
-      alert: pending.unpaidInvoices > 0,
+      alert: pending.invoicesToPay > 0,
       content: (
         <BillingAndCalls
           invoices={extras.invoices}
@@ -155,124 +128,115 @@ export default async function MyProjectPage({
   ];
 
   return (
-    <div>
-      <Link
-        href="/portal/projects"
-        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> Back to My Projects
-      </Link>
+    // The work is held once for the whole page — the header's progress, the
+    // "needs you" box, the list, the board and the item drawer all read it.
+    <WorkProvider
+      projectId={project.id}
+      viewer={{
+        id: user.id,
+        side: "CLIENT",
+        role: "CLIENT",
+        name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.name,
+      }}
+      billingType={project.billingType}
+      initial={board}
+      renderedAt={renderedAt}
+      initialItemId={link.itemId}
+    >
+      <div>
+        <Link
+          href="/portal/projects"
+          className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" /> Back to My Projects
+        </Link>
 
-      {/* Project header — where it stands, in one glance. */}
-      <section className="surface mb-4 overflow-hidden p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="eyebrow">{projectTypeLabels[project.type]}</p>
-            <h1 className="title-page mt-1 [overflow-wrap:anywhere]">{project.projectName}</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <ProjectStatusBadge status={project.status} />
-            <RequestFormDialog projects={options} defaultProjectId={project.id} />
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">
-                {health.done} of {health.total} milestones complete
-              </span>
-              <span className="num font-semibold">{health.percent}%</span>
+        {/* Project header — where it stands, in one glance. */}
+        <section className="surface mb-4 overflow-hidden p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="eyebrow">{projectTypeLabels[project.type]}</p>
+              <h1 className="title-page mt-1 [overflow-wrap:anywhere]">{project.projectName}</h1>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-[width] duration-700"
-                style={{ width: `${health.percent}%` }}
+            <div className="flex flex-wrap items-center gap-3">
+              <ProjectStatusBadge status={project.status} />
+              {/* The one way to ask for something new: it waits for the team
+                  in Requested, on the list and the board. */}
+              <RequestFormDialog
+                projects={[{ id: project.id, projectName: project.projectName }]}
+                defaultProjectId={project.id}
               />
             </div>
           </div>
-          <div className="flex gap-5 text-sm sm:justify-end">
-            <Stat label="Open tasks" value={openTasks} />
-            <Stat label="Waiting on you" value={waiting.review + waiting.questions} hot />
+
+          <PortalPulse
+            status={project.status}
+            dueDate={project.dueDate?.toISOString() ?? null}
+            renderedAt={renderedAt}
+          />
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <PortalUpNext status={project.status} />
+            {(project.startDate || project.dueDate) && (
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <CalendarDays className="size-3.5 shrink-0" />
+                {formatDate(project.startDate)} → {formatDate(project.dueDate)}
+              </span>
+            )}
+            {health.dueLabel && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                  health.tone === "bad"
+                    ? toneChip.bad
+                    : health.tone === "warn"
+                      ? toneChip.warn
+                      : toneChip.good,
+                )}
+              >
+                {health.overdue && <AlertTriangle className="size-3" />}
+                {health.dueLabel}
+              </span>
+            )}
+            {project.billingType === "CONTRACT" && project.contractPrice != null && (
+              <span className="flex items-center gap-1.5 font-semibold text-foreground">
+                <BadgeDollarSign className="size-3.5 shrink-0" />
+                {usd.format(Number(project.contractPrice))} fixed contract
+              </span>
+            )}
           </div>
-        </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-          {health.nextMilestone && project.status !== "COMPLETED" && (
-            <span className="flex items-center gap-1.5">
-              <CircleDot className="size-3.5 shrink-0 text-primary" />
-              <span className="text-muted-foreground">Up next:</span>
-              <span className="font-medium">{health.nextMilestone.title}</span>
-            </span>
+          {hasRichTextContent(project.description) && (
+            <details className="group mt-4 border-t pt-3">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+                Project brief
+              </summary>
+              <div className="mt-3">
+                <RichTextViewer content={project.description} />
+              </div>
+            </details>
           )}
-          {(project.startDate || project.dueDate) && (
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <CalendarDays className="size-3.5 shrink-0" />
-              {formatDate(project.startDate)} → {formatDate(project.dueDate)}
-            </span>
-          )}
-          {health.dueLabel && (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                health.tone === "bad"
-                  ? toneChip.bad
-                  : health.tone === "warn"
-                    ? toneChip.warn
-                    : toneChip.good,
-              )}
-            >
-              {health.overdue && <AlertTriangle className="size-3" />}
-              {health.dueLabel}
-            </span>
-          )}
-          {project.billingType === "CONTRACT" && project.contractPrice != null && (
-            <span className="flex items-center gap-1.5 font-semibold text-foreground">
-              <BadgeDollarSign className="size-3.5 shrink-0" />
-              {usd.format(Number(project.contractPrice))} fixed contract
-            </span>
-          )}
-        </div>
+        </section>
 
-        {hasRichTextContent(project.description) && (
-          <details className="group mt-4 border-t pt-3">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
-              Project brief
-            </summary>
-            <div className="mt-3">
-              <RichTextViewer content={project.description} />
-            </div>
-          </details>
-        )}
-      </section>
+        <ProjectNeedsYou
+          pending={pending}
+          projectId={project.id}
+          questions={waiting.questions}
+          className="mb-5"
+        />
 
-      <ProjectNeedsYou
-        pending={pending}
-        projectId={project.id}
-        questions={waiting.questions}
-        className="mb-5"
-      />
+        <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
 
-      <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
-
-      <ChatWidget
-        projectId={project.id}
-        viewerRole="CLIENT"
-        initialMessages={messages}
-        title="Avix Digital"
-        whatsappUrl={whatsappUrl}
-      />
-    </div>
-  );
-}
-
-function Stat({ label, value, hot }: { label: string; value: number; hot?: boolean }) {
-  return (
-    <div className="text-right">
-      <p className={cn("num text-xl font-semibold", hot && value > 0 && "text-primary")}>{value}</p>
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-    </div>
+        <ChatWidget
+          projectId={project.id}
+          viewerRole="CLIENT"
+          initialMessages={messages}
+          title="Avix Digital"
+          whatsappUrl={whatsappUrl}
+        />
+      </div>
+    </WorkProvider>
   );
 }
 

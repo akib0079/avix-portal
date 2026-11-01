@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { JSONContent } from "@tiptap/react";
@@ -39,36 +39,45 @@ import {
 import { toast } from "sonner";
 import { Loader2, MessageSquarePlus } from "lucide-react";
 
+/**
+ * The client's one way to ask for something new: it becomes a work item
+ * waiting in Requested on the project ("Waiting for the team"), with the
+ * request that records the team's decision. On a project page it's fixed to
+ * that project; elsewhere the client picks one.
+ */
 export function RequestFormDialog({
   projects,
   defaultProjectId,
+  defaultTitle = "",
   triggerLabel = "Request a task",
+  trigger,
 }: {
   projects: { id: string; projectName: string }[];
   defaultProjectId?: string;
+  /** "Ask again" after a decline starts from the old title. */
+  defaultTitle?: string;
   triggerLabel?: string;
+  /** A different opener than the default button. */
+  trigger?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const blank = {
+    projectId: defaultProjectId ?? projects[0]?.id ?? "",
+    title: defaultTitle,
+    description: undefined,
+  };
 
   const form = useForm<TaskRequestInput>({
     resolver: zodResolver(taskRequestSchema),
-    defaultValues: {
-      projectId: defaultProjectId ?? projects[0]?.id ?? "",
-      title: "",
-      description: undefined,
-    },
+    defaultValues: blank,
   });
 
   async function onSubmit(values: TaskRequestInput) {
     const result = await submitTaskRequest(values);
     if (!result.ok) return void toast.error(result.error);
-    toast.success("Request sent — we'll review it shortly.");
+    toast.success("Request sent — it waits for the team, and you'll hear as soon as they decide.");
     setOpen(false);
-    form.reset({
-      projectId: defaultProjectId ?? projects[0]?.id ?? "",
-      title: "",
-      description: undefined,
-    });
+    form.reset(blank);
     // submitTaskRequest revalidates the requests page and the project, and
     // Next applies that render from the action's response — no refresh.
   }
@@ -78,16 +87,19 @@ export function RequestFormDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>
-          <MessageSquarePlus /> {triggerLabel}
-        </Button>
+        {trigger ?? (
+          <Button>
+            <MessageSquarePlus /> {triggerLabel}
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="font-heading">Request a task</DialogTitle>
           <DialogDescription>
             Describe what you need — you can format text and attach images.
-            We&apos;ll review it and get back to you.
+            It waits for the team, who accept it into your project&apos;s
+            milestones or get back to you.
           </DialogDescription>
         </DialogHeader>
 

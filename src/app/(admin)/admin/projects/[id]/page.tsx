@@ -3,7 +3,6 @@ import { getProject, getProjectWorkspace } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { listByProject } from "@/lib/dal/deliverables";
 import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
-import { MilestoneBoard } from "@/components/boards-lazy";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
 import { ProjectHeader } from "@/components/projects/project-header";
@@ -20,7 +19,7 @@ import { requireTeam } from "@/lib/dal/session";
 import { listTeamOptions } from "@/lib/dal/users";
 import { getBillableWork } from "@/lib/dal/billable";
 import { getWorkItems, getWorkVersion, phasesOf } from "@/lib/dal/project-board";
-import { ProjectBoard } from "@/components/board/project-board";
+import { WorkProvider } from "@/components/board/work-store";
 import { WorkTab } from "@/components/board/work-tab";
 import { WORK_TAB, resolveWorkLink } from "@/lib/board";
 import { isPlanItem } from "@/lib/work-scope";
@@ -105,42 +104,14 @@ export default async function ProjectDetailPage({
   const openItems = items.filter((i) => i.stage !== "DONE").length;
   const tabs = [
     {
+      // The board, the plan and the client's requests: one set of items,
+      // as a List or a Board (?view=), with requests decided in place.
       value: WORK_TAB,
       label: "Milestones",
       icon: "milestones" as const,
       count: openItems,
       alert: clientHelp > 0 || pending.openRequests > 0,
-      content: (
-        <WorkTab
-          initialView={link.view}
-          board={
-            <ProjectBoard
-              projectId={project.id}
-              viewer={{
-                id: viewer.id,
-                side: "ADMIN",
-                name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
-              }}
-              initial={board}
-              renderedAt={renderedAt}
-              initialItemId={link.itemId}
-            />
-          }
-          list={
-            <Card>
-              <CardContent className="pt-6">
-                <MilestoneBoard
-                  projectId={project.id}
-                  milestones={milestones}
-                  billingType={project.billingType}
-                  canEditPricing={isAdmin}
-                  team={team}
-                />
-              </CardContent>
-            </Card>
-          }
-        />
-      ),
+      content: <WorkTab initialView={link.view} />,
     },
     {
       value: "deliverables",
@@ -156,20 +127,6 @@ export default async function ProjectDetailPage({
             Deliverables are managed by an admin.
           </CardContent>
         </Card>
-      ),
-    },
-    {
-      value: "requests",
-      label: "Requests",
-      icon: "requests" as const,
-      count: workspace.requests.length,
-      alert: pending.openRequests > 0,
-      content: (
-        <ProjectRequests
-          projectId={project.id}
-          requests={workspace.requests}
-          meetings={workspace.meetings}
-        />
       ),
     },
     ...(isAdmin
@@ -208,18 +165,27 @@ export default async function ProjectDetailPage({
         ]
       : []),
     {
+      // What happened and what's coming: calls, the client's past requests
+      // (decided ones — open ones wait in the Milestones list), the log.
       value: "activity",
       label: "Activity",
       icon: "activity" as const,
       content: (
-        <Card>
-          <CardContent className="pt-6">
-            <ActivityFeed
-              items={workspace.activity}
-              emptyLabel="Nothing recorded on this project yet."
-            />
-          </CardContent>
-        </Card>
+        <div className="space-y-6">
+          <ProjectRequests
+            projectId={project.id}
+            requests={workspace.requests}
+            meetings={workspace.meetings}
+          />
+          <Card>
+            <CardContent className="pt-6">
+              <ActivityFeed
+                items={workspace.activity}
+                emptyLabel="Nothing recorded on this project yet."
+              />
+            </CardContent>
+          </Card>
+        </div>
       ),
     },
   ];
@@ -227,82 +193,99 @@ export default async function ProjectDetailPage({
   const hoursLogged = items.reduce((sum, i) => sum + i.loggedHours, 0);
 
   return (
-    <div className="space-y-5">
-      {/* Full width: the header is a band, and the workspace below it gets
-          the whole page — the board needs every column visible at once. */}
-      <ProjectHeader
-        project={{
-          id: project.id,
-          projectName: project.projectName,
-          status: project.status,
-          priority: project.priority,
-          type: project.type,
-          source: project.source,
-          startDate: project.startDate?.toISOString() ?? null,
-          dueDate: project.dueDate?.toISOString() ?? null,
-          ownerId: project.ownerId,
-          billingType: project.billingType,
-          contractPrice:
-            project.contractPrice == null ? null : Number(project.contractPrice),
-          client: project.client
-            ? {
-                id: project.client.id,
-                firstName: project.client.firstName,
-                lastName: project.client.lastName,
-                company: project.client.company,
-              }
-            : null,
-        }}
-        // The plan only, and only what the progress line reads.
-        milestones={items
-          .filter(isPlanItem)
-          .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position }))}
-        team={team}
-        canEdit={isAdmin}
-        renderedAt={renderedAt}
-        stats={{
-          openTasks: openItems,
-          doneTasks: items.length - openItems,
-          helpRequests: clientHelp,
-          hoursLogged,
-          unbilled: isAdmin && billable ? billable.unbilled : null,
-        }}
-        attention={
-          <ProjectAttention
-            pending={pending}
-            projectId={project.id}
-            overdue={health.overdue}
-            boardHelp={clientHelp}
-          />
-        }
-        brief={
-          hasRichTextContent(project.description) ? (
-            <details className="group">
-              <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
-                Project brief
-              </summary>
-              <div className="mt-2 rounded-xl border bg-card p-4">
-                <RichTextViewer content={project.description} />
-              </div>
-            </details>
-          ) : null
-        }
-      />
-
-      <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
-
-      {project.client && (
-        <ChatWidget
-          projectId={project.id}
-          clientId={project.client.id}
-          clientTimezone={project.client.timezone}
-          viewerRole="ADMIN"
-          initialMessages={messages}
-          canWriteInternal
-          title={`Chat with ${project.client.firstName} ${project.client.lastName}`}
+    // The work is held once for the whole page: the header's ring and
+    // counts, the attention strip, the list, the board and the item drawer
+    // all read the same live items.
+    <WorkProvider
+      projectId={project.id}
+      viewer={{
+        id: viewer.id,
+        side: "ADMIN",
+        role: isAdmin ? "ADMIN" : "STAFF",
+        name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
+      }}
+      billingType={project.billingType}
+      initial={board}
+      renderedAt={renderedAt}
+      initialItemId={link.itemId}
+    >
+      <div className="space-y-5">
+        {/* Full width: the header is a band, and the workspace below it gets
+            the whole page — the board needs every column visible at once. */}
+        <ProjectHeader
+          project={{
+            id: project.id,
+            projectName: project.projectName,
+            status: project.status,
+            priority: project.priority,
+            type: project.type,
+            source: project.source,
+            startDate: project.startDate?.toISOString() ?? null,
+            dueDate: project.dueDate?.toISOString() ?? null,
+            ownerId: project.ownerId,
+            billingType: project.billingType,
+            contractPrice:
+              project.contractPrice == null ? null : Number(project.contractPrice),
+            client: project.client
+              ? {
+                  id: project.client.id,
+                  firstName: project.client.firstName,
+                  lastName: project.client.lastName,
+                  company: project.client.company,
+                }
+              : null,
+          }}
+          // The plan only, and only what the progress line reads.
+          milestones={items
+            .filter(isPlanItem)
+            .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position }))}
+          team={team}
+          canEdit={isAdmin}
+          renderedAt={renderedAt}
+          stats={{
+            openTasks: openItems,
+            doneTasks: items.length - openItems,
+            helpRequests: clientHelp,
+            hoursLogged,
+            unbilled: isAdmin && billable ? billable.unbilled : null,
+          }}
+          attention={
+            <ProjectAttention
+              pending={pending}
+              projectId={project.id}
+              overdue={health.overdue}
+              boardHelp={clientHelp}
+            />
+          }
+          brief={
+            hasRichTextContent(project.description) ? (
+              <details className="group">
+                <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+                  Project brief
+                </summary>
+                <div className="mt-2 rounded-xl border bg-card p-4">
+                  <RichTextViewer content={project.description} />
+                </div>
+              </details>
+            ) : null
+          }
         />
-      )}
-    </div>
+
+        <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
+
+        {project.client && (
+          <ChatWidget
+            projectId={project.id}
+            clientId={project.client.id}
+            clientTimezone={project.client.timezone}
+            viewerRole="ADMIN"
+            initialMessages={messages}
+            canWriteInternal
+            title={`Chat with ${project.client.firstName} ${project.client.lastName}`}
+          />
+        )}
+      </div>
+    </WorkProvider>
   );
 }

@@ -1,41 +1,41 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { ViewToggle, VIEW_MODES, type ViewMode } from "@/components/ui/lanes";
 import { useLocalChoice } from "@/lib/use-local-pref";
 import type { WorkView } from "@/lib/board";
+import { MilestoneList } from "@/components/milestones/milestone-board";
+import { ClientWorkList } from "@/components/projects/client-project-timeline";
+import { ProjectBoard } from "./project-board";
+import { useWork } from "./work-store";
 
 const VIEW_KEY = "avix.work.view";
 
 /**
- * The Milestones tab: one set of work items, as a Board or as a List. The
- * view comes from the link when it names one (?view=board|list), otherwise
- * from what this viewer last picked, remembered per browser.
+ * The Milestones tab: one set of work items, as a List or as a Board. The
+ * view comes from the link when it names one (?view=list|board), otherwise
+ * from what this viewer last picked, remembered per browser; picking one
+ * writes it back to the URL so a shared link opens the same way.
  *
- * Both views stay mounted and the other is hidden, like the project tabs: a
- * card drawer opened from a link lives in the board, and switching costs
- * nothing.
+ * Both views read the same store (WorkProvider), so either can mount or
+ * unmount freely. One that has been shown stays mounted, hidden, so its
+ * filters and folds survive a trip to the other.
  */
-export function WorkTab({
-  initialView,
-  board,
-  list,
-}: {
-  /** ?view= from the URL, or null when the link didn't say. */
-  initialView: WorkView | null;
-  board: ReactNode;
-  list: ReactNode;
-}) {
+export function WorkTab({ initialView }: { initialView: WorkView | null }) {
+  const { viewer } = useWork();
   const [remembered, remember] = useLocalChoice<ViewMode>(VIEW_KEY, "board", VIEW_MODES);
   const [picked, setPicked] = useState<ViewMode | null>(initialView);
-  // A link elsewhere on the page ("Review 2 finished items") changes ?view=;
-  // follow it. Adjusted during render, not in an effect.
+  // A link elsewhere on the page ("Review 2 items") changes ?view=; follow it.
+  // Adjusted during render, not in an effect.
   const [seen, setSeen] = useState(initialView);
   if (initialView !== seen) {
     setSeen(initialView);
     if (initialView) setPicked(initialView);
   }
   const view = picked ?? remembered;
+  // The server renders the linked view, or the board (no stored choice there).
+  const [visited, setVisited] = useState<ViewMode[]>(() => [initialView ?? "board"]);
+  if (!visited.includes(view)) setVisited([...visited, view]);
 
   function choose(next: ViewMode) {
     setPicked(next);
@@ -45,13 +45,19 @@ export function WorkTab({
     window.history.replaceState(null, "", `${url.pathname}${url.search}`);
   }
 
+  const switcher = <ViewToggle value={view} onChange={choose} />;
   return (
     <div>
-      <div className="mb-3 flex justify-end">
-        <ViewToggle value={view} onChange={choose} />
-      </div>
-      <div className={view === "board" ? undefined : "hidden"}>{board}</div>
-      <div className={view === "list" ? undefined : "hidden"}>{list}</div>
+      {visited.includes("list") && (
+        <div className={view === "list" ? undefined : "hidden"}>
+          {viewer.side === "CLIENT" ? <ClientWorkList switcher={switcher} /> : <MilestoneList switcher={switcher} />}
+        </div>
+      )}
+      {visited.includes("board") && (
+        <div className={view === "board" ? undefined : "hidden"}>
+          <ProjectBoard switcher={switcher} />
+        </div>
+      )}
     </div>
   );
 }

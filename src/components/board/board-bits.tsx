@@ -3,6 +3,7 @@
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import type { Priority } from "@prisma/client";
 import { PRIORITY_META, type BoardMention, type BoardPerson } from "@/lib/board";
+import { formatHours, hoursProgress } from "@/lib/work-list";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Flag, CalendarDays } from "lucide-react";
@@ -132,6 +133,37 @@ export function DueChip({
     >
       <CalendarDays className="size-3" />
       {state === "today" ? "Today" : formatDay(day, today)}
+    </span>
+  );
+}
+
+/**
+ * Logged hours against the estimate, as a hairline bar: the brand colour
+ * while within it, red once past it. No estimate the viewer may see (staff
+ * never get one), no bar — the hours alone say enough.
+ */
+export function HoursBar({
+  logged,
+  estimate,
+  className,
+}: {
+  logged: number;
+  estimate: number | null;
+  className?: string;
+}) {
+  const { ratio, over } = hoursProgress(logged, estimate);
+  if (ratio === null || estimate == null) return null;
+  return (
+    <span
+      role="img"
+      aria-label={`${formatHours(logged)} of ${formatHours(estimate)} estimated`}
+      title={`${formatHours(logged)} of ${formatHours(estimate)} estimated`}
+      className={cn("block h-1 overflow-hidden rounded-full bg-muted", className)}
+    >
+      <span
+        className={cn("block h-full rounded-full transition-[width] duration-500", over ? "bg-red-500" : "bg-primary")}
+        style={{ width: `${Math.min(ratio, 1) * 100}%` }}
+      />
     </span>
   );
 }

@@ -390,6 +390,13 @@ export async function deleteMilestone(
   return { ok: true, archived };
 }
 
+/**
+ * The list's drag: the plan's new order, every live item of the project in
+ * it. No revalidatePath — the list and board are client state kept current by
+ * their poll (the moved rows' updatedAt changes the version token), and a
+ * revalidation would re-render the whole project page into every drag's
+ * response.
+ */
 export async function reorderMilestones(
   projectId: string,
   orderedIds: string[],
@@ -420,7 +427,5 @@ export async function reorderMilestones(
       ),
     );
   }
-
-  revalidatePath(`/admin/projects/${projectId}`);
   return { ok: true };
 }

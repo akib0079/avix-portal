@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import type { JSONContent } from "@tiptap/react";
-import type { Priority, ProjectTaskStatus } from "@prisma/client";
+import type { Priority, ProjectBillingType, ProjectTaskStatus } from "@prisma/client";
 import { toast } from "sonner";
 import {
   BOARD_COLUMNS,
@@ -12,9 +14,13 @@ import {
   type BoardPerson,
   type BoardPhase,
   type WorkItem,
+  type WorkRole,
 } from "@/lib/board";
 import { createWorkItem } from "@/lib/actions/project-board";
+import { approvalPricingSchema, type ApprovalPricingInput } from "@/lib/validation/task-request";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
+import { PricingFields } from "@/components/milestones/pricing-fields";
+import { Form } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,27 +37,38 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { PersonAvatar, PriorityFlag } from "./board-bits";
-import type { BoardViewer } from "./project-board";
-import { ChevronDown, Flag, Loader2, Milestone as MilestoneIcon, UserRound, X } from "lucide-react";
+import type { BoardViewer } from "./work-store";
+import {
+  BadgeDollarSign,
+  ChevronDown,
+  Flag,
+  Loader2,
+  Milestone as MilestoneIcon,
+  UserRound,
+  X,
+} from "lucide-react";
 
 const boardFetcher = (url: string) =>
   fetch(url).then((r) => (r.ok ? (r.json() as Promise<BoardData>) : null));
 
 /**
- * The full "new task" form: a title, the details, and who to pin. Also opened
- * from chat ("Make a task") with the message prefilled — in which case it
- * fetches the people and milestones itself, from the same endpoint the board
- * polls. A client's task is a request: it skips the column choice and waits
- * in Requested for the team.
+ * The full "new item" form: a title, the details, where it starts, which
+ * phase it sits under, who's on it, and — for an admin — its price. The list
+ * and the board both open it. Also opened from chat ("Make a task") with the
+ * message prefilled, in which case it fetches the people and phases itself,
+ * from the same endpoint the board polls. A client's addition is a request:
+ * it skips the stage choice and waits in Requested for the team.
  */
 export function NewTaskDialog({
   open,
   onOpenChange,
   projectId,
   viewer,
+  billingType,
   people: givenPeople,
   phases: givenPhases,
   defaultStage = "TODO",
+  defaultParentId = null,
   defaultTitle = "",
   defaultDescription = null,
   onCreated,
@@ -59,10 +76,15 @@ export function NewTaskDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  viewer: Pick<BoardViewer, "id" | "side">;
+  /** Without a role (chat), nobody is offered pricing. */
+  viewer: Pick<BoardViewer, "id" | "side"> & { role?: WorkRole };
+  /** Per-item pricing is off on fixed-contract projects. */
+  billingType?: ProjectBillingType;
   people?: BoardPerson[];
   phases?: BoardPhase[];
   defaultStage?: ProjectTaskStatus;
+  /** "Add work to this phase" from a phase row. */
+  defaultParentId?: string | null;
   defaultTitle?: string;
   defaultDescription?: JSONContent | null;
   onCreated?: (item: WorkItem) => void;
@@ -84,8 +106,16 @@ export function NewTaskDialog({
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [priority, setPriority] = useState<Priority | null>(null);
   const [dueDate, setDueDate] = useState("");
-  const [milestoneId, setMilestoneId] = useState<string | null>(null);
+  const [milestoneId, setMilestoneId] = useState<string | null>(defaultParentId);
   const [saving, setSaving] = useState(false);
+  // Pricing is the admin's (staff are money-blind; the server drops theirs),
+  // and folded away until asked for: most new work is part of the plan.
+  const canPrice = viewer.role === "ADMIN" && !!billingType && billingType !== "CONTRACT";
+  const [pricingOpen, setPricingOpen] = useState(false);
+  const pricingForm = useForm<ApprovalPricingInput>({
+    resolver: zodResolver(approvalPricingSchema),
+    defaultValues: { pricingType: "NONE", hourlyRate: null, estimatedHours: null, fixedPrice: null },
+  });
 
   const assignee = assigneeId ? people.find((p) => p.id === assigneeId) : undefined;
   const milestone = milestoneId ? milestones.find((m) => m.id === milestoneId) : undefined;
@@ -93,6 +123,8 @@ export function NewTaskDialog({
 
   async function submit() {
     if (!title.trim() || saving) return;
+    const priced = canPrice && pricingOpen;
+    if (priced && !(await pricingForm.trigger())) return;
     setSaving(true);
     const result = await createWorkItem({
       projectId,
@@ -103,6 +135,7 @@ export function NewTaskDialog({
       dueDate: dueDate || null,
       parentId: milestoneId,
       assigneeId,
+      ...(priced ? { pricing: pricingForm.getValues() } : {}),
     });
     setSaving(false);
     if (!result.ok) return void toast.error(result.error);
@@ -114,7 +147,7 @@ export function NewTaskDialog({
           : assignee
             ? `Task added — ${assignee.name.split(" ")[0]} has been notified.`
             : "Task added — the team has been notified."
-        : "Task added to the board.",
+        : "Added.",
     );
     onCreated?.(result.data.item);
     onOpenChange(false);
@@ -133,20 +166,20 @@ export function NewTaskDialog({
       >
         <DialogHeader className="border-b px-5 pt-5 pb-4">
           <DialogTitle className="font-heading text-lg">
-            {viewer.side === "CLIENT" ? "New request" : "New task"}
+            {viewer.side === "CLIENT" ? "Request a task" : "New milestone"}
           </DialogTitle>
           <DialogDescription>
             {viewer.side === "CLIENT"
               ? "Tell us what you need. It goes to the team as a request — pin someone and they'll get the details straight away."
-              : "Add a task to the shared board — the client sees it too."}
+              : "Add work to the plan — the client sees it in their list and on their board."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="max-h-[70dvh] space-y-4 overflow-y-auto px-5 py-4">
-          {/* Column, as monday-style status chips. The team's choice only:
-              a client's task always starts as a request. */}
+          {/* Stage, as monday-style status chips. The team's choice only:
+              a client's addition always starts as a request. */}
           {viewer.side === "ADMIN" && (
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Column">
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Stage">
               {BOARD_COLUMNS.filter((c) => c.id !== "REQUESTED").map((c) => (
                 <button
                   key={c.id}
@@ -173,9 +206,9 @@ export function NewTaskDialog({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) e.preventDefault();
             }}
-            placeholder="Task name"
+            placeholder={viewer.side === "CLIENT" ? "What do you need?" : "Milestone name"}
             maxLength={200}
-            aria-label="Task name"
+            aria-label="Title"
             className="font-heading w-full bg-transparent text-xl font-semibold outline-none placeholder:text-muted-foreground/70"
           />
 
@@ -251,7 +284,7 @@ export function NewTaskDialog({
                 <DropdownMenuTrigger asChild>
                   <button type="button" className={cn(chip, "max-w-[14rem]")}>
                     <MilestoneIcon className="size-3.5 shrink-0" />
-                    <span className="truncate">{milestone?.title ?? "Milestone"}</span>
+                    <span className="truncate">{milestone?.title ?? "Phase"}</span>
                     <ChevronDown className="size-3 shrink-0 opacity-60" />
                   </button>
                 </DropdownMenuTrigger>
@@ -263,13 +296,25 @@ export function NewTaskDialog({
                   ))}
                   {milestoneId && (
                     <DropdownMenuItem onSelect={() => setMilestoneId(null)} className="text-muted-foreground">
-                      <X /> None
+                      <X /> Top level
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+
+            {canPrice && !pricingOpen && (
+              <button type="button" className={chip} onClick={() => setPricingOpen(true)}>
+                <BadgeDollarSign className="size-3.5" /> Price it
+              </button>
+            )}
           </div>
+
+          {canPrice && pricingOpen && (
+            <Form {...pricingForm}>
+              <PricingFields form={pricingForm} />
+            </Form>
+          )}
         </div>
 
         <div className="flex items-center gap-3 border-t bg-muted/30 px-5 py-3">
@@ -282,7 +327,7 @@ export function NewTaskDialog({
             </Button>
             <Button onClick={() => void submit()} disabled={!title.trim() || saving}>
               {saving && <Loader2 className="animate-spin" />}{" "}
-              {viewer.side === "CLIENT" ? "Send request" : "Create task"}
+              {viewer.side === "CLIENT" ? "Send request" : "Add milestone"}
             </Button>
           </div>
         </div>

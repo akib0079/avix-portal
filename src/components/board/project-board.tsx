@@ -1,8 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import dynamic from "next/dynamic";
-import useSWR from "swr";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -31,26 +29,17 @@ import {
   canMoveWorkItem,
   positionBetween,
   type BoardColumn,
-  type BoardData,
   type BoardSide,
   type WorkItem,
-  type WorkRole,
 } from "@/lib/board";
-import { createWorkItem, moveWorkItem } from "@/lib/actions/project-board";
+import { createWorkItem } from "@/lib/actions/project-board";
 import { stageToStatus } from "@/lib/work-stage";
+import { useLocalSet } from "@/lib/use-local-pref";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { CardFace, SortableCard, type CardContext } from "./board-card";
-import { PersonAvatar, todayKey } from "./board-bits";
+import { PersonAvatar } from "./board-bits";
+import { useWork, type BoardViewer } from "./work-store";
 import {
   Plus,
   Search,
@@ -59,188 +48,46 @@ import {
   ChevronsRightLeft,
   X,
   KanbanSquare,
-  Loader2,
   Milestone as MilestoneIcon,
 } from "lucide-react";
 
-const TaskDrawer = dynamic(() => import("./task-drawer").then((m) => m.TaskDrawer), {
-  ssr: false,
-});
-const NewTaskDialog = dynamic(() => import("./new-task-dialog").then((m) => m.NewTaskDialog), {
-  ssr: false,
-});
-
-export type BoardViewer = { id: string; side: BoardSide; name: string };
-
-/** For the move rules: on the board, admin and staff move alike. */
-function roleOf(viewer: { side: BoardSide }): WorkRole {
-  return viewer.side === "CLIENT" ? "CLIENT" : "ADMIN";
-}
-
-/** null data = the server said nothing changed (204). */
-type Timed = { startedAt: number; data: BoardData | null } | null;
-
-async function timedFetch(url: string, version: string): Promise<Timed> {
-  const startedAt = Date.now();
-  const res = await fetch(`${url}?v=${encodeURIComponent(version)}`);
-  if (res.status === 204) return { startedAt, data: null };
-  if (!res.ok) return null;
-  return { startedAt, data: (await res.json()) as BoardData };
-}
-
-function sameItem(a: WorkItem, b: WorkItem) {
-  return (
-    a.updatedAt === b.updatedAt &&
-    a.boardPosition === b.boardPosition &&
-    a.stage === b.stage &&
-    a.commentCount === b.commentCount &&
-    a.helpFrom === b.helpFrom &&
-    a.openHelp.client === b.openHelp.client &&
-    a.openHelp.team === b.openHelp.team &&
-    a.loggedHours === b.loggedHours &&
-    a.childCount === b.childCount &&
-    a.billedOn.length === b.billedOn.length &&
-    a.title === b.title
-  );
-}
+export type { BoardViewer } from "./work-store";
 
 /**
- * Fold fresh server items into the current list, keeping every unchanged item
- * the same object. The cards are memoised on identity, so a poll that changed
- * nothing re-renders nothing, and one that changed a card re-renders that card.
+ * The project's work as stage columns, the view both the client and the team
+ * work in — the same items as the Milestones list, from the same store. Cards
+ * drag between and within columns as far as canMoveWorkItem allows: the team
+ * anywhere but into or out of Requested (a request is accepted or declined,
+ * from its card), a client only approving or sending back what's in review.
+ * Every move is painted first and confirmed by a one-row write, so the board
+ * never waits on the network.
  */
-function reconcile(prev: WorkItem[], next: WorkItem[]): WorkItem[] {
-  const byId = new Map(prev.map((c) => [c.id, c]));
-  let changed = prev.length !== next.length;
-  const merged = next.map((n) => {
-    const p = byId.get(n.id);
-    if (p && sameItem(p, n)) return p;
-    changed = true;
-    return n;
-  });
-  return changed ? merged : prev;
-}
-
-const COLLAPSE_KEY = "avix.board.collapsed";
-
-function readCollapsed(): ProjectTaskStatus[] {
-  try {
-    const raw = localStorage.getItem(COLLAPSE_KEY);
-    return raw ? (JSON.parse(raw) as ProjectTaskStatus[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The shared project board: the stage columns both the client and the team
- * work in, over the same work items as the Milestones list. Cards drag between
- * and within columns — as far as canMoveWorkItem allows: the team anywhere but
- * into or out of Requested, a client only approving or sending back what's in
- * review. Every move is applied locally first and confirmed by a one-row
- * write, so the board never waits on the network. A light poll keeps both
- * sides in step.
- */
-export function ProjectBoard({
-  projectId,
-  viewer,
-  initial,
-  renderedAt,
-  initialItemId = null,
-}: {
-  projectId: string;
-  viewer: BoardViewer;
-  initial: BoardData;
-  /** When the server built `initial` — a page from the router cache may be old. */
-  renderedAt: number;
-  /** ?item= (or a v48 ?task=) from the URL — a notification's deep link to one card. */
-  initialItemId?: string | null;
-}) {
-  const role = roleOf(viewer);
-  const [cards, setCards] = useState(initial.items);
-  const [meta, setMeta] = useState({ people: initial.people, phases: initial.phases });
+export function ProjectBoard({ switcher }: { switcher?: ReactNode }) {
+  const work = useWork();
+  const { viewer, items: cards, people, phases, today } = work;
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [openId, setOpenId] = useState<string | null>(initialItemId);
-  const [creating, setCreating] = useState<{ stage: ProjectTaskStatus } | null>(null);
-  const [sendingBack, setSendingBack] = useState<{
-    id: string;
-    stage: ProjectTaskStatus;
-    boardPosition: number;
-    revert: WorkItem[];
-  } | null>(null);
   const [query, setQuery] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null);
   const [phaseFilter, setPhaseFilter] = useState<string | null>(null);
   const [helpOnly, setHelpOnly] = useState(false);
-  const [collapsed, setCollapsed] = useState<ProjectTaskStatus[]>([]);
-  const [today] = useState(todayKey);
-  // A notification link to another card on this same page arrives as a new
-  // ?item= without remounting the board; open it.
-  const [seenItemParam, setSeenItemParam] = useState(initialItemId);
-  if (initialItemId !== seenItemParam) {
-    setSeenItemParam(initialItemId);
-    if (initialItemId) setOpenId(initialItemId);
-  }
-
-  // Refs the poll consults so it never clobbers a drag or an unsaved move.
-  const dragging = useRef(false);
-  const pending = useRef(0);
-  const lastLocal = useRef(0);
+  const [collapsed, toggleCollapsed] = useLocalSet("avix.board.collapsed");
   const snapshot = useRef<WorkItem[]>([]);
-  const cardsRef = useRef(cards);
-  const versionRef = useRef(initial.version);
-  useEffect(() => {
-    cardsRef.current = cards;
-  }, [cards]);
 
-  useEffect(() => {
-    // Per-viewer convenience, read after mount so the server render matches.
-    const stored = readCollapsed();
-    if (stored.length) queueMicrotask(() => setCollapsed(stored));
-  }, []);
-
-  // The poll sends the version it holds; an unchanged board answers 204 with
-  // no body, so a quiet board costs the server one small query. A hidden tab
-  // keeps polling, slowly, so coming back to it isn't stale for long.
-  const { mutate } = useSWR<Timed>(
-    `/api/projects/${projectId}/board`,
-    (url: string) => timedFetch(url, versionRef.current),
-    {
-      refreshInterval: () =>
-        typeof document !== "undefined" && document.hidden ? 60_000 : 15_000,
-      refreshWhenHidden: true,
-      revalidateOnFocus: true,
-      // The server just rendered this board; asking again on mount would double
-      // the work of every page load. The effect below catches the one case
-      // where it's worth it — a page handed back from the router cache.
-      revalidateOnMount: false,
-      dedupingInterval: 3_000,
-      onSuccess: (res) => {
-        const data = res?.data;
-        if (!res || !data) return;
-        if (dragging.current || pending.current > 0 || res.startedAt < lastLocal.current) return;
-        versionRef.current = data.version;
-        setCards((prev) => reconcile(prev, data.items));
-        setMeta((prev) =>
-          prev.people.length === data.people.length &&
-          prev.phases.length === data.phases.length &&
-          prev.phases.every((m, i) => m.id === data.phases[i]?.id && m.title === data.phases[i]?.title)
-            ? prev
-            : { people: data.people, phases: data.phases },
-        );
-      },
-    },
-  );
-
-  useEffect(() => {
-    if (Date.now() - renderedAt > 5_000) void mutate();
-  }, [mutate, renderedAt]);
-
-  const peopleById = useMemo(() => new Map(meta.people.map((p) => [p.id, p])), [meta.people]);
-  const phasesById = useMemo(() => new Map(meta.phases.map((m) => [m.id, m])), [meta.phases]);
+  const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+  const phasesById = useMemo(() => new Map(phases.map((m) => [m.id, m])), [phases]);
   const ctx: CardContext = useMemo(
-    () => ({ peopleById, phasesById, viewer: { id: viewer.id, side: viewer.side }, today }),
-    [peopleById, phasesById, viewer.id, viewer.side, today],
+    () => ({
+      peopleById,
+      phasesById,
+      viewer: { id: viewer.id, side: viewer.side, role: viewer.role },
+      today,
+      // Prices on cards are the admin's alone: a client reads theirs in the
+      // list, as on the timeline before.
+      showPrice: viewer.role === "ADMIN" && work.pricesShown,
+      onAccept: work.accept,
+      onDecline: work.decline,
+    }),
+    [peopleById, phasesById, viewer.id, viewer.side, viewer.role, today, work.pricesShown, work.accept, work.decline],
   );
 
   const filtering = !!query.trim() || !!assigneeFilter || !!phaseFilter || helpOnly;
@@ -267,66 +114,33 @@ export function ProjectBoard({
   }, [cards, query, assigneeFilter, phaseFilter, helpOnly]);
 
   /* ---------------------------------------------------------------- */
-  /* Mutations                                                         */
+  /* Quick add                                                         */
   /* ---------------------------------------------------------------- */
-
-  const track = useCallback(async <T,>(work: () => Promise<T>): Promise<T> => {
-    pending.current++;
-    lastLocal.current = Date.now();
-    try {
-      return await work();
-    } finally {
-      pending.current--;
-      lastLocal.current = Date.now();
-    }
-  }, []);
-
-  const upsert = useCallback((card: WorkItem, replaceId?: string) => {
-    setCards((prev) => {
-      const id = replaceId ?? card.id;
-      const exists = prev.some((c) => c.id === id);
-      return exists ? prev.map((c) => (c.id === id ? card : c)) : [...prev, card];
-    });
-  }, []);
-
-  const remove = useCallback((id: string) => {
-    setCards((prev) => prev.filter((c) => c.id !== id));
-  }, []);
-
-  // An item made from a chat message lands here at once, not on the next poll.
-  useEffect(() => {
-    function onCard(e: Event) {
-      const detail = (e as CustomEvent<{ projectId: string; item: WorkItem }>).detail;
-      if (detail?.projectId === projectId) upsert(detail.item);
-    }
-    window.addEventListener("avix:board-card", onCard);
-    return () => window.removeEventListener("avix:board-card", onCard);
-  }, [projectId, upsert]);
 
   const quickAdd = useCallback(
     async (stage: ProjectTaskStatus, title: string, atTop: boolean) => {
-      // A client's addition always waits in Requested (the server decides).
-      const column: ProjectTaskStatus = viewer.side === "CLIENT" ? "REQUESTED" : stage;
-      const list = cardsRef.current
-        .filter((c) => c.stage === column)
+      const list = work.itemsRef.current
+        .filter((c) => c.stage === stage)
         .sort((a, b) => a.boardPosition - b.boardPosition);
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const temp = draftItem(tempId, title, column, viewer, {
-        position: Math.max(-1, ...cardsRef.current.map((c) => c.position)) + 1,
+      const temp = draftItem(tempId, title, stage, viewer, {
+        position: Math.max(-1, ...work.itemsRef.current.map((c) => c.position)) + 1,
         boardPosition: atTop
           ? positionBetween(null, list[0]?.boardPosition)
           : positionBetween(list[list.length - 1]?.boardPosition, null),
       });
-      upsert(temp);
-      const result = await track(() => createWorkItem({ projectId, title, stage: column, atTop }));
+      work.upsert(temp);
+      const result = await work.track(() =>
+        createWorkItem({ projectId: work.projectId, title, stage, atTop }),
+      );
       if (!result.ok) {
-        remove(tempId);
+        work.drop([tempId]);
         toast.error(result.error);
         return;
       }
-      upsert(result.data.item, tempId);
+      work.upsert(result.data.item, tempId);
     },
-    [projectId, viewer, track, upsert, remove],
+    [work, viewer],
   );
 
   /* ---------------------------------------------------------------- */
@@ -346,12 +160,11 @@ export function ProjectBoard({
 
   function stageOf(id: string): ProjectTaskStatus | null {
     if (id.startsWith("col:")) return id.slice(4) as ProjectTaskStatus;
-    return cardsRef.current.find((c) => c.id === id)?.stage ?? null;
+    return work.itemsRef.current.find((c) => c.id === id)?.stage ?? null;
   }
 
   function onDragStart(e: DragStartEvent) {
-    dragging.current = true;
-    snapshot.current = cardsRef.current;
+    snapshot.current = work.beginDrag();
     setActiveId(String(e.active.id));
   }
 
@@ -367,7 +180,7 @@ export function ProjectBoard({
     if (!from || !to || from === to) return;
     // Only open the columns this card may actually go to.
     const origin = snapshot.current.find((c) => c.id === activeKey);
-    if (origin && origin.stage !== to && !canMoveWorkItem({ role }, origin, origin.stage, to).ok) return;
+    if (origin && origin.stage !== to && !canMoveWorkItem(viewer, origin, origin.stage, to).ok) return;
 
     const target = columns[to].filter((c) => c.id !== activeKey);
     let index = target.length;
@@ -377,12 +190,9 @@ export function ProjectBoard({
       const below = translated ? translated.top > over.rect.top + over.rect.height / 2 : false;
       index = overIndex < 0 ? target.length : overIndex + (below ? 1 : 0);
     }
-    const boardPosition = positionBetween(
-      target[index - 1]?.boardPosition,
-      target[index]?.boardPosition,
-    );
-    setCards((prev) =>
-      prev.map((c) => (c.id === activeKey ? { ...c, stage: to, boardPosition } : c)),
+    const boardPosition = positionBetween(target[index - 1]?.boardPosition, target[index]?.boardPosition);
+    work.setItems((prev) =>
+      prev.map((c) => (c.id === activeKey ? { ...c, stage: to, status: stageToStatus(to), boardPosition } : c)),
     );
   }
 
@@ -391,13 +201,13 @@ export function ProjectBoard({
     const id = String(active.id);
     setActiveId(null);
     const before = snapshot.current.find((c) => c.id === id);
+    work.endDrag();
     if (!over || !before) {
-      dragging.current = false;
-      setCards(snapshot.current);
+      work.setItems(snapshot.current);
       return;
     }
 
-    const current = cardsRef.current.find((c) => c.id === id)!;
+    const current = work.itemsRef.current.find((c) => c.id === id)!;
     const stage = current.stage;
     const list = columns[stage];
     const oldIndex = list.findIndex((c) => c.id === id);
@@ -413,7 +223,6 @@ export function ProjectBoard({
         ? current.boardPosition
         : positionBetween(ordered[at - 1]?.boardPosition, ordered[at + 1]?.boardPosition);
 
-    dragging.current = false;
     if (
       stage === before.stage &&
       (oldIndex === newIndex || at < 0) &&
@@ -421,110 +230,33 @@ export function ProjectBoard({
     ) {
       return;
     }
-    const check = canMoveWorkItem({ role }, before, before.stage, stage);
-    if (!check.ok) {
-      setCards(snapshot.current);
-      if (stage !== before.stage) toast.error(check.error);
+    // A drop the server would refuse goes back quietly when it stayed in its
+    // own column (a client can't reorder), and says why when it crossed one.
+    if (!canMoveWorkItem(viewer, before, before.stage, stage).ok && stage === before.stage) {
+      work.setItems(snapshot.current);
       return;
     }
-
-    setCards((prev) => prev.map((c) => (c.id === id ? { ...c, stage, boardPosition } : c)));
-    if (check.kind === "send-back") {
-      // The team needs to know why: ask before writing anything.
-      setSendingBack({ id, stage, boardPosition, revert: snapshot.current });
-      return;
-    }
-    await commitMove(id, stage, boardPosition, snapshot.current);
-  }
-
-  /** Writes a move already painted locally; `revert` restores the board on failure. */
-  async function commitMove(
-    id: string,
-    stage: ProjectTaskStatus,
-    boardPosition: number,
-    revert: WorkItem[],
-    comment?: string,
-  ): Promise<boolean> {
-    const result = await track(() => moveWorkItem({ itemId: id, stage, boardPosition, comment }));
-    if (!result.ok) {
-      setCards(revert);
-      toast.error(result.error);
-      return false;
-    }
-    const { item, renumbered } = result.data;
-    if (renumbered.length) {
-      const map = new Map(renumbered.map((r) => [r.id, r.boardPosition]));
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === item.id ? item : map.has(c.id) ? { ...c, boardPosition: map.get(c.id)! } : c,
-        ),
-      );
-    } else {
-      upsert(item);
-    }
-    if (role === "CLIENT" && item.stage === "DONE") toast.success("Approved — thank you!");
-    return true;
-  }
-
-  /** A stage picked from a menu: to the end of that column, asking for a reason if it's a send-back. */
-  async function requestMove(id: string, stage: ProjectTaskStatus) {
-    const card = cardsRef.current.find((c) => c.id === id);
-    if (!card || card.stage === stage) return;
-    const check = canMoveWorkItem({ role }, card, card.stage, stage);
-    if (!check.ok) return void toast.error(check.error);
-    const list = cardsRef.current.filter((c) => c.stage === stage && c.id !== id);
-    const boardPosition = positionBetween(
-      list.reduce<number | null>((max, c) => (max == null || c.boardPosition > max ? c.boardPosition : max), null),
-      null,
-    );
-    const prev = cardsRef.current;
-    setCards((cur) => cur.map((c) => (c.id === id ? { ...c, stage, boardPosition } : c)));
-    if (check.kind === "send-back") {
-      setSendingBack({ id, stage, boardPosition, revert: prev });
-      return;
-    }
-    await commitMove(id, stage, boardPosition, prev);
+    await work.move(id, stage, { boardPosition, revert: snapshot.current });
   }
 
   function onDragCancel() {
-    dragging.current = false;
+    work.endDrag();
     setActiveId(null);
-    setCards(snapshot.current);
-  }
-
-  /* ---------------------------------------------------------------- */
-  /* Opening cards                                                     */
-  /* ---------------------------------------------------------------- */
-
-  // The open card lives in the URL too, so it can be shared and survives a
-  // reload. replaceState: opening a card is not a navigation.
-  const openTask = useCallback((id: string | null) => {
-    setOpenId(id);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("task");
-    if (id) url.searchParams.set("item", id);
-    else url.searchParams.delete("item");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-  }, []);
-
-  function toggleCollapsed(status: ProjectTaskStatus) {
-    setCollapsed((prev) => {
-      const next = prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status];
-      try {
-        localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
-      } catch {
-        /* private mode — collapsing just won't persist */
-      }
-      return next;
-    });
+    work.setItems(snapshot.current);
   }
 
   const activeCard = activeId ? cards.find((c) => c.id === activeId) ?? null : null;
-  const openCard = openId ? cards.find((c) => c.id === openId) ?? null : null;
   const total = cards.length;
   const doneCount = cards.filter((c) => c.stage === "DONE").length;
   const helpCount = cards.filter((c) => c.helpFrom && c.helpFrom !== viewer.side).length;
-  const assignees = meta.people.filter((p) => cards.some((c) => c.assigneeId === p.id));
+  const assignees = people.filter((p) => cards.some((c) => c.assigneeId === p.id));
+  const team = viewer.side === "ADMIN";
+
+  // Requested leads the board. The team sees it only while something waits in
+  // it; a client always does — it's where their own asks live.
+  const shown = BOARD_COLUMNS.filter(
+    (column) => column.id !== "REQUESTED" || !team || columns.REQUESTED.length > 0,
+  );
 
   return (
     <div className="min-w-0">
@@ -536,9 +268,9 @@ export function ProjectBoard({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tasks"
-              aria-label="Search tasks"
-              className="h-9 w-full rounded-lg border bg-background pr-8 pl-8 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+              placeholder="Search milestones"
+              aria-label="Search milestones"
+              className="h-9 w-full rounded-lg border bg-background pr-8 pl-8 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40 max-sm:text-base"
             />
             {query && (
               <button
@@ -560,7 +292,7 @@ export function ProjectBoard({
                   type="button"
                   onClick={() => setAssigneeFilter((cur) => (cur === p.id ? null : p.id))}
                   aria-pressed={assigneeFilter === p.id}
-                  title={`Only ${p.name}'s tasks`}
+                  title={`Only ${p.name}'s work`}
                   className={cn(
                     "rounded-full transition-[opacity,box-shadow]",
                     assigneeFilter && assigneeFilter !== p.id && "opacity-35 hover:opacity-80",
@@ -573,17 +305,17 @@ export function ProjectBoard({
             </div>
           )}
 
-          {meta.phases.length > 0 && (
+          {phases.length > 0 && (
             <label className="relative inline-flex h-9 items-center rounded-lg border bg-background pl-2.5 text-sm">
               <MilestoneIcon className="size-3.5 text-muted-foreground" />
               <select
                 value={phaseFilter ?? ""}
                 onChange={(e) => setPhaseFilter(e.target.value || null)}
-                aria-label="Filter by milestone"
+                aria-label="Filter by phase"
                 className="h-full max-w-[11rem] cursor-pointer appearance-none truncate bg-transparent pr-3 pl-1.5 outline-none"
               >
-                <option value="">All milestones</option>
-                {meta.phases.map((m) => (
+                <option value="">All phases</option>
+                {phases.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.title}
                   </option>
@@ -628,22 +360,27 @@ export function ProjectBoard({
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <StatusBattery cards={cards} side={viewer.side} />
           <span className="hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums sm:inline">
             {doneCount}/{total} done
           </span>
-          <Button onClick={() => setCreating({ stage: "TODO" })} className="shrink-0">
-            <Plus /> {viewer.side === "CLIENT" ? "New request" : "New task"}
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            {switcher}
+            {team && (
+              <Button onClick={() => work.create({ stage: "TODO" })} className="shrink-0">
+                <Plus /> Add milestone
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
-      {total === 0 ? (
-        <EmptyBoard side={viewer.side} onCreate={() => setCreating({ stage: "TODO" })} />
+      {total === 0 && team ? (
+        <EmptyBoard onCreate={() => work.create({ stage: "TODO" })} />
       ) : (
         <DndContext
-          id={`board-${projectId}`}
+          id={`board-${work.projectId}`}
           sensors={sensors}
           collisionDetection={closestCorners}
           onDragStart={onDragStart}
@@ -654,23 +391,20 @@ export function ProjectBoard({
           {/* Columns share the width on a wide screen and scroll sideways,
               one snap per column, on a narrow one. */}
           <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:mx-0 sm:snap-none sm:px-0 lg:gap-2.5 [scrollbar-width:thin]">
-            {BOARD_COLUMNS.filter(
-              // Requested only shows while something waits in it.
-              (column) => column.id !== "REQUESTED" || columns.REQUESTED.length > 0,
-            ).map((column) => (
+            {shown.map((column) => (
               <Column
                 key={column.id}
                 column={column}
                 side={viewer.side}
                 cards={columns[column.id]}
                 ctx={ctx}
-                collapsed={collapsed.includes(column.id)}
+                collapsed={collapsed.has(column.id)}
                 onToggle={() => toggleCollapsed(column.id)}
-                onOpen={openTask}
+                onOpen={work.open}
                 onQuickAdd={quickAdd}
-                // A client's additions all land in Requested, so that is the
-                // only column that offers them an "Add".
-                canAdd={viewer.side === "ADMIN" ? column.id !== "REQUESTED" : column.id === "REQUESTED"}
+                // The team adds anywhere but Requested; a client's asks go
+                // through the one "Request a task" button.
+                canAdd={team && column.id !== "REQUESTED"}
                 isTarget={!!activeCard && activeCard.stage === column.id}
               />
             ))}
@@ -681,61 +415,6 @@ export function ProjectBoard({
           </DragOverlay>
         </DndContext>
       )}
-
-      {openId && (
-        <TaskDrawer
-          taskId={openId}
-          card={openCard}
-          viewer={viewer}
-          people={meta.people}
-          phases={meta.phases}
-          today={today}
-          onClose={() => openTask(null)}
-          onCardChange={upsert}
-          onCardDelete={(id) => {
-            remove(id);
-            openTask(null);
-          }}
-          onMove={requestMove}
-          track={track}
-        />
-      )}
-
-      {creating && (
-        <NewTaskDialog
-          open
-          onOpenChange={(o) => !o && setCreating(null)}
-          projectId={projectId}
-          viewer={viewer}
-          people={meta.people}
-          phases={meta.phases}
-          defaultStage={creating.stage}
-          onCreated={(card) => {
-            upsert(card);
-            setCreating(null);
-          }}
-        />
-      )}
-
-      <SendBackDialog
-        open={!!sendingBack}
-        title={sendingBack ? (cards.find((c) => c.id === sendingBack.id)?.title ?? "") : ""}
-        to={sendingBack?.stage ?? "IN_PROGRESS"}
-        onCancel={() => {
-          if (sendingBack) setCards(sendingBack.revert);
-          setSendingBack(null);
-        }}
-        onSend={async (comment) => {
-          if (!sendingBack) return false;
-          const { id, stage, boardPosition, revert } = sendingBack;
-          const ok = await commitMove(id, stage, boardPosition, revert, comment);
-          if (ok) {
-            setSendingBack(null);
-            toast.success("Sent back — the team has your note.");
-          }
-          return ok;
-        }}
-      />
     </div>
   );
 }
@@ -786,64 +465,18 @@ function draftItem(
   };
 }
 
-/**
- * Sending work back needs a reason — the team can't fix what nobody named.
- * The note is posted on the item as a comment.
- */
-function SendBackDialog({
-  open,
-  title,
-  to,
-  onCancel,
-  onSend,
-}: {
-  open: boolean;
-  title: string;
-  to: ProjectTaskStatus;
-  onCancel: () => void;
-  onSend: (comment: string) => Promise<boolean>;
-}) {
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  return (
-    <Dialog open={open} onOpenChange={(o) => !o && !busy && onCancel()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-heading">Send back to the team</DialogTitle>
-          <DialogDescription>
-            “{title}” goes back to {COLUMN_BY_ID[to].clientLabel}. What needs changing?
-          </DialogDescription>
-        </DialogHeader>
-        <Textarea
-          autoFocus
-          rows={4}
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          maxLength={5000}
-          placeholder="e.g. The header image is still the old one, and the button should say “Book now”."
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={onCancel} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            disabled={busy || !note.trim()}
-            onClick={async () => {
-              setBusy(true);
-              const ok = await onSend(note.trim());
-              setBusy(false);
-              if (ok) setNote("");
-            }}
-          >
-            {busy && <Loader2 className="animate-spin" />} Send back
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /* -------------------------------------------------------------------- */
+
+/** What an empty column says, from where the viewer stands. */
+function emptyLabel(column: ProjectTaskStatus, side: BoardSide): string {
+  if (column === "REQUESTED") {
+    return side === "CLIENT"
+      ? "Nothing waiting on the team. Use “Request a task” to ask for something new."
+      : "No requests waiting";
+  }
+  if (column === "REVIEW" && side === "CLIENT") return "Nothing waiting on you";
+  return side === "CLIENT" ? "Nothing here yet" : "Drop a milestone here";
+}
 
 function Column({
   column,
@@ -895,7 +528,7 @@ function Column({
         </button>
         <span className="size-2 rounded-full bg-[var(--col)]" />
         <span className="text-xs font-semibold tabular-nums">{cards.length}</span>
-        <span className="text-xs font-semibold tracking-wide text-muted-foreground [writing-mode:vertical-rl]">
+        <span className="text-xs font-semibold tracking-wide whitespace-nowrap text-muted-foreground [writing-mode:vertical-rl]">
           {label}
         </span>
       </div>
@@ -925,8 +558,8 @@ function Column({
               type="button"
               onClick={() => setAdding("top")}
               className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-              aria-label={`Add a task to ${label}`}
-              title="Add a task"
+              aria-label={`Add a milestone to ${label}`}
+              title="Add a milestone"
             >
               <Plus className="size-4" />
             </button>
@@ -942,6 +575,11 @@ function Column({
           </button>
         </div>
       </header>
+      {column.id === "REQUESTED" && side === "ADMIN" && cards.length > 0 && (
+        <p className="-mt-1 px-3 pb-2 text-[11px] leading-snug text-muted-foreground">
+          The client&apos;s asks — accept or decline each one.
+        </p>
+      )}
 
       {adding === "top" && (
         <QuickAdd
@@ -960,9 +598,7 @@ function Column({
           ))}
           {cards.length === 0 && adding !== "top" && (
             <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-[color-mix(in_oklab,var(--col)_35%,var(--border))] px-3 py-6 text-center text-xs text-muted-foreground">
-              {column.id === "REVIEW" && side === "CLIENT"
-                ? "Nothing waiting on you"
-                : "Drop a task here"}
+              {emptyLabel(column.id, side)}
             </div>
           )}
         </div>
@@ -979,7 +615,7 @@ function Column({
           onClick={() => setAdding("bottom")}
           className="mx-2 mb-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
         >
-          <Plus className="size-3.5" /> Add task
+          <Plus className="size-3.5" /> Add
         </button>
       )}
     </section>
@@ -988,7 +624,7 @@ function Column({
 
 /**
  * Inline add, ClickUp-style: type, Enter, type the next one. Stays open until
- * Escape or a click away, so ten tasks don't take ten dialogs.
+ * Escape or a click away, so ten milestones don't take ten dialogs.
  */
 function QuickAdd({
   onSubmit,
@@ -1024,8 +660,8 @@ function QuickAdd({
         onBlur={() => {
           if (!value.trim()) onClose();
         }}
-        placeholder="Task name — Enter to add"
-        className="w-full resize-none bg-transparent text-[13px] outline-none placeholder:text-muted-foreground sm:text-[13px] max-sm:text-base"
+        placeholder="Name it — Enter to add"
+        className="w-full resize-none bg-transparent text-[13px] outline-none placeholder:text-muted-foreground max-sm:text-base"
         maxLength={200}
       />
       <div className="mt-1 flex items-center justify-end gap-1.5">
@@ -1077,7 +713,7 @@ function StatusBattery({ cards, side }: { cards: WorkItem[]; side: BoardSide }) 
   );
 }
 
-function EmptyBoard({ side, onCreate }: { side: BoardSide; onCreate: () => void }) {
+function EmptyBoard({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="relative overflow-hidden rounded-2xl border border-dashed bg-card px-6 py-14 text-center">
       <div className="mx-auto mb-5 flex w-fit gap-1.5" aria-hidden>
@@ -1093,16 +729,13 @@ function EmptyBoard({ side, onCreate }: { side: BoardSide; onCreate: () => void 
         ))}
       </div>
       <KanbanSquare className="sr-only" />
-      <h3 className="title-card">
-        {side === "CLIENT" ? "Your project board is ready" : "No tasks on this board yet"}
-      </h3>
+      <h3 className="title-card">No milestones on this project yet</h3>
       <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
-        {side === "CLIENT"
-          ? "Ask for anything here. Your request waits in Requested until the team picks it up — then you'll see it move from To do to Done, and anything in Your review is waiting for your OK."
-          : "Work you add, and the client's requests, land here. Drag cards across as work moves; anything in Review asks the client to take a look."}
+        Work you add, and the client&apos;s requests, land here. Drag cards across as work moves;
+        anything in review asks the client to take a look.
       </p>
       <Button onClick={onCreate} className="mt-5">
-        <Plus /> Add the first task
+        <Plus /> Add the first milestone
       </Button>
     </div>
   );

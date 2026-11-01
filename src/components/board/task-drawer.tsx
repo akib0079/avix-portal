@@ -1,38 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import type { JSONContent } from "@tiptap/react";
 import type { Priority, ProjectTaskStatus } from "@prisma/client";
 import { Dialog as DialogPrimitive } from "radix-ui";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
   BOARD_COLUMNS,
   COLUMN_BY_ID,
   PRIORITY_META,
-  canMoveWorkItem,
   type BoardComment,
   type BoardPerson,
   type BoardPhase,
-  type BoardSide,
   type WorkItem,
+  type WorkRole,
 } from "@/lib/board";
 import {
   addWorkComment,
   deleteWorkComment,
-  deleteWorkItem,
   resolveWorkHelp,
-  updateWorkItem,
-  withdrawWorkItem,
 } from "@/lib/actions/project-board";
+import { approvalPricingSchema, type ApprovalPricingInput } from "@/lib/validation/task-request";
+import { formatPricing } from "@/lib/format";
+import { formatHours, hoursProgress, requestOutcome, stageChoices } from "@/lib/work-list";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { ImageLightbox } from "@/components/editor/image-lightbox";
+import { PricingFields } from "@/components/milestones/pricing-fields";
+import { RateMilestone } from "@/components/portal/rate-milestone";
 import { Button } from "@/components/ui/button";
+import { Form } from "@/components/ui/form";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -45,8 +51,8 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { CommentComposer, type CommentDraft } from "./comment-composer";
-import { CommentText, PersonAvatar, PriorityFlag, dueState, formatDay } from "./board-bits";
-import type { BoardViewer } from "./project-board";
+import { CommentText, HoursBar, PersonAvatar, PriorityFlag, dueState, formatDay } from "./board-bits";
+import { useWork, type BoardViewer } from "./work-store";
 import { useWorkItemDetail } from "./use-work-item-detail";
 import {
   X,
@@ -68,88 +74,80 @@ import {
   AlignLeft,
   Link2,
   Archive,
+  ArchiveRestore,
+  BadgeDollarSign,
+  Inbox,
+  Check,
+  Undo2,
+  ReceiptText,
+  Plus,
 } from "lucide-react";
 
 const TEMP = "temp-comment-";
 
 /**
- * A card, opened. Right-side panel in the monday mould — the board stays in
- * view beside it — split ClickUp-style into the task on the left and its
- * conversation on the right. On a phone the two halves become tabs.
+ * One item, opened — the same panel from the list and the board. Right-side
+ * panel in the monday mould, the view still in sight beside it, split
+ * ClickUp-style into the item on the left and its conversation on the right.
+ * On a phone the two halves become tabs.
+ *
+ * What it offers follows who's looking, by the same rules the server checks:
+ * the team edits everything (prices are the admin's), accepts or declines a
+ * request, logs time and archives; a client approves or sends back work in
+ * review, rates finished work, and edits or withdraws their own request while
+ * it waits.
  */
-export function TaskDrawer({
-  taskId,
-  card: boardCard,
-  viewer,
-  people,
-  phases,
-  today,
-  onClose,
-  onCardChange,
-  onCardDelete,
-  onMove,
-  track,
-}: {
-  taskId: string;
-  /** The board's copy, for an instant first paint. Null on a deep link it hasn't loaded. */
-  card: WorkItem | null;
-  viewer: BoardViewer;
-  people: BoardPerson[];
-  phases: BoardPhase[];
-  today: string;
-  onClose: () => void;
-  onCardChange: (card: WorkItem) => void;
-  onCardDelete: (id: string) => void;
-  onMove: (id: string, stage: ProjectTaskStatus) => Promise<void>;
-  track: <T>(work: () => Promise<T>) => Promise<T>;
-}) {
-  const { data, mutate, isLoading } = useWorkItemDetail(taskId, {
+export function TaskDrawer({ itemId, onClose }: { itemId: string; onClose: () => void }) {
+  const work = useWork();
+  const { viewer, people, phases, today, track } = work;
+  const live = work.items.find((c) => c.id === itemId) ?? null;
+  const { data, mutate, isLoading } = useWorkItemDetail(itemId, {
     refreshInterval: 12_000,
     revalidateOnFocus: true,
   });
-  const card = boardCard ?? data?.item ?? null;
-  // On a phone the halves are tabs; a card waiting on this viewer's answer
+  // The live copy paints at once; an archived item (opened from the archive
+  // or an old link) isn't on the board, so it comes with the detail.
+  const card = live ?? data?.item ?? null;
+  // On a phone the halves are tabs; an item waiting on this viewer's answer
   // opens on the conversation, where the question is.
   const [pane, setPane] = useState<"details" | "activity">(() =>
-    boardCard?.helpFrom && boardCard.helpFrom !== viewer.side ? "activity" : "details",
+    live?.helpFrom && live.helpFrom !== viewer.side ? "activity" : "details",
   );
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [confirm, setConfirm] = useState<"delete" | "withdraw" | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  // A link to a card that's gone (deleted, or never this viewer's) closes
+  // A link to an item that's gone (deleted, or never this viewer's) closes
   // itself instead of showing an empty panel forever.
   useEffect(() => {
-    if (!isLoading && data === null && !boardCard) {
-      toast.error("That task isn't on this board any more.");
+    if (!isLoading && data === null && !live) {
+      toast.error("That item isn't on this project any more.");
       onClose();
     }
-  }, [isLoading, data, boardCard, onClose]);
+  }, [isLoading, data, live, onClose]);
 
+  const team = viewer.side === "ADMIN";
   const archived = !!card?.archivedAt;
+  const requested = !!card && card.stage === "REQUESTED" && !archived;
   // A client's own request stays theirs to reword until the team decides it.
-  const ownRequest =
-    !!card && viewer.side === "CLIENT" && card.createdById === viewer.id && card.stage === "REQUESTED";
-  const canEdit = !!card && !archived && (viewer.side === "ADMIN" || ownRequest);
+  const ownRequest = requested && viewer.side === "CLIENT" && card.createdById === viewer.id;
+  const canEdit = !!card && !archived && (team || ownRequest);
   // Who does it and under which phase are the team's calls.
-  const canEditMeta = !!card && !archived && viewer.side === "ADMIN";
+  const canEditMeta = !!card && !archived && team;
+  const canPrice = viewer.role === "ADMIN" && work.billingType !== "CONTRACT";
   const comments = data?.comments ?? [];
   const openHelp = comments.filter((c) => c.kind === "HELP" && !c.resolvedAt);
+  const request = data?.request ?? null;
+  const outcome = request ? requestOutcome(request, card) : null;
 
-  async function patch(
-    change: Parameters<typeof updateWorkItem>[1],
-    optimistic: Partial<WorkItem>,
-  ) {
-    if (!card) return;
-    const before = card;
-    onCardChange({ ...before, ...optimistic });
-    const result = await track(() => updateWorkItem(card.id, change));
-    if (!result.ok) {
-      onCardChange(before);
-      toast.error(result.error);
-      return false;
-    }
-    onCardChange(result.data.item);
-    return true;
+  /** A changed item goes back where it came from: the live set, or the archive's copy. */
+  function changed(item: WorkItem) {
+    if (live && !item.archivedAt) work.upsert(item);
+    else void mutate((cur) => (cur ? { ...cur, item } : cur), { revalidate: false });
+  }
+
+  function patch(change: Parameters<typeof work.patch>[1], optimistic: Partial<WorkItem>) {
+    if (!card) return Promise.resolve(false);
+    return work.patch(card.id, change, optimistic);
   }
 
   async function submitComment(draft: CommentDraft): Promise<boolean> {
@@ -194,7 +192,7 @@ export function TaskDrawer({
           : cur,
       { revalidate: false },
     );
-    onCardChange(result.data.item);
+    changed(result.data.item);
     if (draft.kind === "HELP") {
       toast.success(viewer.side === "CLIENT" ? "Help requested — the team has been notified." : "Sent to the client.");
     }
@@ -215,7 +213,7 @@ export function TaskDrawer({
           : cur,
       { revalidate: false },
     );
-    onCardChange(result.data.item);
+    changed(result.data.item);
   }
 
   async function removeComment(commentId: string) {
@@ -229,28 +227,23 @@ export function TaskDrawer({
       await mutate(previous, { revalidate: false });
       return void toast.error(result.error);
     }
-    onCardChange(result.data.item);
+    changed(result.data.item);
   }
 
-  async function removeTask() {
+  async function confirmed() {
+    if (!card || !confirm) return;
+    setBusy(true);
+    const ok = confirm === "withdraw" ? await work.withdraw(card.id) : await work.remove(card.id);
+    setBusy(false);
+    if (ok) setConfirm(null);
+  }
+
+  async function restore() {
     if (!card) return;
-    setDeleting(true);
-    if (ownRequest) {
-      const result = await track(() => withdrawWorkItem(card.id));
-      setDeleting(false);
-      if (!result.ok) return void toast.error(result.error);
-      setConfirmDelete(false);
-      toast.success("Request withdrawn.");
-      onCardDelete(card.id);
-      return;
-    }
-    const result = await track(() => deleteWorkItem(card.id));
-    setDeleting(false);
-    if (!result.ok) return void toast.error(result.error);
-    setConfirmDelete(false);
-    // Anything with hours, invoices, a thread or a client's request is kept.
-    toast.success(result.data.archived ? "Archived — its history is kept." : "Task deleted.");
-    onCardDelete(card.id);
+    setBusy(true);
+    const item = await work.restore(card.id);
+    setBusy(false);
+    if (item) void mutate((cur) => (cur ? { ...cur, item } : cur), { revalidate: false });
   }
 
   async function copyLink() {
@@ -264,10 +257,15 @@ export function TaskDrawer({
 
   const column = card ? COLUMN_BY_ID[card.stage] : null;
   const author = card?.createdById ? people.find((p) => p.id === card.createdById) : undefined;
-  // A waiting request is declined, with a note for the client, not deleted.
-  const canRemove =
-    !!card && !archived && ((viewer.side === "ADMIN" && card.stage !== "REQUESTED") || ownRequest);
-  const request = data?.request ?? null;
+  const authorName =
+    author?.name ?? card?.creatorName ?? (card?.createdByRole === "CLIENT" ? "Client" : "Avix Digital");
+  // A waiting request is accepted or declined, not archived or deleted.
+  const canArchive = !!card && team && !archived && !requested;
+  const canRestore = !!card && team && archived && card.stage !== "REQUESTED";
+  const canDelete = !!card && viewer.role === "ADMIN" && !archived && !requested;
+  const hasMenu = canArchive || canRestore || canDelete || ownRequest;
+  const priced = !!card && card.pricingType !== "NONE";
+  const showPrice = !!card && (canPrice || (work.pricesShown && priced));
 
   return (
     <DialogPrimitive.Root open onOpenChange={(o) => !o && onClose()}>
@@ -283,8 +281,8 @@ export function TaskDrawer({
             {card && (
               <StatusPicker
                 item={card}
-                side={viewer.side}
-                onChange={(stage) => stage !== card.stage && void onMove(card.id, stage)}
+                viewer={viewer}
+                onChange={(stage) => stage !== card.stage && void work.move(card.id, stage)}
               />
             )}
             {archived && (
@@ -299,10 +297,10 @@ export function TaskDrawer({
               </span>
             )}
             <div className="ml-auto flex items-center gap-1">
-              <IconButton label="Copy link to this task" onClick={copyLink}>
+              <IconButton label="Copy link" onClick={copyLink}>
                 <Link2 className="size-4" />
               </IconButton>
-              {canRemove && (
+              {hasMenu && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -313,10 +311,30 @@ export function TaskDrawer({
                       <MoreHorizontal className="size-4" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
-                      <Trash2 /> {ownRequest ? "Withdraw request" : "Delete task"}
-                    </DropdownMenuItem>
+                  <DropdownMenuContent align="end" className="w-48">
+                    {canArchive && (
+                      <DropdownMenuItem onSelect={() => card && void work.archive(card.id)}>
+                        <Archive /> Archive
+                      </DropdownMenuItem>
+                    )}
+                    {canRestore && (
+                      <DropdownMenuItem onSelect={() => void restore()}>
+                        <ArchiveRestore /> Restore
+                      </DropdownMenuItem>
+                    )}
+                    {canDelete && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem variant="destructive" onSelect={() => setConfirm("delete")}>
+                          <Trash2 /> Delete
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    {ownRequest && (
+                      <DropdownMenuItem variant="destructive" onSelect={() => setConfirm("withdraw")}>
+                        <Undo2 /> Withdraw request
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
@@ -347,11 +365,11 @@ export function TaskDrawer({
 
           {!card ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 size-4 animate-spin" /> Loading task…
+              <Loader2 className="mr-2 size-4 animate-spin" /> Loading…
             </div>
           ) : (
             <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
-              {/* Left: the task */}
+              {/* Left: the item */}
               <div className={cn("min-h-0 overflow-y-auto px-4 py-5 sm:px-8 sm:py-6", pane !== "details" && "max-lg:hidden")}>
                 <DialogPrimitive.Title className="sr-only">{card.title}</DialogPrimitive.Title>
                 <TitleField
@@ -361,25 +379,25 @@ export function TaskDrawer({
                   onSave={(title) => patch({ title }, { title })}
                 />
 
-                {!canEdit && !archived && viewer.side === "CLIENT" && (
-                  <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Lock className="size-3" />
-                    {card.stage === "REVIEW"
-                      ? "Ready for your review — approve it, or send it back with a note."
-                      : "The team moves this along — you can comment and ask for help."}
-                  </p>
-                )}
-                {ownRequest && (
-                  <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Lock className="size-3" /> Waiting for the team to pick it up — you can still change it.
-                  </p>
-                )}
-                {request?.status === "REJECTED" && (
+                <DecisionBar
+                  item={card}
+                  viewer={viewer}
+                  ownRequest={ownRequest}
+                  askedBy={authorName}
+                  onAccept={() => work.accept(card.id)}
+                  onDecline={() => work.decline(card.id)}
+                  onApprove={() => void work.move(card.id, "DONE")}
+                  onSendBack={() => work.sendBack(card.id)}
+                  onWithdraw={() => setConfirm("withdraw")}
+                />
+                {outcome?.kind === "declined" && (
                   <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">
-                    <span className="font-medium">
-                      {request.adminNote === "Withdrawn by client" ? "Withdrawn." : "Declined:"}
-                    </span>{" "}
-                    {request.adminNote !== "Withdrawn by client" ? request.adminNote : null}
+                    <span className="font-medium">Declined:</span> {outcome.note}
+                  </p>
+                )}
+                {outcome?.kind === "withdrawn" && (
+                  <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+                    {viewer.side === "CLIENT" ? "You withdrew this request." : "The client withdrew this request."}
                   </p>
                 )}
 
@@ -409,22 +427,58 @@ export function TaskDrawer({
                     />
                   </Prop>
                   {(phases.length > 0 || card.parentId) && (
-                    <Prop icon={MilestoneIcon} label="Milestone">
+                    <Prop icon={MilestoneIcon} label="Phase">
                       <MilestonePicker
                         milestones={phases.filter((m) => m.id !== card.id)}
                         value={card.parentId}
-                        // A phase with work under it can't go under another.
-                        disabled={!canEditMeta || card.childCount > 0}
+                        // A phase with work under it can't go under another;
+                        // a request finds its phase when it's accepted.
+                        disabled={!canEditMeta || card.childCount > 0 || requested}
                         onChange={(parentId) => patch({ parentId }, { parentId })}
                       />
+                    </Prop>
+                  )}
+                  {showPrice && (
+                    <Prop icon={BadgeDollarSign} label="Price">
+                      <PriceField
+                        item={card}
+                        editable={canPrice && !archived}
+                        onSave={(pricing) =>
+                          patch(
+                            { pricing },
+                            {
+                              pricingType: pricing.pricingType,
+                              hourlyRate: pricing.pricingType === "HOURLY" ? (pricing.hourlyRate ?? null) : null,
+                              estimatedHours:
+                                pricing.pricingType === "HOURLY" ? (pricing.estimatedHours ?? null) : null,
+                              fixedPrice: pricing.pricingType === "FIXED" ? (pricing.fixedPrice ?? null) : null,
+                            },
+                          )
+                        }
+                      />
+                    </Prop>
+                  )}
+                  {viewer.role === "ADMIN" && card.billedOn.length > 0 && (
+                    <Prop icon={ReceiptText} label="Billed">
+                      <span className="flex flex-wrap gap-1.5 px-2">
+                        {card.billedOn.map((b) => (
+                          <Link
+                            key={b.invoiceId}
+                            href={`/admin/invoices/${b.invoiceId}`}
+                            className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+                          >
+                            {b.invoiceNumber}
+                            {b.status === "DRAFT" ? " · draft" : ""}
+                          </Link>
+                        ))}
+                      </span>
                     </Prop>
                   )}
                   <Prop icon={Clock} label="Created">
                     <span className="flex min-w-0 items-center gap-2 px-2 text-muted-foreground">
                       <PersonAvatar person={author} size={18} />
                       <span className="truncate">
-                        {author?.name ?? card.creatorName ?? (card.createdByRole === "CLIENT" ? "Client" : "Avix Digital")} ·{" "}
-                        {format(new Date(card.createdAt), "MMM d, yyyy")}
+                        {authorName} · {format(new Date(card.createdAt), "MMM d, yyyy")}
                       </span>
                     </span>
                   </Prop>
@@ -443,6 +497,15 @@ export function TaskDrawer({
                     return !!ok;
                   }}
                 />
+
+                {(team || card.loggedHours > 0) && !requested && (
+                  <TimeSection
+                    item={card}
+                    entries={data?.timeEntries ?? null}
+                    canLog={team && !archived && !!live}
+                    onLog={() => work.logTime(card.id)}
+                  />
+                )}
               </div>
 
               {/* Right: the conversation */}
@@ -477,22 +540,22 @@ export function TaskDrawer({
             </div>
           )}
 
-          <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <Dialog open={!!confirm} onOpenChange={(o) => !o && !busy && setConfirm(null)}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>{ownRequest ? "Withdraw this request?" : "Delete this task?"}</DialogTitle>
+                <DialogTitle>{confirm === "withdraw" ? "Withdraw this request?" : "Delete this milestone?"}</DialogTitle>
                 <DialogDescription>
-                  {ownRequest
-                    ? `“${card?.title}” leaves the board. The team sees that you withdrew it.`
-                    : `“${card?.title}” leaves the board for everyone. If it has logged hours, invoices, comments or came from a client request, it's archived instead, with its history kept.`}
+                  {confirm === "withdraw"
+                    ? `“${card?.title}” leaves the plan. The team sees that you withdrew it.`
+                    : `“${card?.title}” leaves the list and the board for everyone. If it has logged hours, invoices or comments, it's archived instead, with its history kept.`}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setConfirmDelete(false)}>
+                <Button variant="outline" onClick={() => setConfirm(null)} disabled={busy}>
                   Cancel
                 </Button>
-                <Button variant="destructive" disabled={deleting} onClick={removeTask}>
-                  {deleting && <Loader2 className="animate-spin" />} {ownRequest ? "Withdraw" : "Delete task"}
+                <Button variant="destructive" disabled={busy} onClick={confirmed}>
+                  {busy && <Loader2 className="animate-spin" />} {confirm === "withdraw" ? "Withdraw" : "Delete"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -500,6 +563,254 @@ export function TaskDrawer({
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+  );
+}
+
+/* -------------------------------------------------------------------- */
+/* Decisions                                                            */
+/* -------------------------------------------------------------------- */
+
+/**
+ * The one thing this item is waiting for, and the buttons to give it: the
+ * team's decision on a request, the client's verdict on work in review, the
+ * client's rating of finished work. Nothing waiting, nothing shown.
+ */
+function DecisionBar({
+  item,
+  viewer,
+  ownRequest,
+  askedBy,
+  onAccept,
+  onDecline,
+  onApprove,
+  onSendBack,
+  onWithdraw,
+}: {
+  item: WorkItem;
+  viewer: BoardViewer;
+  ownRequest: boolean;
+  askedBy: string;
+  onAccept: () => void;
+  onDecline: () => void;
+  onApprove: () => void;
+  onSendBack: () => void;
+  onWithdraw: () => void;
+}) {
+  if (item.archivedAt) return null;
+  const client = viewer.side === "CLIENT";
+  const bar = "mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 text-sm";
+
+  if (item.stage === "REQUESTED") {
+    if (!client) {
+      return (
+        <div className={cn(bar, "border-amber-300/60 bg-amber-500/[0.07] dark:border-amber-800/60")}>
+          <Inbox className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">{askedBy} asked for this</span>{" "}
+            <span className="text-muted-foreground">
+              {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })} — accept it into the plan or
+              decline it with a note.
+            </span>
+          </p>
+          {item.sourceTaskRequestId && (
+            <span className="flex gap-2">
+              <Button size="sm" onClick={onAccept}>
+                <Check /> Accept
+              </Button>
+              <Button size="sm" variant="outline" onClick={onDecline}>
+                <X /> Decline
+              </Button>
+            </span>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className={cn(bar, "border-amber-300/60 bg-amber-500/[0.07] dark:border-amber-800/60")}>
+        <Lock className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+        <p className="min-w-0 flex-1 text-muted-foreground">
+          {ownRequest
+            ? "Waiting for the team to pick it up — you can still change it, or withdraw it."
+            : "Waiting for the team to pick it up."}
+        </p>
+        {ownRequest && (
+          <Button size="sm" variant="outline" onClick={onWithdraw}>
+            <Undo2 /> Withdraw
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (item.stage === "REVIEW" && client) {
+    return (
+      <div className={cn(bar, "border-violet-300/60 bg-violet-500/[0.07] dark:border-violet-800/60")}>
+        <CircleDot className="size-4 shrink-0 text-violet-600 dark:text-violet-400" />
+        <p className="min-w-0 flex-1">
+          <span className="font-medium">Ready for your review.</span>{" "}
+          <span className="text-muted-foreground">Approve it if it&apos;s right, or send it back with a note.</span>
+        </p>
+        <span className="flex gap-2">
+          <Button size="sm" onClick={onApprove}>
+            <Check /> Approve
+          </Button>
+          <Button size="sm" variant="outline" onClick={onSendBack}>
+            <Undo2 /> Send back
+          </Button>
+        </span>
+      </div>
+    );
+  }
+
+  if (item.stage === "DONE" && client && !item.parentId) {
+    return (
+      <div className="mt-1">
+        <RateMilestone milestoneId={item.id} rating={item.clientRating} note={item.clientRatingNote} />
+      </div>
+    );
+  }
+
+  if (!client && item.stage === "REVIEW") {
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <CircleDot className="size-3 text-violet-500" /> With the client for review.
+      </p>
+    );
+  }
+
+  if (client && item.stage !== "DONE") {
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Lock className="size-3" />
+        The team moves this along — you can comment and ask for help.
+      </p>
+    );
+  }
+  return null;
+}
+
+/* -------------------------------------------------------------------- */
+/* Price and time                                                       */
+/* -------------------------------------------------------------------- */
+
+/** The price, and for an admin a click-to-edit form (the same fields as accepting a request). */
+function PriceField({
+  item,
+  editable,
+  onSave,
+}: {
+  item: WorkItem;
+  editable: boolean;
+  onSave: (pricing: ApprovalPricingInput) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const label = formatPricing(item) ?? "No charge";
+  if (!editable) return <span className="block px-2 py-1.5">{label}</span>;
+  if (!editing) {
+    return (
+      <button type="button" className={fieldButton} onClick={() => setEditing(true)}>
+        <span className={cn("truncate", item.pricingType === "NONE" && "text-muted-foreground")}>{label}</span>
+        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+      </button>
+    );
+  }
+  return (
+    <PricingEditor
+      item={item}
+      onCancel={() => setEditing(false)}
+      onSave={async (pricing) => {
+        const ok = await onSave(pricing);
+        if (ok) setEditing(false);
+        return ok;
+      }}
+    />
+  );
+}
+
+function PricingEditor({
+  item,
+  onCancel,
+  onSave,
+}: {
+  item: WorkItem;
+  onCancel: () => void;
+  onSave: (pricing: ApprovalPricingInput) => Promise<boolean>;
+}) {
+  const form = useForm<ApprovalPricingInput>({
+    resolver: zodResolver(approvalPricingSchema),
+    defaultValues: {
+      pricingType: item.pricingType,
+      hourlyRate: item.hourlyRate,
+      estimatedHours: item.estimatedHours,
+      fixedPrice: item.fixedPrice,
+    },
+  });
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit((values) => onSave(values))} className="space-y-2 py-1">
+        <PricingFields form={form} />
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting && <Loader2 className="animate-spin" />} Save price
+          </Button>
+        </div>
+      </form>
+    </Form>
+  );
+}
+
+/** Hours on the item: the total against the estimate, the latest entries, and (team) a way to log more. */
+function TimeSection({
+  item,
+  entries,
+  canLog,
+  onLog,
+}: {
+  item: WorkItem;
+  entries: { id: string; date: string; hours: number; note: string | null; userName: string | null }[] | null;
+  canLog: boolean;
+  onLog: () => void;
+}) {
+  const { over } = hoursProgress(item.loggedHours, item.estimatedHours);
+  const shown = (entries ?? []).slice(0, 5);
+  return (
+    <section className="mt-8">
+      <div className="mb-2 flex items-center gap-2">
+        <Clock className="size-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold">Time</h3>
+        <span className={cn("text-xs text-muted-foreground tabular-nums", over && "font-medium text-red-600 dark:text-red-400")}>
+          {formatHours(item.loggedHours)} logged
+          {item.estimatedHours != null ? ` of ${formatHours(item.estimatedHours)} estimated` : ""}
+        </span>
+        {canLog && (
+          <Button variant="outline" size="sm" className="ml-auto h-7 text-xs" onClick={onLog}>
+            <Plus className="size-3.5" /> Log time
+          </Button>
+        )}
+      </div>
+      <HoursBar logged={item.loggedHours} estimate={item.estimatedHours} className="mb-3" />
+      {entries === null ? (
+        <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+      ) : shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No time logged yet.</p>
+      ) : (
+        <ul className="divide-y rounded-xl border bg-card">
+          {shown.map((e) => (
+            <li key={e.id} className="flex items-start gap-3 px-3 py-2 text-sm">
+              <span className="w-12 shrink-0 font-semibold tabular-nums">{formatHours(e.hours)}</span>
+              <span className="min-w-0 flex-1">
+                <span className="text-muted-foreground tabular-nums">{formatDay(e.date)}</span>
+                {e.userName && <span className="text-muted-foreground"> · {e.userName}</span>}
+                {e.note && <span className="mt-0.5 block whitespace-pre-wrap [overflow-wrap:anywhere]">{e.note}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -614,21 +925,20 @@ function TitleField({
 
 function StatusPicker({
   item,
-  side,
+  viewer,
   onChange,
 }: {
   item: WorkItem;
-  side: BoardSide;
+  viewer: { side: BoardViewer["side"]; role: WorkRole };
   onChange: (stage: ProjectTaskStatus) => void;
 }) {
   const status = item.stage;
   const current = COLUMN_BY_ID[status];
-  const label = (c: (typeof BOARD_COLUMNS)[number]) => (side === "CLIENT" ? c.clientLabel : c.label);
+  const label = (c: (typeof BOARD_COLUMNS)[number]) =>
+    viewer.side === "CLIENT" ? c.clientLabel : c.label;
   // Only the moves this viewer may make (the server checks the same rule).
-  const role = side === "CLIENT" ? "CLIENT" : "ADMIN";
-  const options = BOARD_COLUMNS.filter(
-    (c) => c.id === status || canMoveWorkItem({ role }, item, status, c.id).ok,
-  );
+  const allowed = new Set(stageChoices(viewer.role, item));
+  const options = BOARD_COLUMNS.filter((c) => c.id === status || allowed.has(c.id));
   if (options.length < 2) {
     return (
       <span

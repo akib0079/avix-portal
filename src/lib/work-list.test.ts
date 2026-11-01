@@ -10,7 +10,9 @@ import {
   formatHours,
   hoursProgress,
   phaseProgress,
+  priceLabel,
   planOrder,
+  planPhases,
   planTree,
   reorderPlan,
   requestLabel,
@@ -87,6 +89,11 @@ test("the plan: phases hold their work, requests wait apart, nothing goes missin
   // Each phase is followed by its work, then the requests: what
   // reorderMilestones writes, covering every live item exactly once.
   assert.deepEqual(planOrder(tree), ["design", "colours", "logo", "launch", "orphan", "ask"]);
+  // What work can go under: accepted top-level items, as phasesOf picks them.
+  assert.deepEqual(
+    planPhases([launch, logo, ask, design, old]).map((p) => p.id),
+    ["design", "launch"],
+  );
 });
 
 test("one level deep: work under a sub-item still shows", () => {
@@ -188,6 +195,16 @@ test("grouped by assignee: people in board order, then unassigned", () => {
       ["unassigned", "Unassigned", [free.id]],
     ],
   );
+});
+
+test("price chips say the price, not the working", () => {
+  const none = { pricingType: "NONE" as const, hourlyRate: null, fixedPrice: null };
+  assert.equal(priceLabel(none), null);
+  assert.equal(priceLabel({ ...none, pricingType: "FIXED", fixedPrice: 400 }), "$400");
+  assert.equal(priceLabel({ ...none, pricingType: "FIXED", fixedPrice: 1250.5 }), "$1,250.50");
+  assert.equal(priceLabel({ ...none, pricingType: "HOURLY", hourlyRate: 80 }), "$80/h");
+  // Stripped for staff: nothing to show, so no chip at all.
+  assert.equal(priceLabel({ ...none, pricingType: "FIXED" }), null);
 });
 
 test("hours: a bar only against an estimate the viewer may see", () => {
