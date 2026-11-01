@@ -151,7 +151,7 @@ export function ScheduleFields({
   value: ScheduleDraft;
   onChange: (next: ScheduleDraft) => void;
   errors?: ScheduleErrors;
-  /** Agency today: the earliest a next invoice can be. */
+  /** Agency today, which the preview calls "today". */
   today: Day;
   /** Invoices the plan has made, for the preview of a plan that ends. */
   runCount?: number;
@@ -226,9 +226,11 @@ export function ScheduleFields({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium">{dateLabel}</span>
+          {/* No min: a plan running behind may keep the date it has, and the
+              server says what's wrong with any other past date. A browser
+              range check would block the whole form without saying why. */}
           <Input
             type="date"
-            min={today}
             value={value.nextDate}
             onChange={(e) => set({ nextDate: e.target.value })}
           />
@@ -276,7 +278,6 @@ export function ScheduleFields({
               type="date"
               className="mt-2"
               aria-label="Last invoice on or before"
-              min={value.nextDate || today}
               value={value.endDate}
               onChange={(e) => set({ endDate: e.target.value })}
             />
@@ -344,7 +345,9 @@ export function ScheduleFields({
           ) : (
             <>
               <span className="text-muted-foreground">Next: </span>
-              <span className="font-medium">{preview.map(dayLabel).join(", ")}</span>
+              <span className="font-medium">
+                {preview.map((day) => (day === today ? "today" : dayLabel(day))).join(", ")}
+              </span>
               {preview.length < 3 && (
                 <span className="text-muted-foreground">, then it ends</span>
               )}
