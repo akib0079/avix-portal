@@ -21,7 +21,9 @@ const FROM = process.env.EMAIL_FROM ?? "Avix Digital <onboarding@resend.dev>";
 function isLocalRuntime(): boolean {
   if (process.env.ALLOW_DEV_EMAIL === "1") return false;
   if (process.env.NODE_ENV !== "production") return true;
-  const appUrl = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
+  // BETTER_AUTH_URL only: NEXT_PUBLIC_* is inlined at build time, which froze
+  // a local build's localhost into the bundle (see src/lib/app-url.ts).
+  const appUrl = process.env.BETTER_AUTH_URL ?? "";
   return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(appUrl);
 }
 
