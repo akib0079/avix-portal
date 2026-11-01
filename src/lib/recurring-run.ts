@@ -288,6 +288,9 @@ async function createRunInvoice(
   };
 
   try {
+    // The number is taken before the claim, outside the transaction (see
+    // createWithNextNumber), so a run that loses its claim leaves a gap in
+    // the numbering rather than a second invoice.
     const invoice = await createWithNextNumber(prisma, (invoiceNumber) =>
       prisma.$transaction(async (tx) => {
         const claimed = await tx.retainer.updateMany({
@@ -593,7 +596,7 @@ export async function generatePlanNow(
     const pass = await runDuePlan({ ...plan, nextRunAt: seen }, now, timeZone);
     if (pass.error) return { ok: false, error: pass.error };
     if (pass.created.length > 0) return { ok: true, created: pass.created };
-    return { ok: false, error: "This period's invoice was just drafted." };
+    return { ok: false, error: "This period's invoice has already been made." };
   }
 
   const schedule = scheduleOf(plan);
