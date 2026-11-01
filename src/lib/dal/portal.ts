@@ -229,6 +229,7 @@ export async function getMyInvoice(id: string) {
       pdfExternalUrl: true,
       paymentClaimedAt: true,
       paymentAccountId: true,
+      payLinkUrl: true,
       creditNoteForId: true,
       project: { select: { id: true, projectName: true } },
       creditNoteFor: { select: { id: true, invoiceNumber: true } },

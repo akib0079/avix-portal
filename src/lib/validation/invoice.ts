@@ -33,6 +33,17 @@ import { currencyCodes } from "@/lib/currency";
 /** Re-exported so existing imports keep working; the list lives in one place. */
 export const invoiceCurrencyValues = currencyCodes;
 
+/** An absolute https:// URL with a host, and nothing that isn't a URL. */
+export function isSecureLink(value: string): boolean {
+  if (/\s/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export const invoiceSchema = z.object({
   /** Optional line items; when present the server recomputes amount = Σ qty×rate. */
   items: z.array(invoiceItemSchema).max(50).optional(),
@@ -89,6 +100,20 @@ export const invoiceSchema = z.object({
   issueDate: z.string().min(1, "Issue date is required"),
   dueDate: z.string().optional().or(z.literal("")),
   notes: z.string().trim().max(2000).optional().or(z.literal("")),
+  /**
+   * A hosted payment page (Wise, a Stripe Payment Link, PayPal) shown to the
+   * client as "Pay online". The app only links out and never sees a card.
+   * https only: this is put in front of a client next to the word "pay".
+   */
+  payLinkUrl: z
+    .string()
+    .trim()
+    .max(1000)
+    .refine((v) => v === "" || isSecureLink(v), {
+      message: "Use a secure link that starts with https://",
+    })
+    .optional()
+    .or(z.literal("")),
   // External file link (Drive/Dropbox); empty string = none
   pdfExternalUrl: z
     .string()

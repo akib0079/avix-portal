@@ -35,6 +35,7 @@ const everyField: Required<InvoiceInput> = {
   issueDate: "2026-11-02",
   dueDate: "2026-11-16",
   notes: "Thank you",
+  payLinkUrl: "https://pay.example.com/inv-900",
   pdfExternalUrl: "https://drive.example.com/file",
 };
 
@@ -93,4 +94,14 @@ test("without line items the amount governs, and must be above zero", () => {
   assert.ok(parsed.success);
   assert.equal(parsed.data.items, undefined);
   assert.equal(parsed.data.amount, 450);
+});
+
+test("a pay link must be a secure https:// address", () => {
+  for (const bad of ["http://pay.example.com", "javascript:alert(1)", "pay.example.com", "https://"]) {
+    const formData = serializeInvoiceForm({ ...everyField, payLinkUrl: bad });
+    assert.equal(parseInvoiceForm(formData).success, false, bad);
+  }
+  const blank = parseInvoiceForm(serializeInvoiceForm({ ...everyField, payLinkUrl: "" }));
+  assert.ok(blank.success);
+  assert.equal(blank.data.payLinkUrl, "");
 });

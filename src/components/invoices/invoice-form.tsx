@@ -97,6 +97,7 @@ export function InvoiceForm({
       taxLabel: invoice?.taxLabel ?? "",
       paymentTermsDays: invoice?.paymentTermsDays ?? null,
       notes: invoice?.notes ?? "",
+      payLinkUrl: invoice?.payLinkUrl ?? "",
       pdfExternalUrl: invoice?.pdfExternalUrl ?? "",
       invoiceNumber: invoice?.invoiceNumber ?? "",
       title: invoice?.title ?? "",
@@ -359,30 +360,64 @@ export function InvoiceForm({
           </FormItem>
         </div>
 
-        <FormField
-          control={form.control}
-          name="status"
-          render={({ field }) => (
-            <FormItem className="sm:max-w-xs">
-              <FormLabel>Status</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+          <FormField
+            control={form.control}
+            name="status"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Status</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {Object.entries(invoiceStatusLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {field.value === "DRAFT"
+                    ? "The client can't see a draft until it's sent."
+                    : field.value === "PAID"
+                      ? "Any balance left is recorded as a payment received today."
+                      : "Part paid and Paid follow the payments recorded."}
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {/* Lives outside the document modes: a pay link works the same
+              whether we generate the PDF or the owner supplies one. */}
+          <FormField
+            control={form.control}
+            name="payLinkUrl"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Pay online link (optional)</FormLabel>
                 <FormControl>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
+                  <Input
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://wise.com/pay/…"
+                    {...field}
+                    value={field.value ?? ""}
+                  />
                 </FormControl>
-                <SelectContent>
-                  {Object.entries(invoiceStatusLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+                <p className="text-xs text-muted-foreground">
+                  A Wise, Stripe or PayPal payment page. The client gets a Pay online
+                  button; card details never pass through here.
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
 
         {/* How the client gets their document: we build it, or you supply it. */}
         <div className="rounded-xl border p-4">

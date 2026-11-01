@@ -14,7 +14,8 @@ import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
 import { isReceivable } from "@/lib/invoice-rules";
 import { SoftPill } from "@/components/ui/status-pill";
 import { HUE } from "@/lib/status-colors";
-import { ArrowLeft, Download, Receipt, ExternalLink } from "lucide-react";
+import { ArrowLeft, CreditCard, Download, Receipt, ExternalLink } from "lucide-react";
+import { isSecureLink } from "@/lib/validation/invoice";
 
 export const metadata = { title: "Invoice" };
 
@@ -43,6 +44,8 @@ export default async function ClientInvoiceDetailPage({
   // a choice (or whose account was retired) still lists every active one.
   const ownAccount = activeAccounts.find((a) => a.id === invoice.paymentAccountId);
   const paymentAccounts = ownAccount ? [ownAccount] : activeAccounts;
+  // Re-checked here as well as on save: it becomes an href on a client page.
+  const payLink = invoice.payLinkUrl && isSecureLink(invoice.payLinkUrl) ? invoice.payLinkUrl : null;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -180,22 +183,39 @@ export default async function ClientInvoiceDetailPage({
         </CardContent>
       </Card>
 
-      {paymentAccounts.length > 0 && (
+      {payable && (payLink || paymentAccounts.length > 0) && (
         <Card>
           <CardHeader>
             <CardTitle className="font-heading text-lg">How to pay</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Pay by bank transfer using the details below. Tap any value to
-              copy it, and reference{" "}
-              <span className="font-medium text-foreground">
-                {invoice.invoiceNumber}
-              </span>{" "}
-              in your transfer.
-            </p>
+            {paymentAccounts.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                {payLink ? "Pay online, or by" : "Pay by"} bank transfer using the
+                details below. Tap any value to copy it, and reference{" "}
+                <span className="font-medium text-foreground">
+                  {invoice.invoiceNumber}
+                </span>{" "}
+                in your transfer.
+              </p>
+            )}
           </CardHeader>
           <CardContent>
-            <PaymentDetails accounts={paymentAccounts} />
-            {guideUrl && (
+            {/* Opens the provider's own page (Wise, Stripe, PayPal). Nothing
+                here changes when it is clicked: the payment is recorded once
+                it actually arrives, like a bank transfer. */}
+            {payLink && (
+              <div className={paymentAccounts.length > 0 ? "mb-5 border-b pb-5" : undefined}>
+                <Button asChild size="lg" className="w-full sm:w-auto">
+                  <a href={payLink} target="_blank" rel="noopener noreferrer">
+                    <CreditCard /> Pay online
+                  </a>
+                </Button>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Opens a secure payment page from our payment provider.
+                </p>
+              </div>
+            )}
+            {paymentAccounts.length > 0 && <PaymentDetails accounts={paymentAccounts} />}
+            {guideUrl && paymentAccounts.length > 0 && (
               <div className="mt-5 border-t pt-4">
                 <p className="mb-3 text-sm text-muted-foreground">
                   First time paying us, or transferring through Wise? The guide

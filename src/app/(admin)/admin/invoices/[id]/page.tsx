@@ -166,6 +166,7 @@ export default async function InvoiceDetailPage({
               issueDate: invoice.issueDate.toISOString().slice(0, 10),
               dueDate: invoice.dueDate?.toISOString().slice(0, 10) ?? "",
               notes: invoice.notes ?? "",
+              payLinkUrl: invoice.payLinkUrl ?? "",
               pdfExternalUrl: invoice.pdfExternalUrl ?? "",
               pdfOriginalName: invoice.pdfOriginalName,
               invoiceNumber: invoice.invoiceNumber,

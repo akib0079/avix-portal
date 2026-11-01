@@ -160,6 +160,7 @@ function formColumns(data: InvoiceInput, refs: Refs) {
     billToAddress: data.billToAddress || null,
     billToEmail: data.billToEmail || null,
     paymentAccountId: refs.paymentAccountId,
+    payLinkUrl: data.payLinkUrl || null,
     pdfExternalUrl: data.pdfExternalUrl || null,
   };
 }

@@ -72,6 +72,7 @@ const READERS: Record<keyof InvoiceInput, Reader> = {
   issueDate: text(),
   dueDate: text(),
   notes: text(),
+  payLinkUrl: text(),
   pdfExternalUrl: text(),
 };
 
