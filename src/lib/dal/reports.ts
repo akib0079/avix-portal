@@ -94,8 +94,9 @@ export async function getReportsData(): Promise<ReportsData> {
         _count: { select: { projects: true } },
       },
     }),
+    // Archived work is work the team took off the plan; its hours don't earn.
     prisma.milestone.findMany({
-      where: { pricingType: "HOURLY", hourlyRate: { not: null } },
+      where: { pricingType: "HOURLY", hourlyRate: { not: null }, archivedAt: null },
       select: { hourlyRate: true, timeEntries: { select: { hours: true } } },
     }),
     // Forward view: open pipeline by stage.
