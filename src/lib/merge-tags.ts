@@ -51,16 +51,13 @@ type TiptapNode = {
   [key: string]: unknown;
 };
 
-/**
- * Walk a Tiptap document and render merge tags in every text node, returning a
- * new document. Marks, attrs and node types are copied through untouched.
- */
-export function renderMergeTagsInDoc(doc: unknown, vars: MergeVars): unknown {
+/** A new document with `render` applied to every text node; the rest is copied. */
+function mapDocText(doc: unknown, render: (text: string) => string): unknown {
   if (doc == null || typeof doc !== "object") return doc;
 
   const walk = (node: TiptapNode): TiptapNode => {
     const next: TiptapNode = { ...node };
-    if (typeof next.text === "string") next.text = renderMergeTags(next.text, vars);
+    if (typeof next.text === "string") next.text = render(next.text);
     if (Array.isArray(next.content)) next.content = next.content.map(walk);
     return next;
   };
@@ -68,4 +65,46 @@ export function renderMergeTagsInDoc(doc: unknown, vars: MergeVars): unknown {
   return Array.isArray(doc)
     ? (doc as TiptapNode[]).map(walk)
     : walk(doc as TiptapNode);
+}
+
+/**
+ * Walk a Tiptap document and render merge tags in every text node, returning a
+ * new document. Marks, attrs and node types are copied through untouched.
+ */
+export function renderMergeTagsInDoc(doc: unknown, vars: MergeVars): unknown {
+  return mapDocText(doc, (text) => renderMergeTags(text, vars));
+}
+
+/**
+ * Period tags for a recurring invoice's title, lines and notes: each new
+ * invoice fills them in for the period it bills (lib/recurring periodVars).
+ * Separate from the campaign tags above because they never mean anything in
+ * an email, and a campaign that happens to mention {{month}} keeps it as
+ * typed. There is no fallback: a run always knows its period.
+ */
+export type PeriodTagVars = {
+  period: string;
+  month: string;
+  year: string;
+  periodStart: string;
+  periodEnd: string;
+};
+
+export const periodTags = [
+  { tag: "{{period}}", label: "The period, e.g. November 2026" },
+  { tag: "{{month}}", label: "Month name" },
+  { tag: "{{year}}", label: "Year" },
+  { tag: "{{periodStart}}", label: "First day of the period" },
+  { tag: "{{periodEnd}}", label: "Last day of the period" },
+] as const;
+
+// Longest names first, so {{periodStart}} is never read as {{period}}.
+const PERIOD_TAG_RE = /\{\{\s*(periodStart|periodEnd|period|month|year)\s*\}\}/g;
+
+export function renderPeriodTags(text: string, vars: PeriodTagVars): string {
+  return text.replace(PERIOD_TAG_RE, (_match, key: keyof PeriodTagVars) => vars[key]);
+}
+
+export function renderPeriodTagsInDoc(doc: unknown, vars: PeriodTagVars): unknown {
+  return mapDocText(doc, (text) => renderPeriodTags(text, vars));
 }
