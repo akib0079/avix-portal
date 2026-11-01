@@ -19,6 +19,11 @@ export async function register() {
   // process open on shutdown.
   setInterval(warm, 4 * 60_000).unref();
   void seed(prisma);
+  // v49 folded the board cards into milestones. This catches anything the old
+  // code wrote while the new build was deploying; once per database.
+  void import("@/lib/work-backfill")
+    .then(({ backfillWorkItemsOnce }) => backfillWorkItemsOnce(prisma))
+    .catch((err) => console.warn("[backfill] work items:", (err as Error).message));
 }
 
 type Db = (typeof import("@/lib/prisma"))["prisma"];
