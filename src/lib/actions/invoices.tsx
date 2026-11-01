@@ -539,6 +539,40 @@ export async function createCreditNote(
 }
 
 /**
+ * The owner checked and the payment the client reported hasn't arrived:
+ * clear the claim. A claimed invoice is never chased, so without this one
+ * mistaken "I've paid" silenced its reminders for good. An invoice that was
+ * In review because of the claim goes back to where its money puts it, and
+ * the client can report the payment again.
+ */
+export async function clearPaymentClaim(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  const invoice = await prisma.invoice.findUnique({ where: { id }, select: moneySelect });
+  if (!invoice) return { ok: false, error: "Invoice not found." };
+  if (!invoice.paymentClaimedAt && invoice.status !== "IN_REVIEW") return { ok: true };
+
+  const status =
+    invoice.status === "IN_REVIEW"
+      ? settledStatus(invoice, { status: invoice.sentAt ? "SENT" : "ASSIGNED" })
+      : invoice.status;
+  await prisma.invoice.update({ where: { id }, data: { paymentClaimedAt: null, status } });
+
+  after(() =>
+    logActivity({
+      type: "invoice.claim_cleared",
+      summary: `Payment on ${invoice.invoiceNumber} not received — the client's claim was cleared`,
+      clientId: invoice.clientId,
+      projectId: invoice.projectId,
+      entity: "invoice",
+      entityId: invoice.id,
+      link: invoiceLink(invoice.id),
+    }),
+  );
+  revalidateInvoice(id);
+  return { ok: true };
+}
+
+/**
  * The invoice page's "Pause reminders": the chaser skips a paused invoice
  * entirely, before and after its due date, until it is resumed.
  */

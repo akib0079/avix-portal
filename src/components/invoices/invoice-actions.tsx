@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { InvoiceStatus } from "@prisma/client";
 import {
   cancelInvoice,
+  clearPaymentClaim,
   deleteInvoice,
   sendInvoice,
   setInvoiceStatus,
@@ -177,6 +178,60 @@ export function RemoveInvoiceButton({
             <Button variant="destructive" disabled={busy} onClick={confirm}>
               {busy && <Loader2 className="animate-spin" />}
               {deletable ? "Delete invoice" : "Cancel invoice"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * Beside "Client says paid": the owner checked and nothing arrived. Clearing
+ * the claim restarts the reminders (a claimed invoice is never chased) and
+ * lets the client report the payment again.
+ */
+export function ClearClaimButton({
+  invoiceId,
+  invoiceNumber,
+}: {
+  invoiceId: string;
+  invoiceNumber: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setOpen(true)}>
+        Not received?
+      </Button>
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Payment on {invoiceNumber} not received?</DialogTitle>
+            <DialogDescription>
+              This clears the client&apos;s report. Reminders start again, and they can tell
+              you once the payment is really on its way. Nothing is emailed now.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+              Keep waiting
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                const result = await clearPaymentClaim(invoiceId);
+                setBusy(false);
+                if (!result.ok) return void toast.error(result.error);
+                toast.success("Claim cleared. Reminders will resume.");
+                setOpen(false);
+              }}
+            >
+              {busy && <Loader2 className="animate-spin" />}
+              Not received
             </Button>
           </DialogFooter>
         </DialogContent>

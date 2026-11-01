@@ -6,6 +6,7 @@ import { listActiveClientOptions } from "@/lib/dal/users";
 import { PageHeader } from "@/components/page-header";
 import { InvoiceForm } from "@/components/invoices/invoice-form";
 import {
+  ClearClaimButton,
   SendInvoiceButton,
   RemoveInvoiceButton,
 } from "@/components/invoices/invoice-actions";
@@ -62,8 +63,13 @@ export default async function InvoiceDetailPage({
           doesn't wrap: five buttons overflowed a phone. */}
       <div className="-mt-5 mb-6 flex flex-wrap items-center gap-2">
         {invoice.paymentClaimedAt && invoice.status !== "PAID" && (
-          <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-            Client says paid · {formatDate(invoice.paymentClaimedAt)}
+          <span className="inline-flex items-center gap-1">
+            <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+              Client says paid · {formatDate(invoice.paymentClaimedAt)}
+            </span>
+            {invoice.status !== "CANCELLED" && (
+              <ClearClaimButton invoiceId={invoice.id} invoiceNumber={invoice.invoiceNumber} />
+            )}
           </span>
         )}
         <InvoiceStatusBadge status={invoice.status} />
