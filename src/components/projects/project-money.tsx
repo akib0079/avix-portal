@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 import { Clock, BadgeDollarSign, ReceiptText, Repeat } from "lucide-react";
 import { BillWorkButton, type BillableLineView } from "@/components/invoices/bill-work-button";
 import { toneChip, toneText } from "@/lib/tone";
+import { formatCurrency } from "@/lib/currency";
+import { cadenceLabel, cadenceSuffix } from "@/lib/recurring";
 
 type InvoiceRow = {
   id: string;
@@ -30,8 +32,11 @@ type RetainerRow = {
   id: string;
   title: string;
   amount: number;
+  currency: string;
   active: boolean;
   dayOfMonth: number;
+  frequency: "WEEK" | "MONTH";
+  interval: number;
 };
 
 function fmtHours(hours: number): string {
@@ -182,7 +187,7 @@ export function ProjectMoney({
         <Card>
           <CardContent className="pt-6">
             <h3 className="title-card mb-3 flex items-center gap-2">
-              <Repeat className="size-4" /> Retainers
+              <Repeat className="size-4" /> Recurring
             </h3>
             <ul className="space-y-2">
               {retainers.map((r) => (
@@ -198,11 +203,18 @@ export function ProjectMoney({
                       {r.title}
                     </Link>
                     <span className="block text-xs text-muted-foreground">
-                      Bills on day {r.dayOfMonth} each month
+                      {r.frequency === "MONTH" && r.interval === 1
+                        ? `Monthly, on day ${r.dayOfMonth}`
+                        : cadenceLabel(r)}
                     </span>
                   </span>
                   <span className="flex items-center gap-3">
-                    <span className="text-sm font-medium">{usd.format(r.amount)}</span>
+                    <span className="text-sm font-medium">
+                      {formatCurrency(r.amount, r.currency)}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {cadenceSuffix(r)}
+                      </span>
+                    </span>
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-[11px] font-medium",

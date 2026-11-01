@@ -64,7 +64,15 @@ function PanelHead({
 }
 
 export function ReportsView({ data }: { data: ReportsData }) {
-  const { kpis, timeEarnings, pipeline, monthlyRecurring, utilisation, byCurrency } = data;
+  const {
+    kpis,
+    timeEarnings,
+    pipeline,
+    monthlyRecurring,
+    monthlyRecurringMissing,
+    utilisation,
+    byCurrency,
+  } = data;
   const pipelineWeighted = pipeline.reduce((sum, p) => sum + p.weighted, 0);
   const pipelineValue = pipeline.reduce((sum, p) => sum + p.value, 0);
   const maxUtilisation = Math.max(1, ...utilisation.map((u) => u.hours));
@@ -214,7 +222,7 @@ export function ReportsView({ data }: { data: ReportsData }) {
           </div>
 
           <div className="surface p-4 sm:p-5 xl:col-span-2">
-            <PanelHead label="Committed & capacity" href="/admin/retainers" linkLabel="Retainers" />
+            <PanelHead label="Committed & capacity" href="/admin/retainers" linkLabel="Recurring" />
             <div className="mt-3 flex items-center gap-3 rounded-2xl border bg-[color-mix(in_oklab,var(--brand)_5%,var(--muted))] p-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-card text-primary shadow-sm">
                 <Repeat className="size-4" />
@@ -224,7 +232,11 @@ export function ReportsView({ data }: { data: ReportsData }) {
                   {usd.format(monthlyRecurring)}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">/ month</span>
                 </p>
-                <p className="text-xs text-muted-foreground">recurring from active retainers</p>
+                <p className="text-xs text-muted-foreground">
+                  recurring from active plans
+                  {monthlyRecurringMissing > 0 &&
+                    ` · ${monthlyRecurringMissing} without a USD value not counted`}
+                </p>
               </div>
             </div>
 

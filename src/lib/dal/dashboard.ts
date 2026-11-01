@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { formatCurrency } from "@/lib/currency";
 import { requireAdmin } from "@/lib/dal/session";
 import { rangeWindow, type DashboardRange } from "@/lib/dashboard-ranges";
+import { monthlyUsd } from "@/lib/recurring";
 
 export {
   DASHBOARD_RANGES,
@@ -75,7 +76,7 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
     [totals],
     [hours],
     invoicesByStatus,
-    mrrAgg,
+    activePlans,
     targetRow,
     activeProjects,
     pendingRequests,
@@ -116,14 +117,28 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
         ), 0) AS "lastWeek"
       FROM time_entries`,
     prisma.invoice.groupBy({ by: ["status"], _count: { _all: true } }),
-    // MRR — recurring monthly value of all active retainers.
-    prisma.retainer.aggregate({ where: { active: true }, _sum: { amount: true } }),
+    // MRR — each active plan's monthly share (a quarterly plan is a third of
+    // its amount), in USD through its USD value; never a sum across
+    // currencies, which is what adding up retainer.amount was.
+    prisma.retainer.findMany({
+      where: { active: true },
+      select: { amount: true, currency: true, amountUsd: true, frequency: true, interval: true },
+    }),
     prisma.appSetting.findUnique({ where: { key: REVENUE_TARGET_KEY } }),
     prisma.project.count({ where: { status: { not: "COMPLETED" } } }),
     prisma.taskRequest.count({ where: { status: "PENDING" } }),
   ]);
 
-  const mrr = Number(mrrAgg._sum.amount ?? 0);
+  const recurring = monthlyUsd(
+    activePlans.map((p) => ({
+      amount: Number(p.amount),
+      currency: p.currency,
+      amountUsd: p.amountUsd == null ? null : Number(p.amountUsd),
+      frequency: p.frequency,
+      interval: p.interval,
+    })),
+  );
+  const mrr = recurring.total;
   const bucket = (amount: Prisma.Decimal, count: bigint) => ({
     amount: Number(amount),
     count: Number(count),
@@ -150,6 +165,8 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
     })),
     money: {
       mrr,
+      /** Active plans in another currency with no USD value: left out of MRR. */
+      mrrMissing: recurring.missing,
       // Expected next 30 days = one-off invoices due soon + MRR.
       expectedNext30: Number(totals.expected) + mrr,
       aging: {
@@ -360,16 +377,24 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
           recipientName: true,
         },
       }),
-      // Active plans whose bill-on day has passed without a draft this month.
+      // Active plans whose next invoice is due and not drafted yet: the duty
+      // makes it on its next pass, or Generate now does. (A plan from before
+      // schedules has no nextRunAt until that pass gives it one.)
       prisma.retainer.findMany({
         where: {
           active: true,
-          dayOfMonth: { lte: now.getDate() },
-          OR: [{ lastGeneratedPeriod: null }, { lastGeneratedPeriod: { not: period } }],
+          OR: [
+            { nextRunAt: { lte: now } },
+            {
+              nextRunAt: null,
+              dayOfMonth: { lte: now.getDate() },
+              OR: [{ lastGeneratedPeriod: null }, { lastGeneratedPeriod: { not: period } }],
+            },
+          ],
         },
-        orderBy: { dayOfMonth: "asc" },
+        orderBy: { nextRunAt: { sort: "asc", nulls: "first" } },
         take: 5,
-        select: { id: true, title: true, dayOfMonth: true },
+        select: { id: true, title: true },
       }),
       // A client asked for help on a board card and nobody has answered.
       prisma.projectTaskComment.findMany({
@@ -471,8 +496,8 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
   for (const r of undraftedRetainers) {
     items.push({
       kind: "retainer",
-      label: `Draft this month — ${r.title}`,
-      detail: `bills on day ${r.dayOfMonth} · not drafted yet`,
+      label: `Invoice due — ${r.title}`,
+      detail: "recurring plan · not drafted yet",
       link: "/admin/retainers",
     });
   }
@@ -480,7 +505,7 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     items.push({
       kind: "retainer",
       label: `Send draft ${inv.invoiceNumber} — ${inv.client.firstName} ${inv.client.lastName}`,
-      detail: "Retainer invoice drafted, awaiting review",
+      detail: "Recurring invoice drafted, awaiting review",
       link: `/admin/invoices/${inv.id}`,
     });
   }

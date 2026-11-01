@@ -121,7 +121,15 @@ export async function CommandDeck({ range }: { range: DashboardRange }) {
 
       {/* Telemetry strip */}
       <dl className="relative z-[2] mt-8 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-white/10 pt-6 md:grid-cols-4">
-        <Telemetry label="MRR" value={usd.format(k.money.mrr)} hint="active retainers" />
+        <Telemetry
+          label="MRR"
+          value={usd.format(k.money.mrr)}
+          hint={
+            k.money.mrrMissing > 0
+              ? `${k.money.mrrMissing} plan${k.money.mrrMissing === 1 ? "" : "s"} need a USD value`
+              : "active recurring plans"
+          }
+        />
         <Telemetry
           label="Next 30 days"
           value={usd.format(k.money.expectedNext30)}
