@@ -4,9 +4,10 @@ import { useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { InvoiceStatus } from "@prisma/client";
 import {
-  setInvoiceStatus,
-  sendInvoice,
+  cancelInvoice,
   deleteInvoice,
+  sendInvoice,
+  setInvoiceStatus,
 } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Send, Trash2, Loader2 } from "lucide-react";
+import { Ban, Send, Trash2, Loader2 } from "lucide-react";
 
 const STATUS_OPTIONS = (Object.keys(invoiceStatusLabels) as InvoiceStatus[]).map((value) => ({
   value,
@@ -109,59 +110,73 @@ export function SendInvoiceButton({
   );
 }
 
-export function DeleteInvoiceButton({
+/**
+ * The invoice page's way out: Delete for an untouched draft, Cancel (void)
+ * for anything that was sent, paid or credited, which keeps its number and
+ * history. The server applies the same rule (canDeleteInvoice), so this only
+ * decides which button to show.
+ */
+export function RemoveInvoiceButton({
   invoiceId,
   invoiceNumber,
-  redirectAfterDelete,
+  deletable,
+  cancelled,
 }: {
   invoiceId: string;
   invoiceNumber: string;
-  redirectAfterDelete?: string;
+  deletable: boolean;
+  cancelled: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  if (!deletable && cancelled) return null;
+
+  async function confirm() {
+    setBusy(true);
+    const result = deletable ? await deleteInvoice(invoiceId) : await cancelInvoice(invoiceId);
+    setBusy(false);
+    if (!result.ok) return void toast.error(result.error);
+    setOpen(false);
+    if (deletable) {
+      toast.success(`${invoiceNumber} deleted.`);
+      // The page it was on is gone; the list is revalidated by the action.
+      router.push("/admin/invoices");
+    } else {
+      toast.success(`${invoiceNumber} cancelled.`);
+    }
+  }
 
   return (
     <>
       <Button
         variant="ghost"
-        size="icon"
-        className="size-8 text-destructive hover:text-destructive"
+        size="sm"
+        className="text-destructive hover:text-destructive"
         onClick={() => setOpen(true)}
       >
-        <Trash2 className="size-4" />
-        <span className="sr-only">Delete invoice</span>
+        {deletable ? <Trash2 /> : <Ban />}
+        {deletable ? "Delete" : "Cancel"}
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete invoice {invoiceNumber}?</DialogTitle>
+            <DialogTitle>
+              {deletable ? `Delete ${invoiceNumber}?` : `Cancel ${invoiceNumber}?`}
+            </DialogTitle>
             <DialogDescription>
-              This permanently removes the invoice and its PDF. This can&apos;t
-              be undone.
+              {deletable
+                ? "It was never sent and has no payments, so it is removed completely, PDF included. This can't be undone."
+                : "It stays on record with its number and its history, struck through, and stops counting as owed. Nothing is emailed."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancel
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+              Keep it
             </Button>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                const result = await deleteInvoice(invoiceId);
-                setBusy(false);
-                if (!result.ok) return void toast.error(result.error);
-                toast.success("Invoice deleted.");
-                setOpen(false);
-                if (redirectAfterDelete) router.push(redirectAfterDelete);
-                router.refresh();
-              }}
-            >
+            <Button variant="destructive" disabled={busy} onClick={confirm}>
               {busy && <Loader2 className="animate-spin" />}
-              Delete invoice
+              {deletable ? "Delete invoice" : "Cancel invoice"}
             </Button>
           </DialogFooter>
         </DialogContent>

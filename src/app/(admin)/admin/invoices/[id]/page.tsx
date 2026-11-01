@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/page-header";
 import { InvoiceForm } from "@/components/invoices/invoice-form";
 import {
   SendInvoiceButton,
-  DeleteInvoiceButton,
+  RemoveInvoiceButton,
 } from "@/components/invoices/invoice-actions";
 import { InvoiceStatusBadge } from "@/components/status-badges";
 import { InvoicePayments } from "@/components/invoices/invoice-payments";
@@ -17,7 +17,7 @@ import { formatDate } from "@/lib/format";
 import { Copy, Download, ExternalLink } from "lucide-react";
 import { currencySymbol } from "@/lib/currency";
 import { creditedTotal } from "@/lib/invoice-totals";
-import { sendBlocker } from "@/lib/invoice-rules";
+import { canDeleteInvoice, sendBlocker } from "@/lib/invoice-rules";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Invoice" };
@@ -101,10 +101,17 @@ export default async function InvoiceDetailPage({
             sent={!!invoice.sentAt}
           />
         )}
-        <DeleteInvoiceButton
+        <RemoveInvoiceButton
           invoiceId={invoice.id}
           invoiceNumber={invoice.invoiceNumber}
-          redirectAfterDelete="/admin/invoices"
+          cancelled={invoice.status === "CANCELLED"}
+          deletable={canDeleteInvoice({
+            status: invoice.status,
+            sentAt: invoice.sentAt,
+            amountPaid: Number(invoice.amountPaid),
+            paymentCount: invoice.payments.length,
+            creditNoteCount: invoice.creditNotes.length,
+          })}
         />
       </div>
 

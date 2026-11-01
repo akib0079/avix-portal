@@ -36,6 +36,7 @@ import {
 import { toast } from "sonner";
 import { Building2, Paperclip, HandCoins, Loader2 } from "lucide-react";
 import { rowBalance, type InvoiceListRow } from "./invoice-row";
+import { InvoiceRowMenu, type InvoiceRowAction } from "./invoice-row-menu";
 import { isReceivable } from "@/lib/invoice-rules";
 
 const LANES: { status: InvoiceStatus; hint: string }[] = [
@@ -97,11 +98,14 @@ export function InvoiceLanes({
   now,
   today,
   onPay,
+  onAction,
 }: {
   invoices: InvoiceListRow[];
   now: number;
   today: string;
   onPay: (row: InvoiceListRow, prefill: "balance" | "none") => void;
+  /** The cards' "…" menu; the list owns the dialogs it opens. */
+  onAction: (action: InvoiceRowAction, row: InvoiceListRow) => void;
 }) {
   const [folded, toggleFold] = useLocalSet("avix.invoices.folded", ["CANCELLED"]);
   const [moved, setMoved] = useState<Record<string, InvoiceStatus>>({});
@@ -183,6 +187,7 @@ export function InvoiceLanes({
               highlightSource={active?.status === lane.status}
               now={now}
               today={today}
+              onAction={onAction}
             />
           ))}
         </LaneScroller>
@@ -227,6 +232,7 @@ function InvoiceLane({
   highlightSource,
   now,
   today,
+  onAction,
 }: {
   status: InvoiceStatus;
   hint: string;
@@ -236,6 +242,7 @@ function InvoiceLane({
   highlightSource: boolean;
   now: number;
   today: string;
+  onAction: (action: InvoiceRowAction, row: InvoiceListRow) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const page = useProgressive(rows, status, 20);
@@ -274,14 +281,24 @@ function InvoiceLane({
       empty={rows.length === 0 ? <LaneEmpty>Drop an invoice here</LaneEmpty> : undefined}
     >
       {page.shown.map((row) => (
-        <DraggableInvoice key={row.id} row={row} now={now} today={today} />
+        <DraggableInvoice key={row.id} row={row} now={now} today={today} onAction={onAction} />
       ))}
       <ShowMore remaining={page.remaining} step={page.step} onShowMore={page.showMore} />
     </Lane>
   );
 }
 
-function DraggableInvoice({ row, now, today }: { row: InvoiceListRow; now: number; today: string }) {
+function DraggableInvoice({
+  row,
+  now,
+  today,
+  onAction,
+}: {
+  row: InvoiceListRow;
+  now: number;
+  today: string;
+  onAction: (action: InvoiceRowAction, row: InvoiceListRow) => void;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: row.id });
   return (
     <div
@@ -290,7 +307,7 @@ function DraggableInvoice({ row, now, today }: { row: InvoiceListRow; now: numbe
       {...listeners}
       className="touch-manipulation rounded-xl outline-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-ring/60"
     >
-      <InvoiceCardFace row={row} now={now} today={today} ghost={isDragging} />
+      <InvoiceCardFace row={row} now={now} today={today} ghost={isDragging} onAction={onAction} />
     </div>
   );
 }
@@ -301,12 +318,15 @@ function InvoiceCardFace({
   today,
   overlay,
   ghost,
+  onAction,
 }: {
   row: InvoiceListRow;
   now: number;
   today: string;
   overlay?: boolean;
   ghost?: boolean;
+  /** Absent on the drag overlay, which is a picture of the card. */
+  onAction?: (action: InvoiceRowAction, row: InvoiceListRow) => void;
 }) {
   const balance = rowBalance(row);
   const settled = !isReceivable(row);
@@ -314,7 +334,10 @@ function InvoiceCardFace({
   const claimed = row.paymentClaimed && row.status !== "PAID";
 
   return (
-    <div style={{ "--col": invoiceStatusColor[row.status] } as CSSProperties}>
+    <div
+      className="relative"
+      style={{ "--col": invoiceStatusColor[row.status] } as CSSProperties}
+    >
       <LaneCard
         href={overlay ? undefined : `/admin/invoices/${row.id}`}
         overlay={overlay}
@@ -350,7 +373,8 @@ function InvoiceCardFace({
             {row.projectName}
           </p>
         )}
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        {/* pr-8 keeps the chips clear of the menu button sitting over the corner. */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 pr-8">
           <DueChip
             day={row.dueDate ? row.dueDate.slice(0, 10) : null}
             done={settled}
@@ -376,6 +400,11 @@ function InvoiceCardFace({
           )}
         </div>
       </LaneCard>
+      {/* Beside the card's link, not inside it: a button inside an <a> is
+          invalid, and its click would open the invoice. */}
+      {onAction && !ghost && (
+        <InvoiceRowMenu row={row} onAction={onAction} className="absolute right-1.5 bottom-1.5" />
+      )}
     </div>
   );
 }

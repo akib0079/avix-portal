@@ -15,7 +15,7 @@ import {
   settleStatus,
   unsettledStatus,
 } from "@/lib/invoice-totals";
-import { draftBlocker, paymentBlocker } from "@/lib/invoice-rules";
+import { canDeleteInvoice, draftBlocker, paymentBlocker } from "@/lib/invoice-rules";
 import { getBillableWork } from "@/lib/dal/billable";
 import { listInvoiceProjectOptions } from "@/lib/dal/invoices";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
@@ -825,13 +825,54 @@ export async function createCreditNote(
   return { ok: true, data: { id: note.id } };
 }
 
+/**
+ * Void an invoice: CANCELLED keeps its number, its payments and its history,
+ * and it stops counting as owed. This is what an issued invoice gets instead
+ * of a delete.
+ */
+export async function cancelInvoice(id: string): Promise<ActionResult> {
+  return setInvoiceStatus(id, "CANCELLED");
+}
+
+/**
+ * Delete outright — only an invoice nobody was sent and no money touched
+ * (canDeleteInvoice). It used to delete anything, taking the payments, the
+ * tasks and the number of a paid invoice with it.
+ */
 export async function deleteInvoice(id: string): Promise<ActionResult> {
   await requireAdmin();
-  const invoice = await prisma.invoice.findUnique({ where: { id } });
+  const invoice = await prisma.invoice.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      sentAt: true,
+      amountPaid: true,
+      pdfPath: true,
+      creditNoteForId: true,
+      _count: { select: { payments: true, creditNotes: true } },
+    },
+  });
   if (!invoice) return { ok: false, error: "Invoice not found." };
+  const deletable = canDeleteInvoice({
+    status: invoice.status,
+    sentAt: invoice.sentAt,
+    amountPaid: Number(invoice.amountPaid),
+    paymentCount: invoice._count.payments,
+    creditNoteCount: invoice._count.creditNotes,
+  });
+  if (!deletable) {
+    return {
+      ok: false,
+      error:
+        "This invoice has been sent, paid or credited, so it can't be deleted. Cancel it instead: it keeps its number and its history.",
+    };
+  }
 
   await prisma.invoice.delete({ where: { id } });
-  if (invoice.pdfPath) await deleteUpload("invoices", invoice.pdfPath);
+  const file = invoice.pdfPath;
+  if (file) after(() => deleteUpload("invoices", file));
+  await resettleCredited(invoice.creditNoteForId);
 
   revalidatePath("/admin/invoices");
   revalidatePath("/admin");

@@ -2,10 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  InvoiceStatusSelect,
-  DeleteInvoiceButton,
-} from "@/components/invoices/invoice-actions";
+import { InvoiceStatusSelect } from "@/components/invoices/invoice-actions";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -28,11 +25,11 @@ import {
   INVOICE_FILTERS,
   needsUsd,
   rowBalance,
-  toPaymentTarget,
   type InvoiceFilter,
   type InvoiceListRow,
 } from "./invoice-row";
-import { RecordPaymentDialog } from "./record-payment-dialog";
+import { InvoiceRowMenu } from "./invoice-row-menu";
+import { useInvoiceRowActions } from "./invoice-row-actions";
 import { isReceivable } from "@/lib/invoice-rules";
 import { cn } from "@/lib/utils";
 import { Search, Paperclip, FileText } from "lucide-react";
@@ -81,13 +78,9 @@ export function InvoiceTable({
   const [filter, setFilter] = useState<InvoiceFilter>(initialFilter);
   const missingUsd = useMemo(() => invoices.filter(needsUsd).length, [invoices]);
 
-  // One payment dialog for the whole list, opened by a row's status menu, its
-  // row menu or a drop on the board's Paid lane.
-  const [paying, setPaying] = useState<{
-    row: InvoiceListRow;
-    prefill: "balance" | "none";
-  } | null>(null);
-  const pay = (row: InvoiceListRow, prefill: "balance" | "none") => setPaying({ row, prefill });
+  // One set of dialogs for the whole list, opened by a row's status menu, its
+  // "…" menu, or a drop on the board.
+  const actions = useInvoiceRowActions();
 
   // Aging is in USD: a balance is converted at the invoice's own recorded
   // USD value, and one without a USD value yet is left out rather than
@@ -214,7 +207,13 @@ export function InvoiceTable({
       </div>
 
       {view === "board" && visible.length > 0 ? (
-        <InvoiceLanes invoices={visible} now={now} today={today} onPay={pay} />
+        <InvoiceLanes
+          invoices={visible}
+          now={now}
+          today={today}
+          onPay={actions.pay}
+          onAction={actions.run}
+        />
       ) : (
         <Card>
           <CardContent className="pt-6">
@@ -305,14 +304,11 @@ export function InvoiceTable({
                             invoiceId={invoice.id}
                             status={invoice.status}
                             balance={balance}
-                            onPay={(prefill) => pay(invoice, prefill)}
+                            onPay={(prefill) => actions.pay(invoice, prefill)}
                           />
                         </TableCell>
-                        <TableCell>
-                          <DeleteInvoiceButton
-                            invoiceId={invoice.id}
-                            invoiceNumber={invoice.invoiceNumber}
-                          />
+                        <TableCell className="text-right">
+                          <InvoiceRowMenu row={invoice} onAction={actions.run} />
                         </TableCell>
                       </TableRow>
                     );
@@ -325,11 +321,7 @@ export function InvoiceTable({
         </Card>
       )}
 
-      <RecordPaymentDialog
-        target={paying ? toPaymentTarget(paying.row) : null}
-        prefill={paying?.prefill ?? "none"}
-        onClose={() => setPaying(null)}
-      />
+      {actions.dialogs}
     </div>
   );
 }
