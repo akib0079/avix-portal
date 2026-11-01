@@ -1,7 +1,5 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { nextInvoiceNumber } from "@/lib/invoice-number";
-import { usdToStore } from "@/lib/invoice-usd";
 import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
 import {
   OVERDUE_GAP_DAYS,
@@ -11,7 +9,6 @@ import {
   reminderDue,
 } from "@/lib/invoice-reminders";
 import { isSecureLink } from "@/lib/validation/invoice";
-import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
 import { formatMoney } from "@/lib/format";
@@ -25,13 +22,15 @@ import MeetingScheduledEmail from "@/emails/meeting-scheduled";
 import CampaignEmail from "@/emails/campaign";
 import InvoiceReminderEmail from "@/emails/invoice-reminder";
 import { renderMergeTags, renderMergeTagsInDoc } from "@/lib/merge-tags";
+import { getBookingConfig } from "@/lib/dal/availability";
+import { planRunSelect, processDuePlan, summarisePlanResults } from "@/lib/recurring-run";
 
 /**
  * "Lazy cron": Hostinger has no background jobs, so scheduled work runs
  * piggybacked on admin page loads — runDueDuties() is called from the admin
  * layout, throttled to at most once per 15 minutes via an AppSetting stamp.
- * Everything here must be idempotent (stamps like reminderSentAt /
- * lastGeneratedPeriod make re-runs no-ops).
+ * Everything here must be idempotent (stamps like reminderSentAt, and a
+ * plan's nextRunAt claimed by compare-and-set, make re-runs no-ops).
  */
 
 const THROTTLE_KEY = "dutiesLastRunAt";
@@ -103,10 +102,6 @@ async function deliverCampaignEmail(
   }
 }
 
-function currentPeriod(now: Date): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
-
 /** Meeting reminder: email the client ~24h before a scheduled meeting. */
 async function sendMeetingReminders(now: Date) {
   const windowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -169,77 +164,37 @@ async function sendMeetingReminders(now: Date) {
 }
 
 /**
- * Retainers: once per month (on/after each retainer's dayOfMonth) draft an
- * invoice for the admin to review and send — money never goes out
- * automatically. It is a DRAFT, so the client sees nothing until it is sent.
+ * Recurring plans (lib/recurring-run): every plan whose next run has come
+ * makes that period's invoice, as a draft to review or, for a plan set to
+ * send itself, sent once the draft is saved. A plan more than one period
+ * behind drafts each missed period, never sends them, and carries on in the
+ * next pass after MAX_RUNS_PER_PASS. Plans from before schedules (no
+ * nextRunAt) are picked up here and given one.
+ *
+ * A few plans per pass: each run is several round trips plus, when it sends
+ * itself, a PDF and an email, and this runs after an admin page has been
+ * served. One plan at a time, because each holds a transaction and the pool
+ * is shared with the pages.
  */
-async function generateRetainerInvoices(now: Date) {
-  const period = currentPeriod(now);
-  const due = await prisma.retainer.findMany({
-    where: {
-      active: true,
-      dayOfMonth: { lte: now.getDate() },
-      OR: [{ lastGeneratedPeriod: null }, { lastGeneratedPeriod: { lt: period } }],
-    },
-    include: { client: { select: { id: true, firstName: true, lastName: true } } },
-    take: 20,
-  });
+const PLAN_BATCH = 5;
 
-  let generated = 0;
-  for (const retainer of due) {
-    await prisma.$transaction(async (tx) => {
-      // Re-check inside the transaction (idempotency under races).
-      const fresh = await tx.retainer.findUnique({ where: { id: retainer.id } });
-      if (!fresh || !fresh.active || fresh.lastGeneratedPeriod === period) return;
+async function generateScheduledInvoices(now: Date): Promise<void> {
+  const [booking, plans] = await Promise.all([
+    getBookingConfig(),
+    prisma.retainer.findMany({
+      where: { active: true, OR: [{ nextRunAt: { lte: now } }, { nextRunAt: null }] },
+      orderBy: { nextRunAt: { sort: "asc", nulls: "first" } },
+      take: PLAN_BATCH,
+      select: planRunSelect,
+    }),
+  ]);
+  if (plans.length === 0) return;
 
-      const invoiceNumber = await nextInvoiceNumber(tx);
-      const monthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
-      await tx.invoice.create({
-        data: {
-          invoiceNumber,
-          clientId: retainer.clientId,
-          projectId: retainer.projectId,
-          retainerId: retainer.id,
-          amount: retainer.amount,
-          currency: retainer.currency,
-          // A dollar plan's draft is worth its own total; any other currency
-          // waits for the value it settles at, like every invoice.
-          amountUsd: usdToStore(retainer.currency, Number(retainer.amount), null),
-          status: "DRAFT",
-          issueDate: now,
-          dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
-          title: `${retainer.title} — ${monthLabel}`,
-          notes: `${retainer.title} — ${monthLabel}${retainer.notes ? `\n${retainer.notes}` : ""}`,
-          // Line item so the generated PDF is complete without editing.
-          items: {
-            create: [
-              {
-                description: `${retainer.title} — ${monthLabel}`,
-                qty: 1,
-                rate: retainer.amount,
-                sortOrder: 0,
-              },
-            ],
-          },
-        },
-      });
-      await tx.retainer.update({
-        where: { id: retainer.id },
-        data: { lastGeneratedPeriod: period },
-      });
-      generated++;
-    });
+  const results = [];
+  for (const plan of plans) {
+    results.push(await processDuePlan(plan, now, booking.agencyTimezone));
   }
-
-  if (generated > 0) {
-    await notifyAllAdmins({
-      type: "RETAINER_GENERATED",
-      title: `${generated} retainer invoice${generated === 1 ? "" : "s"} drafted`,
-      body: "Review and send them from Invoices.",
-      link: "/admin/invoices",
-    });
-  }
-  return generated;
+  await summarisePlanResults(results);
 }
 
 /**
@@ -717,7 +672,7 @@ export async function runDueDuties(): Promise<void> {
     });
 
     await sendMeetingReminders(now);
-    await generateRetainerInvoices(now);
+    await generateScheduledInvoices(now);
     await chaseOverdueInvoices(now);
     await drainCampaigns(now);
     await generateSystemTasks(now);

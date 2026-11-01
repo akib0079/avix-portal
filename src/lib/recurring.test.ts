@@ -17,6 +17,8 @@ import {
   nextRunDay,
   periodKey,
   periodVars,
+  planState,
+  planSummary,
   presetOf,
   previousRunDay,
   remainingRuns,
@@ -313,4 +315,57 @@ test("MRR is the monthly share of each plan, in USD", () => {
   assert.equal(result.total, 792.67);
   assert.equal(result.missing, 1);
   assert.deepEqual(monthlyUsd([]), { total: 0, missing: 0 });
+});
+
+test("a plan's state and what its page says about it", () => {
+  const base = {
+    frequency: "MONTH",
+    interval: 1,
+    dayOfMonth: 1,
+    active: true,
+    nextRunAt: null,
+    endAfterCount: null,
+    endDate: null,
+    runCount: 0,
+    lastGeneratedPeriod: "2026-10",
+  } as const;
+  const ny = "America/New_York";
+  const now = new Date("2026-11-02T15:00:00Z");
+
+  assert.equal(planState(base), "active");
+  assert.equal(planState({ ...base, active: false, nextRunAt: new Date() }), "paused");
+  // A plan from before schedules has no end, so inactive means paused.
+  assert.equal(planState({ ...base, active: false }), "paused");
+  assert.equal(planState({ ...base, active: false, endAfterCount: 3 }), "ended");
+
+  // November hasn't been drafted and its day has passed: it is due.
+  const legacy = planSummary(base, ny, now);
+  assert.equal(legacy.nextDay, "2026-11-01");
+  assert.equal(legacy.due, true);
+  assert.deepEqual(legacy.upcoming, ["2026-11-01", "2026-12-01", "2027-01-01"]);
+  assert.equal(legacy.remaining, null);
+  assert.equal(legacy.cadence, "Monthly");
+
+  const drafted = planSummary({ ...base, lastGeneratedPeriod: "2026-11" }, ny, now);
+  assert.equal(drafted.nextDay, "2026-12-01");
+  assert.equal(drafted.due, false);
+
+  const scheduled = planSummary(
+    { ...base, nextRunAt: runInstant("2026-12-01", ny), endAfterCount: 3, runCount: 2 },
+    ny,
+    now,
+  );
+  assert.equal(scheduled.nextDay, "2026-12-01");
+  assert.deepEqual(scheduled.upcoming, ["2026-12-01"]);
+  assert.equal(scheduled.remaining, 1);
+
+  const ended = planSummary(
+    { ...base, active: false, endAfterCount: 3, runCount: 3 },
+    ny,
+    now,
+  );
+  assert.equal(ended.state, "ended");
+  assert.equal(ended.nextDay, null);
+  assert.equal(ended.remaining, 0);
+  assert.equal(ended.due, false);
 });

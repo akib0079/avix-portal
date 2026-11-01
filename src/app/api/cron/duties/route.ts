@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { runDueDuties } from "@/lib/duties";
 
 /**
- * External trigger for the duties engine (meeting reminders, retainer drafts,
- * campaign sends).
+ * External trigger for the duties engine (meeting reminders, recurring
+ * invoices, payment reminders, campaign sends).
  *
  * Why this exists: runDueDuties() normally piggybacks on admin page loads, so a
  * campaign scheduled for 3am wouldn't move until someone opened the app. Point

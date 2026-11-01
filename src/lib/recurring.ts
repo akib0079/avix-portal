@@ -234,6 +234,88 @@ export function defaultFirstRun(issueDay: Day, cadence: Cadence, today: Day): Da
   return rollForward(nextRunDay(issueDay, schedule), schedule, today);
 }
 
+/** The day of the month a plan whose next invoice is on `day` keeps billing on. */
+export function anchorDay(day: Day): number {
+  return parts(day).d;
+}
+
+/** What a plan row says about its schedule, as stored. */
+export type PlanFacts = Schedule & {
+  active: boolean;
+  nextRunAt: Date | null;
+  endAfterCount: number | null;
+  endDate: Date | null;
+  runCount: number;
+  lastGeneratedPeriod: string | null;
+};
+
+export type PlanState = "active" | "paused" | "ended";
+
+export function planEnd(plan: {
+  endAfterCount: number | null;
+  endDate: Date | null;
+  runCount: number;
+}): PlanEnd {
+  return {
+    endAfterCount: plan.endAfterCount,
+    endDay: plan.endDate ? dateToDay(plan.endDate) : null,
+    runCount: plan.runCount,
+  };
+}
+
+/**
+ * Paused keeps its next run; ended has none left. A plan from before
+ * schedules has no end and no nextRunAt, so it reads as paused, never ended.
+ */
+export function planState(plan: {
+  active: boolean;
+  nextRunAt: Date | null;
+  endAfterCount: number | null;
+  endDate: Date | null;
+}): PlanState {
+  if (plan.active) return "active";
+  return plan.nextRunAt == null && (plan.endAfterCount != null || plan.endDate != null)
+    ? "ended"
+    : "paused";
+}
+
+export type PlanSummary = {
+  state: PlanState;
+  cadence: string;
+  /** The next run's day, agency time: stored, or where an older plan picks up. */
+  nextDay: Day | null;
+  /** Its time has come and no run has drafted it yet. */
+  due: boolean;
+  /** The next few runs, nextDay first. */
+  upcoming: Day[];
+  /** Invoices still to come, or null when the plan never ends. */
+  remaining: number | null;
+};
+
+/** Everything a page says about a plan's schedule, from the stored row. */
+export function planSummary(plan: PlanFacts, timeZone: string, now: Date): PlanSummary {
+  const state = planState(plan);
+  const end = planEnd(plan);
+  const nextDay =
+    state === "ended"
+      ? null
+      : plan.nextRunAt
+        ? dayIn(plan.nextRunAt, timeZone)
+        : legacyNextRunDay(plan, dayIn(now, timeZone));
+  const due =
+    state === "active" &&
+    nextDay != null &&
+    (plan.nextRunAt ?? runInstant(nextDay, timeZone)).getTime() <= now.getTime();
+  return {
+    state,
+    cadence: cadenceLabel(plan),
+    nextDay,
+    due,
+    upcoming: nextDay ? upcomingRuns(nextDay, plan, end, 3) : [],
+    remaining: state === "ended" ? 0 : remainingRuns(nextDay, plan, end),
+  };
+}
+
 // ---------------------------------------------------------------- words
 
 const MONTHS = [
@@ -307,7 +389,7 @@ export function periodVars(day: Day, schedule: Schedule): PeriodVars {
 }
 
 // "May" is left out of standalone names: on its own it is usually the verb.
-const STANDALONE = MONTHS.filter((name) => name !== "May");
+const STANDALONE: readonly string[] = MONTHS.filter((name) => name !== "May");
 const MONTH_WORD = new RegExp(
   `\\b(${[...MONTHS, "Sept", ...SHORT_MONTHS].join("|")})(\\.?)(\\s+(\\d{4}))?\\b`,
   "g",
@@ -330,7 +412,7 @@ export function shiftMonths(text: string, offset: number): string {
     const full = MONTHS.indexOf(name as (typeof MONTHS)[number]);
     const index = full >= 0 ? full : SHORT_MONTHS.indexOf(name === "Sept" ? "Sep" : name);
     if (index < 0) return match;
-    if (!year && !STANDALONE.includes(name as (typeof MONTHS)[number])) return match;
+    if (!year && !STANDALONE.includes(name)) return match;
     const total = (year ? Number(year) : 0) * 12 + index + offset;
     const month = ((total % 12) + 12) % 12;
     const label = full >= 0 ? MONTHS[month] : SHORT_MONTHS[month];
@@ -357,7 +439,7 @@ export function shiftMonthsInDoc(doc: unknown, offset: number): unknown {
 export function withoutMonths(text: string): string {
   return text
     .replace(MONTH_WORD, (match, name: string, _dot: string, _yearPart?: string, year?: string) =>
-      year || STANDALONE.includes(name as (typeof MONTHS)[number]) ? "" : match,
+      year || STANDALONE.includes(name) ? "" : match,
     )
     .replace(/\s*[—–:|·-]\s*$/, "")
     .replace(/\(\s*\)/g, "")
