@@ -1208,6 +1208,14 @@ export async function duplicateProposal(
 
 // ---------- Acceptance ----------
 
+const HANDOFF_INCLUDE = {
+  items: { orderBy: { sortOrder: "asc" } },
+  lead: { select: { id: true, name: true, email: true, company: true, source: true } },
+} satisfies Prisma.ProposalInclude;
+
+/** The proposal as the hand-off read it, just before claiming it. */
+type HandoffProposal = Prisma.ProposalGetPayload<{ include: typeof HANDOFF_INCLUDE }>;
+
 type Acceptance = {
   signedName: string;
   /** The admin recorded an agreement made elsewhere (call, chat, email). */
@@ -1221,9 +1229,13 @@ type Acceptance = {
    * Writes that must commit or roll back with the acceptance itself, run in
    * the transaction straight after the claim — the seam for signature
    * evidence, so a signature can never exist without its hand-off or the
-   * other way round.
+   * other way round. `proposal` is the row as read just before the claim
+   * (scope, lead, currency), `total` its scope total.
    */
-  withinClaim?: (tx: Tx, claimed: { proposalId: string; acceptedAt: Date }) => Promise<void>;
+  withinClaim?: (
+    tx: Tx,
+    claimed: { proposal: HandoffProposal; total: number; acceptedAt: Date },
+  ) => Promise<void>;
   /** Extra detail for the SIGNED audit event. */
   eventMeta?: Record<string, string | number | boolean | null>;
 };
@@ -1273,13 +1285,7 @@ function handoffBlocker(
 async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffResult> {
   const now = new Date();
   const [proposal, links] = await Promise.all([
-    prisma.proposal.findUnique({
-      where: { id },
-      include: {
-        items: { orderBy: { sortOrder: "asc" } },
-        lead: { select: { id: true, name: true, email: true, company: true, source: true } },
-      },
-    }),
+    prisma.proposal.findUnique({ where: { id }, include: HANDOFF_INCLUDE }),
     proposalLinks(id),
   ]);
   if (!proposal || !links) return { ok: false, error: "Proposal not found." };
@@ -1354,7 +1360,7 @@ async function runHandoff(id: string, acceptance: Acceptance): Promise<HandoffRe
         const current = await tx.proposal.findUnique({ where: { id }, select: { status: true } });
         return { claimed: false, alreadyAccepted: current?.status === "ACCEPTED" };
       }
-      await acceptance.withinClaim?.(tx, { proposalId: id, acceptedAt: now });
+      await acceptance.withinClaim?.(tx, { proposal, total, acceptedAt: now });
 
       const client = links.client
         ? { ...links.client, created: false }
