@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { usdToStore } from "@/lib/invoice-usd";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
@@ -191,6 +192,10 @@ async function generateRetainerInvoices(now: Date) {
           projectId: retainer.projectId,
           retainerId: retainer.id,
           amount: retainer.amount,
+          currency: retainer.currency,
+          // A dollar plan's draft is worth its own total; any other currency
+          // waits for the value it settles at, like every invoice.
+          amountUsd: usdToStore(retainer.currency, Number(retainer.amount), null),
           status: "ASSIGNED",
           issueDate: now,
           dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),

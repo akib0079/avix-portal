@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { retainerSchema, type RetainerInput } from "@/lib/validation/retainer";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { usdToStore } from "@/lib/invoice-usd";
 import { logActivity } from "@/lib/dal/activity";
 
 export type ActionResult<T = undefined> =
@@ -122,6 +123,10 @@ export async function generateRetainerInvoice(
         projectId: retainer.projectId,
         retainerId: retainer.id,
         amount: retainer.amount,
+        currency: retainer.currency,
+        // A dollar plan's draft is worth its own total; any other currency
+        // waits for the value it settles at, like every invoice.
+        amountUsd: usdToStore(retainer.currency, Number(retainer.amount), null),
         status: "ASSIGNED",
         issueDate: now,
         dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),

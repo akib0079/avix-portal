@@ -6,7 +6,7 @@ import { usdToStore } from "@/lib/invoice-usd";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { parseInvoiceForm } from "@/lib/invoice-form-data";
-import { createWithNextNumber, nextInvoiceNumber } from "@/lib/invoice-number";
+import { createWithNextNumber } from "@/lib/invoice-number";
 import {
   balanceDue,
   creditedTotal,
@@ -640,9 +640,8 @@ export async function createInvoiceFromWork(
       ? null
       : new Date(issueDate.getTime() + termsDays * 24 * 60 * 60 * 1000);
 
-  const invoice = await prisma.$transaction(async (tx) => {
-    const invoiceNumber = await nextInvoiceNumber(tx);
-    return tx.invoice.create({
+  const invoice = await createWithNextNumber(prisma, (invoiceNumber) =>
+    prisma.invoice.create({
       data: {
         invoiceNumber,
         title: `${work.projectName} — work to date`,
@@ -657,6 +656,9 @@ export async function createInvoiceFromWork(
         status: "ASSIGNED",
         issueDate,
         dueDate,
+        // Work is priced in dollars, so the draft is worth its own total.
+        // Leaving this out kept every drafted invoice out of the USD stats.
+        amountUsd: usdToStore("USD", totals.total, null),
         items: {
           create: work.lines.map((line, index) => ({
             description: line.description,
@@ -666,18 +668,21 @@ export async function createInvoiceFromWork(
           })),
         },
       },
-    });
-  });
+      select: { id: true, invoiceNumber: true },
+    }),
+  );
 
-  await logActivity({
-    type: "invoice.drafted",
-    summary: `Invoice ${invoice.invoiceNumber} drafted from work on ${work.projectName}`,
-    clientId: work.clientId,
-    projectId: work.projectId,
-    entity: "invoice",
-    entityId: invoice.id,
-    link: `/admin/invoices/${invoice.id}`,
-  });
+  after(() =>
+    logActivity({
+      type: "invoice.drafted",
+      summary: `Invoice ${invoice.invoiceNumber} drafted from work on ${work.projectName}`,
+      clientId: work.clientId,
+      projectId: work.projectId,
+      entity: "invoice",
+      entityId: invoice.id,
+      link: invoiceLink(invoice.id),
+    }),
+  );
 
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/projects/${projectId}`);
