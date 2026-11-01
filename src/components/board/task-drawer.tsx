@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import useSWR from "swr";
 import { formatDistanceToNow, format } from "date-fns";
 import type { JSONContent } from "@tiptap/react";
 import type { Priority, ProjectTaskStatus } from "@prisma/client";
@@ -11,18 +10,20 @@ import {
   BOARD_COLUMNS,
   COLUMN_BY_ID,
   PRIORITY_META,
-  type BoardCard,
+  canMoveWorkItem,
   type BoardComment,
-  type BoardMilestone,
   type BoardPerson,
-  type BoardTaskDetail,
+  type BoardPhase,
+  type BoardSide,
+  type WorkItem,
 } from "@/lib/board";
 import {
-  addBoardComment,
-  deleteBoardComment,
-  deleteBoardTask,
-  resolveBoardHelp,
-  updateBoardTask,
+  addWorkComment,
+  deleteWorkComment,
+  deleteWorkItem,
+  resolveWorkHelp,
+  updateWorkItem,
+  withdrawWorkItem,
 } from "@/lib/actions/project-board";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
@@ -46,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { CommentComposer, type CommentDraft } from "./comment-composer";
 import { CommentText, PersonAvatar, PriorityFlag, dueState, formatDay } from "./board-bits";
 import type { BoardViewer } from "./project-board";
+import { useWorkItemDetail } from "./use-work-item-detail";
 import {
   X,
   ChevronDown,
@@ -65,10 +67,8 @@ import {
   MessageSquare,
   AlignLeft,
   Link2,
+  Archive,
 } from "lucide-react";
-
-const fetcher = (url: string) =>
-  fetch(url).then((r) => (r.ok ? (r.json() as Promise<BoardTaskDetail>) : null));
 
 const TEMP = "temp-comment-";
 
@@ -82,7 +82,7 @@ export function TaskDrawer({
   card: boardCard,
   viewer,
   people,
-  milestones,
+  phases,
   today,
   onClose,
   onCardChange,
@@ -92,23 +92,22 @@ export function TaskDrawer({
 }: {
   taskId: string;
   /** The board's copy, for an instant first paint. Null on a deep link it hasn't loaded. */
-  card: BoardCard | null;
+  card: WorkItem | null;
   viewer: BoardViewer;
   people: BoardPerson[];
-  milestones: BoardMilestone[];
+  phases: BoardPhase[];
   today: string;
   onClose: () => void;
-  onCardChange: (card: BoardCard) => void;
+  onCardChange: (card: WorkItem) => void;
   onCardDelete: (id: string) => void;
-  onMove: (id: string, status: ProjectTaskStatus) => Promise<void>;
+  onMove: (id: string, stage: ProjectTaskStatus) => Promise<void>;
   track: <T>(work: () => Promise<T>) => Promise<T>;
 }) {
-  const { data, mutate, isLoading } = useSWR<BoardTaskDetail | null>(
-    `/api/board-tasks/${taskId}`,
-    fetcher,
-    { refreshInterval: 12_000, revalidateOnFocus: true },
-  );
-  const card = boardCard ?? data?.card ?? null;
+  const { data, mutate, isLoading } = useWorkItemDetail(taskId, {
+    refreshInterval: 12_000,
+    revalidateOnFocus: true,
+  });
+  const card = boardCard ?? data?.item ?? null;
   // On a phone the halves are tabs; a card waiting on this viewer's answer
   // opens on the conversation, where the question is.
   const [pane, setPane] = useState<"details" | "activity">(() =>
@@ -126,24 +125,30 @@ export function TaskDrawer({
     }
   }, [isLoading, data, boardCard, onClose]);
 
-  const canEdit = !!card && (viewer.side === "ADMIN" || card.createdById === viewer.id);
+  const archived = !!card?.archivedAt;
+  // A client's own request stays theirs to reword until the team decides it.
+  const ownRequest =
+    !!card && viewer.side === "CLIENT" && card.createdById === viewer.id && card.stage === "REQUESTED";
+  const canEdit = !!card && !archived && (viewer.side === "ADMIN" || ownRequest);
+  // Who does it and under which phase are the team's calls.
+  const canEditMeta = !!card && !archived && viewer.side === "ADMIN";
   const comments = data?.comments ?? [];
   const openHelp = comments.filter((c) => c.kind === "HELP" && !c.resolvedAt);
 
   async function patch(
-    change: Parameters<typeof updateBoardTask>[1],
-    optimistic: Partial<BoardCard>,
+    change: Parameters<typeof updateWorkItem>[1],
+    optimistic: Partial<WorkItem>,
   ) {
     if (!card) return;
     const before = card;
     onCardChange({ ...before, ...optimistic });
-    const result = await track(() => updateBoardTask(card.id, change));
+    const result = await track(() => updateWorkItem(card.id, change));
     if (!result.ok) {
       onCardChange(before);
       toast.error(result.error);
       return false;
     }
-    onCardChange(result.data.card);
+    onCardChange(result.data.item);
     return true;
   }
 
@@ -169,7 +174,7 @@ export function TaskDrawer({
       (cur) => (cur ? { ...cur, comments: [...cur.comments, optimistic] } : cur),
       { revalidate: false },
     );
-    const result = await track(() => addBoardComment({ taskId: card.id, ...draft }));
+    const result = await track(() => addWorkComment({ itemId: card.id, ...draft }));
     if (!result.ok) {
       await mutate(
         (cur) => (cur ? { ...cur, comments: cur.comments.filter((c) => c.id !== tempId) } : cur),
@@ -183,13 +188,13 @@ export function TaskDrawer({
         cur
           ? {
               ...cur,
-              card: result.data.card,
+              item: result.data.item,
               comments: cur.comments.map((c) => (c.id === tempId ? result.data.comment : c)),
             }
           : cur,
       { revalidate: false },
     );
-    onCardChange(result.data.card);
+    onCardChange(result.data.item);
     if (draft.kind === "HELP") {
       toast.success(viewer.side === "CLIENT" ? "Help requested — the team has been notified." : "Sent to the client.");
     }
@@ -197,20 +202,20 @@ export function TaskDrawer({
   }
 
   async function resolve(commentId: string) {
-    const result = await track(() => resolveBoardHelp(commentId));
+    const result = await track(() => resolveWorkHelp(commentId));
     if (!result.ok) return void toast.error(result.error);
     await mutate(
       (cur) =>
         cur
           ? {
               ...cur,
-              card: result.data.card,
+              item: result.data.item,
               comments: cur.comments.map((c) => (c.id === commentId ? result.data.comment : c)),
             }
           : cur,
       { revalidate: false },
     );
-    onCardChange(result.data.card);
+    onCardChange(result.data.item);
   }
 
   async function removeComment(commentId: string) {
@@ -219,22 +224,32 @@ export function TaskDrawer({
       (cur) => (cur ? { ...cur, comments: cur.comments.filter((c) => c.id !== commentId) } : cur),
       { revalidate: false },
     );
-    const result = await track(() => deleteBoardComment(commentId));
+    const result = await track(() => deleteWorkComment(commentId));
     if (!result.ok) {
       await mutate(previous, { revalidate: false });
       return void toast.error(result.error);
     }
-    onCardChange(result.data.card);
+    onCardChange(result.data.item);
   }
 
   async function removeTask() {
     if (!card) return;
     setDeleting(true);
-    const result = await track(() => deleteBoardTask(card.id));
+    if (ownRequest) {
+      const result = await track(() => withdrawWorkItem(card.id));
+      setDeleting(false);
+      if (!result.ok) return void toast.error(result.error);
+      setConfirmDelete(false);
+      toast.success("Request withdrawn.");
+      onCardDelete(card.id);
+      return;
+    }
+    const result = await track(() => deleteWorkItem(card.id));
     setDeleting(false);
     if (!result.ok) return void toast.error(result.error);
     setConfirmDelete(false);
-    toast.success("Task deleted.");
+    // Anything with hours, invoices, a thread or a client's request is kept.
+    toast.success(result.data.archived ? "Archived — its history is kept." : "Task deleted.");
     onCardDelete(card.id);
   }
 
@@ -247,8 +262,12 @@ export function TaskDrawer({
     }
   }
 
-  const column = card ? COLUMN_BY_ID[card.status] : null;
+  const column = card ? COLUMN_BY_ID[card.stage] : null;
   const author = card?.createdById ? people.find((p) => p.id === card.createdById) : undefined;
+  // A waiting request is declined, with a note for the client, not deleted.
+  const canRemove =
+    !!card && !archived && ((viewer.side === "ADMIN" && card.stage !== "REQUESTED") || ownRequest);
+  const request = data?.request ?? null;
 
   return (
     <DialogPrimitive.Root open onOpenChange={(o) => !o && onClose()}>
@@ -263,10 +282,15 @@ export function TaskDrawer({
           <div className="flex items-center gap-2 border-b px-4 py-3 sm:px-6">
             {card && (
               <StatusPicker
-                status={card.status}
+                item={card}
                 side={viewer.side}
-                onChange={(status) => status !== card.status && void onMove(card.id, status)}
+                onChange={(stage) => stage !== card.stage && void onMove(card.id, stage)}
               />
+            )}
+            {archived && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+                <Archive className="size-3" /> Archived
+              </span>
             )}
             {card?.helpFrom && (
               <span className="hidden items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-600 sm:inline-flex dark:text-red-400">
@@ -278,7 +302,7 @@ export function TaskDrawer({
               <IconButton label="Copy link to this task" onClick={copyLink}>
                 <Link2 className="size-4" />
               </IconButton>
-              {canEdit && (
+              {canRemove && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -291,7 +315,7 @@ export function TaskDrawer({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
-                      <Trash2 /> Delete task
+                      <Trash2 /> {ownRequest ? "Withdraw request" : "Delete task"}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -337,9 +361,25 @@ export function TaskDrawer({
                   onSave={(title) => patch({ title }, { title })}
                 />
 
-                {!canEdit && (
+                {!canEdit && !archived && viewer.side === "CLIENT" && (
                   <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Lock className="size-3" /> Added by the team — you can move it, comment and ask for help.
+                    <Lock className="size-3" />
+                    {card.stage === "REVIEW"
+                      ? "Ready for your review — approve it, or send it back with a note."
+                      : "The team moves this along — you can comment and ask for help."}
+                  </p>
+                )}
+                {ownRequest && (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Lock className="size-3" /> Waiting for the team to pick it up — you can still change it.
+                  </p>
+                )}
+                {request?.status === "REJECTED" && (
+                  <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">
+                    <span className="font-medium">
+                      {request.adminNote === "Withdrawn by client" ? "Withdrawn." : "Declined:"}
+                    </span>{" "}
+                    {request.adminNote !== "Withdrawn by client" ? request.adminNote : null}
                   </p>
                 )}
 
@@ -348,7 +388,7 @@ export function TaskDrawer({
                     <AssigneePicker
                       people={people}
                       value={card.assigneeId}
-                      disabled={!canEdit}
+                      disabled={!canEditMeta}
                       onChange={(assigneeId) => patch({ assigneeId }, { assigneeId })}
                     />
                   </Prop>
@@ -363,18 +403,19 @@ export function TaskDrawer({
                     <DueField
                       value={card.dueDate}
                       today={today}
-                      done={card.status === "DONE"}
+                      done={card.stage === "DONE"}
                       disabled={!canEdit}
                       onChange={(dueDate) => patch({ dueDate }, { dueDate })}
                     />
                   </Prop>
-                  {(milestones.length > 0 || card.milestoneId) && (
+                  {(phases.length > 0 || card.parentId) && (
                     <Prop icon={MilestoneIcon} label="Milestone">
                       <MilestonePicker
-                        milestones={milestones}
-                        value={card.milestoneId}
-                        disabled={!canEdit}
-                        onChange={(milestoneId) => patch({ milestoneId }, { milestoneId })}
+                        milestones={phases.filter((m) => m.id !== card.id)}
+                        value={card.parentId}
+                        // A phase with work under it can't go under another.
+                        disabled={!canEditMeta || card.childCount > 0}
+                        onChange={(parentId) => patch({ parentId }, { parentId })}
                       />
                     </Prop>
                   )}
@@ -382,7 +423,7 @@ export function TaskDrawer({
                     <span className="flex min-w-0 items-center gap-2 px-2 text-muted-foreground">
                       <PersonAvatar person={author} size={18} />
                       <span className="truncate">
-                        {author?.name ?? (card.createdByRole === "CLIENT" ? "Client" : "Avix Digital")} ·{" "}
+                        {author?.name ?? card.creatorName ?? (card.createdByRole === "CLIENT" ? "Client" : "Avix Digital")} ·{" "}
                         {format(new Date(card.createdAt), "MMM d, yyyy")}
                       </span>
                     </span>
@@ -427,9 +468,11 @@ export function TaskDrawer({
                   onResolve={resolve}
                   onDelete={removeComment}
                 />
-                <div className="border-t bg-background p-3">
-                  <CommentComposer people={people} viewer={viewer} onSubmit={submitComment} />
-                </div>
+                {!archived && (
+                  <div className="border-t bg-background p-3">
+                    <CommentComposer people={people} viewer={viewer} onSubmit={submitComment} />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -437,9 +480,11 @@ export function TaskDrawer({
           <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Delete this task?</DialogTitle>
+                <DialogTitle>{ownRequest ? "Withdraw this request?" : "Delete this task?"}</DialogTitle>
                 <DialogDescription>
-                  “{card?.title}” and its comments are removed for everyone. This can&apos;t be undone.
+                  {ownRequest
+                    ? `“${card?.title}” leaves the board. The team sees that you withdrew it.`
+                    : `“${card?.title}” leaves the board for everyone. If it has logged hours, invoices, comments or came from a client request, it's archived instead, with its history kept.`}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -447,7 +492,7 @@ export function TaskDrawer({
                   Cancel
                 </Button>
                 <Button variant="destructive" disabled={deleting} onClick={removeTask}>
-                  {deleting && <Loader2 className="animate-spin" />} Delete task
+                  {deleting && <Loader2 className="animate-spin" />} {ownRequest ? "Withdraw" : "Delete task"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -568,16 +613,33 @@ function TitleField({
 }
 
 function StatusPicker({
-  status,
+  item,
   side,
   onChange,
 }: {
-  status: ProjectTaskStatus;
-  side: "ADMIN" | "CLIENT";
-  onChange: (status: ProjectTaskStatus) => void;
+  item: WorkItem;
+  side: BoardSide;
+  onChange: (stage: ProjectTaskStatus) => void;
 }) {
+  const status = item.stage;
   const current = COLUMN_BY_ID[status];
   const label = (c: (typeof BOARD_COLUMNS)[number]) => (side === "CLIENT" ? c.clientLabel : c.label);
+  // Only the moves this viewer may make (the server checks the same rule).
+  const role = side === "CLIENT" ? "CLIENT" : "ADMIN";
+  const options = BOARD_COLUMNS.filter(
+    (c) => c.id === status || canMoveWorkItem({ role }, item, status, c.id).ok,
+  );
+  if (options.length < 2) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
+        style={{ background: current.color }}
+      >
+        <CircleDot className="size-3.5" />
+        {label(current)}
+      </span>
+    );
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -593,7 +655,7 @@ function StatusPicker({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-52">
-        {BOARD_COLUMNS.map((c) => (
+        {options.map((c) => (
           <DropdownMenuItem key={c.id} onSelect={() => onChange(c.id)}>
             <span className="size-2.5 rounded-full" style={{ background: c.color }} />
             <span className="flex-1">{label(c)}</span>
@@ -764,7 +826,7 @@ function MilestonePicker({
   disabled,
   onChange,
 }: {
-  milestones: BoardMilestone[];
+  milestones: BoardPhase[];
   value: string | null;
   disabled: boolean;
   onChange: (id: string | null) => void;

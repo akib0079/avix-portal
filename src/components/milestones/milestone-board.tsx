@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { useRouter } from "next/navigation";
 import {
   DndContext,
   closestCenter,
@@ -32,7 +31,7 @@ import type { TeamOption } from "@/lib/dal/users";
 import { TimeLogDialog, formatHours } from "./time-log-dialog";
 import type { ProjectBillingType } from "@prisma/client";
 import { MilestoneStatusBadge } from "@/components/status-badges";
-import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
+import { ItemDetails } from "./item-details";
 import { formatPricing, milestoneStatusLabels, formatDate, initials } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { LazySelect } from "@/components/ui/lazy-select";
@@ -51,11 +50,10 @@ import {
   Trash2,
   Plus,
   Loader2,
-  ChevronDown,
-  ChevronUp,
   BadgeDollarSign,
   Clock,
   CalendarClock,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { milestoneStatusColor } from "@/lib/status-colors";
@@ -89,11 +87,11 @@ function SortableRow({
   onLogTime: () => void;
   onStatusChange: (status: MilestoneStatus) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: milestone.id });
 
-  const hasDescription = hasRichTextContent(milestone.description);
+  // A client's request waits for a decision (accept or decline), not a status.
+  const requested = milestone.stage === "REQUESTED";
   // Per-milestone pricing is hidden (not deleted) on fixed-contract projects.
   const pricing = billingType === "CONTRACT" ? null : formatPricing(milestone);
   const showEstimate =
@@ -136,7 +134,13 @@ function SortableRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{milestone.title}</p>
-            <MilestoneStatusBadge status={milestone.status} />
+            {requested ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                <Inbox className="size-3" /> Client request
+              </span>
+            ) : (
+              <MilestoneStatusBadge status={milestone.status} />
+            )}
             {milestone.clientApprovedAt && (
               <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-300">
                 Client approved
@@ -194,45 +198,49 @@ function SortableRow({
               {showEstimate ? ` of ${formatHours(milestone.estimatedHours!)} est` : ""}
             </p>
           )}
-          {hasDescription && (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-              {expanded ? "Hide details" : "Show details"}
-            </button>
+          {milestone.hasDescription && (
+            <ItemDetails
+              itemId={milestone.id}
+              hasDescription
+              className="mt-1"
+              bodyClassName="-ml-1"
+            />
           )}
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            variant="outline"
-            size="sm"
-            className="hidden text-xs sm:flex"
-            onClick={onLogTime}
-            title="Log time on this milestone"
-          >
-            <Clock className="size-3.5" />
-            {milestone.loggedHours > 0 ? formatHours(milestone.loggedHours) : "Log time"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 sm:hidden"
-            onClick={onLogTime}
-          >
-            <Clock className="size-4" />
-            <span className="sr-only">Log time</span>
-          </Button>
-          <LazySelect
-            value={milestone.status}
-            options={MILESTONE_STATUS_OPTIONS}
-            onValueChange={onStatusChange}
-            ariaLabel="Milestone status"
-            className="hidden w-[130px] sm:flex"
-          />
+          {!requested && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="hidden text-xs sm:flex"
+                onClick={onLogTime}
+                title="Log time on this milestone"
+              >
+                <Clock className="size-3.5" />
+                {milestone.loggedHours > 0 ? formatHours(milestone.loggedHours) : "Log time"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 sm:hidden"
+                onClick={onLogTime}
+              >
+                <Clock className="size-4" />
+                <span className="sr-only">Log time</span>
+              </Button>
+            </>
+          )}
+          {!requested && (
+            <LazySelect
+              value={milestone.status}
+              options={MILESTONE_STATUS_OPTIONS}
+              onValueChange={onStatusChange}
+              ariaLabel="Milestone status"
+              className="hidden w-[130px] sm:flex"
+            />
+          )}
           {/* Secondary actions: every row previously showed five controls at
               once. These fade in on hover or keyboard focus, and stay put on
               touch devices, which have no hover. */}
@@ -241,23 +249,20 @@ function SortableRow({
               <Pencil className="size-4" />
               <span className="sr-only">Edit</span>
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-destructive hover:text-destructive"
-              onClick={onDelete}
-            >
-              <Trash2 className="size-4" />
-              <span className="sr-only">Delete</span>
-            </Button>
+            {!requested && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive"
+                onClick={onDelete}
+              >
+                <Trash2 className="size-4" />
+                <span className="sr-only">Delete</span>
+              </Button>
+            )}
           </div>
         </div>
       </div>
-      {expanded && hasDescription && (
-        <div className="border-t px-4 py-3 pl-14">
-          <RichTextViewer content={milestone.description} />
-        </div>
-      )}
     </div>
   );
 }
@@ -277,7 +282,6 @@ export function MilestoneBoard({
   /** Assignable team members for the milestone dialog. */
   team?: TeamOption[];
 }) {
-  const router = useRouter();
   const [items, setItems] = useState(milestones);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<MilestoneView | null>(null);
@@ -313,9 +317,7 @@ export function MilestoneBoard({
     if (!result.ok) {
       setItems(previous);
       toast.error(result.error);
-      return;
     }
-    router.refresh();
   }
 
   async function onDragEnd(event: DragEndEvent) {
@@ -331,9 +333,9 @@ export function MilestoneBoard({
     if (!result.ok) {
       setItems(items); // revert
       toast.error(result.error);
-      return;
     }
-    router.refresh();
+    // No router.refresh(): the action revalidates this page, and Next applies
+    // that render from the action's own response.
   }
 
   return (
@@ -411,8 +413,9 @@ export function MilestoneBoard({
           <DialogHeader>
             <DialogTitle>Delete “{deleting?.title}”?</DialogTitle>
             <DialogDescription>
-              This removes the milestone from the project board. This can&apos;t
-              be undone.
+              This removes the milestone from the project. If it has logged
+              hours, invoices, comments or came from a client request, it&apos;s
+              archived instead, with its history kept.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -436,8 +439,9 @@ export function MilestoneBoard({
                   toast.error(result.error);
                   return;
                 }
-                toast.success("Milestone deleted.");
-                router.refresh();
+                toast.success(
+                  result.archived ? "Archived — its history is kept." : "Milestone deleted.",
+                );
               }}
             >
               {busy && <Loader2 className="animate-spin" />}

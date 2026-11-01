@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { getMyProject, getMyProjectExtras, listMyProjectOptions } from "@/lib/dal/portal";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { listByProject } from "@/lib/dal/deliverables";
-import { getBoardCards, getBoardPeople } from "@/lib/dal/project-board";
+import {
+  getBoardPeople,
+  getWorkItems,
+  getWorkVersion,
+  phasesOf,
+} from "@/lib/dal/project-board";
 import { requireClient } from "@/lib/dal/session";
 import { DeliverablesList } from "@/components/deliverables/deliverables-list";
 import { getWhatsappSupportUrl } from "@/lib/dal/settings";
@@ -11,8 +16,11 @@ import { ClientProjectTimeline } from "@/components/projects/client-project-time
 import { ProjectNeedsYou } from "@/components/projects/project-needs-you";
 import { ProjectTabs } from "@/components/projects/project-tabs";
 import { ProjectBoard } from "@/components/board/project-board";
+import { WorkTab } from "@/components/board/work-tab";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
+import { WORK_TAB, resolveWorkLink } from "@/lib/board";
+import { clientWaiting, isPlanItem } from "@/lib/work-scope";
 import { ProjectStatusBadge, InvoiceStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { RequestFormDialog } from "@/components/task-requests/request-form-dialog";
@@ -41,57 +49,52 @@ export default async function MyProjectPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ task?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ id }, { task: taskParam }] = await Promise.all([params, searchParams]);
-  // The board loads in the same wave as the ownership check. Its reads do no
-  // check of their own; nothing they return is rendered unless getMyProject —
-  // scoped to the session — found the project.
-  const [user, project, options, whatsappUrl, cards, people] = await Promise.all([
-    requireClient(),
-    getMyProject(id),
-    listMyProjectOptions(),
-    getWhatsappSupportUrl(),
-    getBoardCards(id),
-    getBoardPeople(id),
-  ]);
-  if (!project) notFound();
-  // Milestones are already on the project; the board doesn't fetch them again.
-  const board = {
-    cards,
-    people,
-    milestones: project.milestones.map((m) => ({ id: m.id, title: m.title })),
-  };
-  // After ownership is confirmed above (getMyProject scopes to the session).
-  const [messages, deliverables, extras] = await Promise.all([
-    getProjectMessages(project.id),
-    listByProject(project.id),
-    getMyProjectExtras(project.id),
-  ]);
-
-  const milestones = project.milestones.map((m) => {
-    const view = toMilestoneView(m);
-    return {
-      ...view,
-      loggedHours: extras.loggedHoursByMilestone[m.id] ?? view.loggedHours,
-    };
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  // ?tab=milestones&view=board&item=<id>, and the older shapes that
+  // notifications already sent still carry (?view=board&task=<id>, …).
+  const link = resolveWorkLink({
+    get: (name) => {
+      const value = query[name];
+      return typeof value === "string" ? value : null;
+    },
   });
+  // Everything loads in the same wave as the ownership check. The work reads
+  // scope themselves to the session; the messages and deliverables don't, so
+  // nothing is rendered unless getMyProject — scoped to the session — found
+  // the project.
+  const [user, project, options, whatsappUrl, items, version, people, messages, deliverables, extras] =
+    await Promise.all([
+      requireClient(),
+      getMyProject(id),
+      listMyProjectOptions(),
+      getWhatsappSupportUrl(),
+      getWorkItems(id),
+      getWorkVersion(id),
+      getBoardPeople(id),
+      getProjectMessages(id),
+      listByProject(id),
+      getMyProjectExtras(id),
+    ]);
+  if (!project) notFound();
+  const board = { items, people, phases: phasesOf(items), version: version ?? "" };
+
+  // The timeline follows the plan: accepted, top-level work in order.
+  const milestones = items.filter(isPlanItem).map(toMilestoneView);
 
   const health = projectHealth({
-    milestones,
+    milestones: items,
     status: project.status,
     dueDate: project.dueDate,
   });
   const pending = pendingWork({
-    milestones,
+    milestones: items,
     deliverables,
     invoices: extras.invoices,
   });
-  const boardWaiting = {
-    review: board.cards.filter((c) => c.status === "REVIEW").length,
-    help: board.cards.filter((c) => c.helpFrom === "ADMIN").length,
-  };
-  const openTasks = board.cards.filter((c) => c.status !== "DONE").length;
+  const waiting = clientWaiting(items);
+  const openTasks = items.filter((i) => i.stage !== "DONE").length;
   const viewer = {
     id: user.id,
     side: "CLIENT" as const,
@@ -100,33 +103,31 @@ export default async function MyProjectPage({
 
   const tabs = [
     {
-      value: "board",
-      label: "Board",
-      icon: "board" as const,
+      value: WORK_TAB,
+      label: "Milestones",
+      icon: "milestones" as const,
       count: openTasks,
-      alert: boardWaiting.review + boardWaiting.help > 0,
+      alert: waiting.review + waiting.questions + waiting.rating > 0,
       content: (
-        <ProjectBoard
-          projectId={project.id}
-          viewer={viewer}
-          initial={board}
-          renderedAt={serverNow()}
-          initialTaskId={taskParam ?? null}
+        <WorkTab
+          initialView={link.view}
+          board={
+            <ProjectBoard
+              projectId={project.id}
+              viewer={viewer}
+              initial={board}
+              renderedAt={serverNow()}
+              initialItemId={link.itemId}
+            />
+          }
+          list={
+            <Card>
+              <CardContent className="pt-6">
+                <ClientProjectTimeline milestones={milestones} billingType={project.billingType} />
+              </CardContent>
+            </Card>
+          }
         />
-      ),
-    },
-    {
-      value: "timeline",
-      label: "Timeline",
-      icon: "timeline" as const,
-      count: milestones.length,
-      alert: pending.milestonesAwaitingApproval + pending.milestonesAwaitingRating > 0,
-      content: (
-        <Card>
-          <CardContent className="pt-6">
-            <ClientProjectTimeline milestones={milestones} billingType={project.billingType} />
-          </CardContent>
-        </Card>
       ),
     },
     {
@@ -192,7 +193,7 @@ export default async function MyProjectPage({
           </div>
           <div className="flex gap-5 text-sm sm:justify-end">
             <Stat label="Open tasks" value={openTasks} />
-            <Stat label="Waiting on you" value={boardWaiting.review + boardWaiting.help} hot />
+            <Stat label="Waiting on you" value={waiting.review + waiting.questions} hot />
           </div>
         </div>
 
@@ -249,11 +250,11 @@ export default async function MyProjectPage({
       <ProjectNeedsYou
         pending={pending}
         projectId={project.id}
-        board={boardWaiting}
+        questions={waiting.questions}
         className="mb-5"
       />
 
-      <ProjectTabs tabs={tabs} defaultTab="board" param="view" />
+      <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
 
       <ChatWidget
         projectId={project.id}

@@ -3,7 +3,7 @@
 import { memo, type CSSProperties } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { BoardCard, BoardMilestone, BoardPerson, BoardSide } from "@/lib/board";
+import type { BoardPerson, BoardPhase, BoardSide, WorkItem } from "@/lib/board";
 import { COLUMN_BY_ID } from "@/lib/board";
 import { cn } from "@/lib/utils";
 import { PersonAvatar, PriorityFlag, DueChip } from "./board-bits";
@@ -11,7 +11,7 @@ import { MessageSquare, AlignLeft, LifeBuoy, Loader2 } from "lucide-react";
 
 export type CardContext = {
   peopleById: Map<string, BoardPerson>;
-  milestonesById: Map<string, BoardMilestone>;
+  phasesById: Map<string, BoardPhase>;
   viewer: { id: string; side: BoardSide };
   today: string;
 };
@@ -26,20 +26,20 @@ export const CardFace = memo(function CardFace({
   ctx,
   overlay,
 }: {
-  card: BoardCard;
+  card: WorkItem;
   ctx: CardContext;
   /** The copy that follows the pointer while dragging. */
   overlay?: boolean;
 }) {
   const assignee = card.assigneeId ? ctx.peopleById.get(card.assigneeId) : undefined;
-  const milestone = card.milestoneId ? ctx.milestonesById.get(card.milestoneId) : undefined;
-  const done = card.status === "DONE";
+  const milestone = card.parentId ? ctx.phasesById.get(card.parentId) : undefined;
+  const done = card.stage === "DONE";
   const pending = card.id.startsWith("temp-");
   // Help the viewer owes an answer to — the loud version. Help they asked for
   // themselves is shown quietly: they already know.
   const helpForMe = card.helpFrom && card.helpFrom !== ctx.viewer.side;
   const fromOtherSide = card.createdByRole !== ctx.viewer.side;
-  const column = COLUMN_BY_ID[card.status];
+  const column = COLUMN_BY_ID[card.stage];
 
   return (
     <div
@@ -117,21 +117,26 @@ export const CardFace = memo(function CardFace({
   );
 });
 
-/** A card the board can drag. Click (or Enter) opens it. */
+/**
+ * A card the board can drag. Click (or Enter) opens it. A client can only
+ * pick up work that's waiting for their review (see canMoveWorkItem), so
+ * their other cards don't move under the pointer at all.
+ */
 export const SortableCard = memo(function SortableCard({
   card,
   ctx,
   onOpen,
 }: {
-  card: BoardCard;
+  card: WorkItem;
   ctx: CardContext;
   onOpen: (id: string) => void;
 }) {
   const pending = card.id.startsWith("temp-");
+  const movable = ctx.viewer.side === "ADMIN" || card.stage === "REVIEW";
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
-    data: { status: card.status },
-    disabled: pending,
+    data: { stage: card.stage },
+    disabled: pending || !movable,
   });
 
   return (

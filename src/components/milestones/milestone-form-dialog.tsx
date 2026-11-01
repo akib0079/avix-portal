@@ -8,6 +8,7 @@ import type { JSONContent } from "@tiptap/react";
 import { milestoneSchema, type MilestoneInput } from "@/lib/validation/milestone";
 import { createMilestone, updateMilestone } from "@/lib/actions/milestones";
 import type { MilestoneView } from "./milestone-types";
+import { useWorkItemDetail } from "@/components/board/use-work-item-detail";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { PricingFields } from "./pricing-fields";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,17 @@ export function MilestoneFormDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, milestone?.id]);
 
+  // The list doesn't carry descriptions; an edit loads this one with the item.
+  const needsDetail = open && isEdit && !!milestone?.hasDescription;
+  const detail = useWorkItemDetail(needsDetail ? milestone.id : null);
+  const descriptionReady = !needsDetail || detail.data !== undefined;
+  useEffect(() => {
+    if (needsDetail && detail.data && !form.getFieldState("description").isDirty) {
+      form.setValue("description", detail.data.description ?? undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsDetail, detail.data]);
+
   async function onSubmit(values: MilestoneInput) {
     const result = isEdit
       ? await updateMilestone(milestone.id, values)
@@ -141,11 +153,24 @@ export function MilestoneFormDialog({
                 <FormItem>
                   <FormLabel>Description</FormLabel>
                   <FormControl>
-                    <RichTextEditor
-                      value={(field.value as JSONContent) ?? null}
-                      onChange={field.onChange}
-                      placeholder="What does this milestone cover?"
-                    />
+                    {descriptionReady ? (
+                      <RichTextEditor
+                        // The editor reads its value once, so it mounts only
+                        // when the loaded description is there to read.
+                        key={needsDetail ? `loaded-${milestone?.id}` : "blank"}
+                        value={
+                          (field.value as JSONContent) ??
+                          (needsDetail ? detail.data?.description : null) ??
+                          null
+                        }
+                        onChange={field.onChange}
+                        placeholder="What does this milestone cover?"
+                      />
+                    ) : (
+                      <div className="min-h-32 rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        Loading the description…
+                      </div>
+                    )}
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -30,13 +30,13 @@ export function ProjectAttention({
   if (boardHelp > 0) {
     items.push({
       label: `Client needs help on ${boardHelp} task${boardHelp === 1 ? "" : "s"}`,
-      href: `${base}?tab=board`,
+      href: `${base}?tab=milestones&view=board`,
       tone: "bad",
     });
   }
 
   if (overdue) {
-    items.push({ label: "Past its due date", href: `${base}?tab=milestones`, tone: "bad" });
+    items.push({ label: "Past its due date", href: `${base}?tab=milestones&view=list`, tone: "bad" });
   }
   if (pending.deliverablesNeedingChanges > 0) {
     items.push({
@@ -48,14 +48,15 @@ export function ProjectAttention({
   if (pending.openRequests > 0) {
     items.push({
       label: `${pending.openRequests} open request${pending.openRequests === 1 ? "" : "s"}`,
-      href: `${base}?tab=requests`,
+      // They wait in the board's Requested column, where they're decided.
+      href: `${base}?tab=milestones&view=board`,
       tone: "warn",
     });
   }
   if (pending.milestonesAwaitingApproval > 0) {
     items.push({
       label: `${pending.milestonesAwaitingApproval} awaiting client approval`,
-      href: `${base}?tab=milestones`,
+      href: `${base}?tab=milestones&view=board`,
       tone: "info",
     });
   }

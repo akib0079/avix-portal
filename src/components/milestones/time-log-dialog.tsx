@@ -11,6 +11,7 @@ import {
   deleteTimeEntry,
 } from "@/lib/actions/time-entries";
 import type { MilestoneView, TimeEntryView } from "./milestone-types";
+import { useWorkItemDetail } from "@/components/board/use-work-item-detail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -56,6 +57,8 @@ export function TimeLogDialog({
   const router = useRouter();
   const [editing, setEditing] = useState<TimeEntryView | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // The list carries no time entries; the recent ones come with the item.
+  const detail = useWorkItemDetail(open && milestone ? milestone.id : null);
 
   const form = useForm<TimeEntryInput>({
     resolver: zodResolver(timeEntrySchema),
@@ -80,6 +83,7 @@ export function TimeLogDialog({
     if (!result.ok) return void toast.error(result.error);
     toast.success(editing ? "Entry updated." : "Time logged.");
     cancelEdit();
+    void detail.mutate();
     router.refresh();
   }
 
@@ -89,11 +93,12 @@ export function TimeLogDialog({
     setDeletingId(null);
     if (!result.ok) return void toast.error(result.error);
     toast.success("Entry deleted.");
+    void detail.mutate();
     router.refresh();
   }
 
-  const entries = milestone?.timeEntries ?? [];
-  const total = milestone?.loggedHours ?? 0;
+  const entries = detail.data?.timeEntries ?? milestone?.timeEntries ?? [];
+  const total = detail.data?.item.loggedHours ?? milestone?.loggedHours ?? 0;
 
   return (
     <Dialog

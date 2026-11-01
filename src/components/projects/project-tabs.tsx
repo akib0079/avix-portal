@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSearchParams, usePathname } from "next/navigation";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { WORK_TAB } from "@/lib/board";
 import { cn } from "@/lib/utils";
 import {
   KanbanSquare,
@@ -53,25 +54,40 @@ export function ProjectTabs({
   tabs,
   defaultTab,
   param = "tab",
+  initialTab,
 }: {
   tabs: ProjectTab[];
   defaultTab: string;
-  /** The query parameter that names the open tab ("view" on the portal). */
+  /** The query parameter that names the open tab. */
   param?: string;
+  /**
+   * The tab the server resolved from the link, older link shapes included
+   * (see resolveWorkLink). Wins over the raw query parameter.
+   */
+  initialTab?: string | null;
 }) {
   const pathname = usePathname();
   const params = useSearchParams();
 
   const fromUrl = params.get(param);
+  const isTab = (value: string | null | undefined): value is string =>
+    !!value && tabs.some((t) => t.value === value);
   const [active, setActive] = useState(() =>
-    tabs.some((t) => t.value === fromUrl) ? fromUrl! : defaultTab,
+    isTab(initialTab) ? initialTab : isTab(fromUrl) ? fromUrl : defaultTab,
   );
   // A link elsewhere on the page ("3 tasks need your review") changes the
   // query string; follow it. Adjusted during render, not in an effect.
   const [seenUrl, setSeenUrl] = useState(fromUrl);
   if (fromUrl !== seenUrl) {
     setSeenUrl(fromUrl);
-    if (fromUrl && fromUrl !== active && tabs.some((t) => t.value === fromUrl)) setActive(fromUrl);
+    if (fromUrl && fromUrl !== active && isTab(fromUrl)) setActive(fromUrl);
+  }
+  // The same for the server's reading of the link (an old link clicked on
+  // this page arrives as a new initialTab).
+  const [seenInitial, setSeenInitial] = useState(initialTab);
+  if (initialTab !== seenInitial) {
+    setSeenInitial(initialTab);
+    if (isTab(initialTab) && initialTab !== active) setActive(initialTab);
   }
 
   function select(value: string) {
@@ -82,8 +98,15 @@ export function ProjectTabs({
     const next = new URLSearchParams(window.location.search);
     if (value === defaultTab) next.delete(param);
     else next.set(param, value);
-    // An open card belongs to the board; leaving the board closes it.
-    if (value !== "board") next.delete("task");
+    // An open item belongs to the Milestones tab; leaving it closes it.
+    if (value !== WORK_TAB) {
+      next.delete("item");
+      next.delete("task");
+    }
+    // Before v49 the portal named its tabs in ?view=, which now means
+    // board or list; an old value left behind would reopen the wrong tab.
+    const view = next.get("view");
+    if (view && view !== "board" && view !== "list") next.delete("view");
     const query = next.toString();
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   }

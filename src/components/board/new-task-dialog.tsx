@@ -8,12 +8,12 @@ import { toast } from "sonner";
 import {
   BOARD_COLUMNS,
   PRIORITY_META,
-  type BoardCard,
   type BoardData,
-  type BoardMilestone,
   type BoardPerson,
+  type BoardPhase,
+  type WorkItem,
 } from "@/lib/board";
-import { createBoardTask } from "@/lib/actions/project-board";
+import { createWorkItem } from "@/lib/actions/project-board";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,8 +40,9 @@ const boardFetcher = (url: string) =>
 /**
  * The full "new task" form: a title, the details, and who to pin. Also opened
  * from chat ("Make a task") with the message prefilled — in which case it
- * fetches the people and milestones itself, from the same endpoint (and SWR
- * cache) the board polls.
+ * fetches the people and milestones itself, from the same endpoint the board
+ * polls. A client's task is a request: it skips the column choice and waits
+ * in Requested for the team.
  */
 export function NewTaskDialog({
   open,
@@ -49,8 +50,8 @@ export function NewTaskDialog({
   projectId,
   viewer,
   people: givenPeople,
-  milestones: givenMilestones,
-  defaultStatus = "TODO",
+  phases: givenPhases,
+  defaultStage = "TODO",
   defaultTitle = "",
   defaultDescription = null,
   onCreated,
@@ -60,11 +61,11 @@ export function NewTaskDialog({
   projectId: string;
   viewer: Pick<BoardViewer, "id" | "side">;
   people?: BoardPerson[];
-  milestones?: BoardMilestone[];
-  defaultStatus?: ProjectTaskStatus;
+  phases?: BoardPhase[];
+  defaultStage?: ProjectTaskStatus;
   defaultTitle?: string;
   defaultDescription?: JSONContent | null;
-  onCreated?: (card: BoardCard) => void;
+  onCreated?: (item: WorkItem) => void;
 }) {
   const { data } = useSWR(
     // Its own key: the board stores a timestamped wrapper under the plain URL.
@@ -73,9 +74,11 @@ export function NewTaskDialog({
     { revalidateOnFocus: false },
   );
   const people = givenPeople ?? data?.people ?? [];
-  const milestones = givenMilestones ?? data?.milestones ?? [];
+  const milestones = givenPhases ?? data?.phases ?? [];
 
-  const [status, setStatus] = useState<ProjectTaskStatus>(defaultStatus);
+  const [status, setStatus] = useState<ProjectTaskStatus>(
+    defaultStage === "REQUESTED" ? "TODO" : defaultStage,
+  );
   const [title, setTitle] = useState(defaultTitle);
   const [description, setDescription] = useState<JSONContent | null>(defaultDescription);
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
@@ -91,26 +94,29 @@ export function NewTaskDialog({
   async function submit() {
     if (!title.trim() || saving) return;
     setSaving(true);
-    const result = await createBoardTask({
+    const result = await createWorkItem({
       projectId,
       title: title.trim(),
       description,
-      status,
+      stage: status,
       priority,
       dueDate: dueDate || null,
-      milestoneId,
+      parentId: milestoneId,
       assigneeId,
     });
     setSaving(false);
     if (!result.ok) return void toast.error(result.error);
+    const waiting = result.data.item.stage === "REQUESTED";
     toast.success(
       viewer.side === "CLIENT"
-        ? assignee
-          ? `Task added — ${assignee.name.split(" ")[0]} has been notified.`
-          : "Task added — the team has been notified."
+        ? waiting
+          ? "Request sent — it waits in Requested until the team picks it up."
+          : assignee
+            ? `Task added — ${assignee.name.split(" ")[0]} has been notified.`
+            : "Task added — the team has been notified."
         : "Task added to the board.",
     );
-    onCreated?.(result.data.card);
+    onCreated?.(result.data.item);
     onOpenChange(false);
   }
 
@@ -126,34 +132,39 @@ export function NewTaskDialog({
         }}
       >
         <DialogHeader className="border-b px-5 pt-5 pb-4">
-          <DialogTitle className="font-heading text-lg">New task</DialogTitle>
+          <DialogTitle className="font-heading text-lg">
+            {viewer.side === "CLIENT" ? "New request" : "New task"}
+          </DialogTitle>
           <DialogDescription>
             {viewer.side === "CLIENT"
-              ? "Tell us what you need. Pin someone and they'll get the details straight away."
+              ? "Tell us what you need. It goes to the team as a request — pin someone and they'll get the details straight away."
               : "Add a task to the shared board — the client sees it too."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="max-h-[70dvh] space-y-4 overflow-y-auto px-5 py-4">
-          {/* Column, as monday-style status chips. */}
-          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Column">
-            {BOARD_COLUMNS.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                role="radio"
-                aria-checked={status === c.id}
-                onClick={() => setStatus(c.id)}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-xs font-semibold transition-all",
-                  status === c.id ? "border-transparent text-white shadow-sm" : "text-muted-foreground hover:text-foreground",
-                )}
-                style={status === c.id ? { background: c.color } : undefined}
-              >
-                {viewer.side === "CLIENT" ? c.clientLabel : c.label}
-              </button>
-            ))}
-          </div>
+          {/* Column, as monday-style status chips. The team's choice only:
+              a client's task always starts as a request. */}
+          {viewer.side === "ADMIN" && (
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Column">
+              {BOARD_COLUMNS.filter((c) => c.id !== "REQUESTED").map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={status === c.id}
+                  onClick={() => setStatus(c.id)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-semibold transition-all",
+                    status === c.id ? "border-transparent text-white shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  )}
+                  style={status === c.id ? { background: c.color } : undefined}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <input
             autoFocus
@@ -270,7 +281,8 @@ export function NewTaskDialog({
               Cancel
             </Button>
             <Button onClick={() => void submit()} disabled={!title.trim() || saving}>
-              {saving && <Loader2 className="animate-spin" />} Create task
+              {saving && <Loader2 className="animate-spin" />}{" "}
+              {viewer.side === "CLIENT" ? "Send request" : "Create task"}
             </Button>
           </div>
         </div>

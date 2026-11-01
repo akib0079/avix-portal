@@ -19,8 +19,11 @@ import { ChevronRight } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
 import { listTeamOptions } from "@/lib/dal/users";
 import { getBillableWork } from "@/lib/dal/billable";
-import { getBoardCards } from "@/lib/dal/project-board";
+import { getWorkItems, getWorkVersion, phasesOf } from "@/lib/dal/project-board";
 import { ProjectBoard } from "@/components/board/project-board";
+import { WorkTab } from "@/components/board/work-tab";
+import { WORK_TAB, resolveWorkLink } from "@/lib/board";
+import { isPlanItem } from "@/lib/work-scope";
 import { serverNow } from "@/lib/server-now";
 
 export const metadata = { title: "Project" };
@@ -30,12 +33,20 @@ export default async function ProjectDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ task?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ id }, { task: taskParam }] = await Promise.all([params, searchParams]);
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  // ?tab=milestones&view=board&item=<id>, and the older shapes that
+  // notifications already sent still carry (?tab=board&task=<id>, …).
+  const link = resolveWorkLink({
+    get: (name) => {
+      const value = query[name];
+      return typeof value === "string" ? value : null;
+    },
+  });
   // One round trip for everything the page needs — getBillableWork used to run
   // after this block, adding a serial query to every load.
-  const [viewer, project, messages, deliverables, workspace, team, billableOrNull, boardCards] =
+  const [viewer, project, messages, deliverables, workspace, team, billableOrNull, items, version] =
     await Promise.all([
       requireTeam(),
       getProject(id),
@@ -45,17 +56,18 @@ export default async function ProjectDetailPage({
       listTeamOptions(),
       // Money-bearing: getBillableWork requires admin, so staff skip it.
       getBillableWork(id).catch(() => null),
-      // No access check inside; requireTeam above is the check, and nothing
-      // is rendered unless getProject finds the project.
-      getBoardCards(id),
+      // The one read of the work: the board, the list, the header and the
+      // poll all use these rows. Scoped to the session inside the read.
+      getWorkItems(id),
+      getWorkVersion(id),
     ]);
   if (!project) notFound();
   // Read once: the board and the header's "due in N days" agree on what now is.
   const renderedAt = serverNow();
-  // People and milestones are already loaded for this page; the board reuses
-  // them rather than asking the database twice.
+  // People are already loaded for this page; the board reuses them rather
+  // than asking the database twice.
   const board = {
-    cards: boardCards,
+    items,
     people: [
       ...team,
       ...(project.client && project.client.status === "ACTIVE"
@@ -68,74 +80,66 @@ export default async function ProjectDetailPage({
           ]
         : []),
     ],
-    milestones: project.milestones.map((m) => ({ id: m.id, title: m.title })),
+    phases: phasesOf(items),
+    version: version ?? "",
   };
-  // Staff are money-blind. getProject already strips prices server-side; this
-  // just avoids rendering empty money shells and the billing editor for them.
+  // Staff are money-blind. getWorkItems and getProject already strip prices
+  // server-side; this just avoids rendering empty money shells and the
+  // billing editor for them.
   const isAdmin = viewer.role === "ADMIN";
   const billable = isAdmin ? billableOrNull : null;
 
-  // The milestone include is capped at a recent page of time entries, so the
-  // true totals come from the workspace aggregate.
-  const milestones = project.milestones.map((m) => {
-    const view = toMilestoneView(m);
-    return {
-      ...view,
-      loggedHours: workspace.loggedHoursByMilestone[m.id] ?? view.loggedHours,
-    };
-  });
-
+  const milestones = items.map(toMilestoneView);
   const health = projectHealth({
-    milestones,
+    milestones: items,
     status: project.status,
     dueDate: project.dueDate,
   });
   const pending = pendingWork({
-    milestones,
+    milestones: items,
     deliverables,
-    requests: workspace.requests,
     invoices: project.invoices,
   });
 
-  const clientHelp = board.cards.filter((c) => c.helpFrom === "CLIENT").length;
+  const clientHelp = items.filter((i) => i.helpFrom === "CLIENT").length;
+  const openItems = items.filter((i) => i.stage !== "DONE").length;
   const tabs = [
     {
-      value: "board",
-      label: "Board",
-      icon: "board" as const,
-      count: board.cards.filter((c) => c.status !== "DONE").length,
-      alert: clientHelp > 0,
-      content: (
-        <ProjectBoard
-          projectId={project.id}
-          viewer={{
-            id: viewer.id,
-            side: "ADMIN",
-            name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
-          }}
-          initial={board}
-          renderedAt={renderedAt}
-          initialTaskId={taskParam ?? null}
-        />
-      ),
-    },
-    {
-      value: "milestones",
+      value: WORK_TAB,
       label: "Milestones",
       icon: "milestones" as const,
-      count: milestones.length,
+      count: openItems,
+      alert: clientHelp > 0 || pending.openRequests > 0,
       content: (
-        <Card>
-          <CardContent className="pt-6">
-            <MilestoneBoard
+        <WorkTab
+          initialView={link.view}
+          board={
+            <ProjectBoard
               projectId={project.id}
-              milestones={milestones}
-              billingType={project.billingType}
-              canEditPricing={isAdmin}
-              team={team}
+              viewer={{
+                id: viewer.id,
+                side: "ADMIN",
+                name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
+              }}
+              initial={board}
+              renderedAt={renderedAt}
+              initialItemId={link.itemId}
             />
-          </CardContent>
-        </Card>
+          }
+          list={
+            <Card>
+              <CardContent className="pt-6">
+                <MilestoneBoard
+                  projectId={project.id}
+                  milestones={milestones}
+                  billingType={project.billingType}
+                  canEditPricing={isAdmin}
+                  team={team}
+                />
+              </CardContent>
+            </Card>
+          }
+        />
       ),
     },
     {
@@ -161,7 +165,11 @@ export default async function ProjectDetailPage({
       count: workspace.requests.length,
       alert: pending.openRequests > 0,
       content: (
-        <ProjectRequests requests={workspace.requests} meetings={workspace.meetings} />
+        <ProjectRequests
+          projectId={project.id}
+          requests={workspace.requests}
+          meetings={workspace.meetings}
+        />
       ),
     },
     ...(isAdmin
@@ -216,10 +224,7 @@ export default async function ProjectDetailPage({
     },
   ];
 
-  const hoursLogged = Object.values(workspace.loggedHoursByMilestone).reduce(
-    (sum, h) => sum + h,
-    0,
-  );
+  const hoursLogged = items.reduce((sum, i) => sum + i.loggedHours, 0);
 
   return (
     <div className="space-y-5">
@@ -248,13 +253,16 @@ export default async function ProjectDetailPage({
               }
             : null,
         }}
-        milestones={milestones}
+        // The plan only, and only what the progress line reads.
+        milestones={items
+          .filter(isPlanItem)
+          .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position }))}
         team={team}
         canEdit={isAdmin}
         renderedAt={renderedAt}
         stats={{
-          openTasks: board.cards.filter((c) => c.status !== "DONE").length,
-          doneTasks: board.cards.filter((c) => c.status === "DONE").length,
+          openTasks: openItems,
+          doneTasks: items.length - openItems,
           helpRequests: clientHelp,
           hoursLogged,
           unbilled: isAdmin && billable ? billable.unbilled : null,
@@ -282,7 +290,7 @@ export default async function ProjectDetailPage({
         }
       />
 
-      <ProjectTabs tabs={tabs} defaultTab="board" />
+      <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
 
       {project.client && (
         <ChatWidget

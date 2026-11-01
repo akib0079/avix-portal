@@ -7,57 +7,56 @@ import { CheckCircle2, ArrowRight } from "lucide-react";
  * The client's to-do list for this project. Only rendered when something is
  * genuinely waiting on them — the portal's whole job is making that obvious,
  * and it was previously buried inside the timeline and the deliverables list.
+ *
+ * The counts come from the same rules as the portal's action centre
+ * (work-scope.ts), so this box and that page always agree.
  */
 export function ProjectNeedsYou({
   pending,
   projectId,
-  board,
+  questions = 0,
   className,
 }: {
   pending: PendingWork;
   projectId: string;
-  /** Board cards waiting on the client: in Review, or with a question from us. */
-  board?: { review: number; help: number };
+  /** Items carrying a question from the team that the client hasn't answered. */
+  questions?: number;
   className?: string;
 }) {
   const items: { label: string; href: string }[] = [];
-  const view = (v: string) => `/portal/projects/${projectId}?view=${v}`;
+  const base = `/portal/projects/${projectId}`;
+  const work = (view: "board" | "list") => `${base}?tab=milestones&view=${view}`;
+  const tab = (t: string) => `${base}?tab=${t}`;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-  if (board && board.help > 0) {
+  if (questions > 0) {
     items.push({
-      label: `Answer ${board.help} question${board.help === 1 ? "" : "s"} from the team`,
-      href: view("board"),
-    });
-  }
-  if (board && board.review > 0) {
-    items.push({
-      label: `Review ${board.review} finished task${board.review === 1 ? "" : "s"}`,
-      href: view("board"),
-    });
-  }
-
-  if (pending.deliverablesAwaitingReview > 0) {
-    items.push({
-      label: `Review ${pending.deliverablesAwaitingReview} deliverable${pending.deliverablesAwaitingReview === 1 ? "" : "s"}`,
-      href: view("files"),
+      label: `Answer ${plural(questions, "question")} from the team`,
+      href: work("board"),
     });
   }
   if (pending.milestonesAwaitingApproval > 0) {
     items.push({
-      label: `Approve ${pending.milestonesAwaitingApproval} completed milestone${pending.milestonesAwaitingApproval === 1 ? "" : "s"}`,
-      href: view("timeline"),
+      label: `Review ${plural(pending.milestonesAwaitingApproval, "finished item")}`,
+      href: work("board"),
+    });
+  }
+  if (pending.deliverablesAwaitingReview > 0) {
+    items.push({
+      label: `Review ${plural(pending.deliverablesAwaitingReview, "deliverable")}`,
+      href: tab("files"),
     });
   }
   if (pending.milestonesAwaitingRating > 0) {
     items.push({
-      label: `Rate ${pending.milestonesAwaitingRating} finished milestone${pending.milestonesAwaitingRating === 1 ? "" : "s"}`,
-      href: view("timeline"),
+      label: `Rate ${plural(pending.milestonesAwaitingRating, "finished milestone")}`,
+      href: work("list"),
     });
   }
   if (pending.unpaidInvoices > 0) {
     items.push({
-      label: `Settle ${pending.unpaidInvoices} open invoice${pending.unpaidInvoices === 1 ? "" : "s"}`,
-      href: view("billing"),
+      label: `Settle ${plural(pending.unpaidInvoices, "open invoice")}`,
+      href: tab("billing"),
     });
   }
 

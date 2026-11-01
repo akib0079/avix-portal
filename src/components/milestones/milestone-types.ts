@@ -1,5 +1,6 @@
-import type { MilestoneStatus, PricingType } from "@prisma/client";
+import type { MilestoneStatus, PricingType, ProjectTaskStatus } from "@prisma/client";
 import type { JSONContent } from "@tiptap/react";
+import type { WorkItem } from "@/lib/board";
 
 /** Serialized time entry safe for client components (no Decimal/Date). */
 export type TimeEntryView = {
@@ -9,13 +10,21 @@ export type TimeEntryView = {
   note: string | null;
 };
 
-/** Serialized milestone safe to pass into client components (no Decimal). */
+/**
+ * A work item as the Milestones list and the portal timeline draw it. Built
+ * from the same WorkItem the board uses (getWorkItems), so the list carries
+ * no description or time entries of its own: those load with the item when
+ * someone opens it (useWorkItemDetail), and stay null / empty until then.
+ */
 export type MilestoneView = {
   id: string;
   title: string;
   status: MilestoneStatus;
+  stage: ProjectTaskStatus;
   position: number;
+  parentId: string | null;
   description: JSONContent | null;
+  hasDescription: boolean;
   pricingType: PricingType;
   hourlyRate: number | null;
   estimatedHours: number | null;
@@ -30,49 +39,27 @@ export type MilestoneView = {
   clientRatingNote: string | null;
 };
 
-export function toMilestoneView(m: {
-  id: string;
-  title: string;
-  status: MilestoneStatus;
-  position: number;
-  description: unknown;
-  pricingType: PricingType;
-  hourlyRate: unknown;
-  estimatedHours: unknown;
-  fixedPrice: unknown;
-  assigneeId?: string | null;
-  assignee?: { firstName: string; lastName: string } | null;
-  dueDate?: Date | null;
-  clientApprovedAt?: Date | null;
-  clientRating?: number | null;
-  clientRatingNote?: string | null;
-  timeEntries?: { id: string; date: Date; hours: unknown; note: string | null }[];
-}): MilestoneView {
-  const entries = (m.timeEntries ?? []).map((e) => ({
-    id: e.id,
-    date: e.date.toISOString().slice(0, 10),
-    hours: Number(e.hours),
-    note: e.note,
-  }));
+export function toMilestoneView(item: WorkItem): MilestoneView {
   return {
-    id: m.id,
-    title: m.title,
-    status: m.status,
-    position: m.position,
-    description: (m.description as JSONContent) ?? null,
-    pricingType: m.pricingType,
-    hourlyRate: m.hourlyRate == null ? null : Number(m.hourlyRate),
-    estimatedHours: m.estimatedHours == null ? null : Number(m.estimatedHours),
-    fixedPrice: m.fixedPrice == null ? null : Number(m.fixedPrice),
-    loggedHours: entries.reduce((sum, e) => sum + e.hours, 0),
-    timeEntries: entries,
-    assigneeId: m.assigneeId ?? null,
-    assigneeName: m.assignee
-      ? `${m.assignee.firstName} ${m.assignee.lastName}`.trim() || null
-      : null,
-    dueDate: m.dueDate ? m.dueDate.toISOString().slice(0, 10) : null,
-    clientApprovedAt: m.clientApprovedAt?.toISOString() ?? null,
-    clientRating: m.clientRating ?? null,
-    clientRatingNote: m.clientRatingNote ?? null,
+    id: item.id,
+    title: item.title,
+    status: item.status,
+    stage: item.stage,
+    position: item.position,
+    parentId: item.parentId,
+    description: null,
+    hasDescription: item.hasDescription,
+    pricingType: item.pricingType,
+    hourlyRate: item.hourlyRate,
+    estimatedHours: item.estimatedHours,
+    fixedPrice: item.fixedPrice,
+    loggedHours: item.loggedHours,
+    timeEntries: [],
+    assigneeId: item.assigneeId,
+    assigneeName: item.assignee?.name ?? null,
+    dueDate: item.dueDate,
+    clientApprovedAt: item.clientApprovedAt,
+    clientRating: item.clientRating,
+    clientRatingNote: item.clientRatingNote,
   };
 }

@@ -1,23 +1,32 @@
-import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { MilestoneStatusBadge } from "@/components/status-badges";
 import { ApproveMilestoneButton } from "@/components/portal/approve-milestone-button";
 import { RateMilestone } from "@/components/portal/rate-milestone";
-import { formatPricing, formatDate } from "@/lib/format";
+import { ItemDetails } from "@/components/milestones/item-details";
+import { formatPricing } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { MilestoneStatus, PricingType, ProjectBillingType } from "@prisma/client";
+import type {
+  MilestoneStatus,
+  PricingType,
+  ProjectBillingType,
+  ProjectTaskStatus,
+} from "@prisma/client";
 import { Check, CircleDashed, LoaderCircle, BadgeDollarSign, Clock } from "lucide-react";
 
+/**
+ * The plan as the client follows it: top-level work in order. Descriptions
+ * and progress notes load with the item when opened (see ItemDetails).
+ */
 type TimelineMilestone = {
   id: string;
   title: string;
   status: MilestoneStatus;
-  description: unknown;
+  stage: ProjectTaskStatus;
+  hasDescription: boolean;
   pricingType: PricingType;
   hourlyRate: number | null;
   estimatedHours: number | null;
   fixedPrice: number | null;
   loggedHours: number;
-  timeEntries: { id: string; date: string; hours: number; note: string | null }[];
   clientApprovedAt: string | null;
   clientRating: number | null;
   clientRatingNote: string | null;
@@ -69,7 +78,6 @@ export function ClientProjectTimeline({
       {milestones.map((milestone, index) => {
         // On fixed-contract projects the price lives at the project level.
         const pricing = billingType === "CONTRACT" ? null : formatPricing(milestone);
-        const recentEntries = milestone.timeEntries.slice(0, 3);
         const isLast = index === milestones.length - 1;
         return (
           <li key={milestone.id} className="relative flex gap-4 pb-8 last:pb-0">
@@ -108,42 +116,28 @@ export function ClientProjectTimeline({
                   {fmtHours(milestone.loggedHours)} worked
                 </p>
               )}
-              {hasRichTextContent(milestone.description) && (
-                <div className="mt-2 rounded-lg bg-muted/50 px-3.5 py-2.5">
-                  <RichTextViewer content={milestone.description} />
-                </div>
+              {(milestone.hasDescription || milestone.loggedHours > 0) && (
+                <ItemDetails
+                  itemId={milestone.id}
+                  hasDescription={milestone.hasDescription}
+                  showNotes
+                  className="mt-2"
+                />
               )}
+              {/* In review asks for the client's OK; work finished before
+                  the review step existed can still be approved. */}
               {milestone.status === "COMPLETED" && (
-                <>
-                  <ApproveMilestoneButton
-                    milestoneId={milestone.id}
-                    approvedAt={milestone.clientApprovedAt}
-                  />
-                  <RateMilestone
-                    milestoneId={milestone.id}
-                    rating={milestone.clientRating}
-                    note={milestone.clientRatingNote}
-                  />
-                </>
+                <ApproveMilestoneButton
+                  milestoneId={milestone.id}
+                  approvedAt={milestone.clientApprovedAt}
+                />
               )}
-              {recentEntries.some((e) => e.note) && (
-                <ul className="mt-2 space-y-1.5">
-                  {recentEntries
-                    .filter((e) => e.note)
-                    .map((entry) => (
-                      <li
-                        key={entry.id}
-                        className="rounded-lg border border-border bg-card px-3.5 py-2 text-xs"
-                      >
-                        <span className="font-medium text-foreground">
-                          {formatDate(entry.date)} · {fmtHours(entry.hours)}
-                        </span>{" "}
-                        <span className="whitespace-pre-wrap text-muted-foreground">
-                          — {entry.note}
-                        </span>
-                      </li>
-                    ))}
-                </ul>
+              {milestone.stage === "DONE" && (
+                <RateMilestone
+                  milestoneId={milestone.id}
+                  rating={milestone.clientRating}
+                  note={milestone.clientRatingNote}
+                />
               )}
             </div>
           </li>
