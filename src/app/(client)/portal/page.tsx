@@ -128,7 +128,7 @@ export default async function PortalOverviewPage() {
                 {pendingActions === 1 ? "1 thing needs you" : `${pendingActions} things need you`}
               </span>
               <span className="block text-xs text-muted-foreground">
-                Approvals and invoices waiting on your go-ahead.
+                Work to review, questions, files and invoices waiting on you.
               </span>
             </span>
           </span>
