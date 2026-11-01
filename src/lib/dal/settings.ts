@@ -175,3 +175,33 @@ const loadBranding = unstable_cache(
 
 /** react cache() dedupes within a request; unstable_cache spans requests. */
 export const getBranding = cache((): Promise<Branding> => loadBranding());
+
+/** Terms every new proposal starts with (editable per proposal). */
+export const PROPOSAL_TERMS_KEY = "proposalDefaultTerms";
+export const DEFAULT_PROPOSAL_TERMS = `Payment
+- A deposit is due before work starts. The balance is invoiced as set out above, and invoices are payable within 14 days.
+- Work may pause while an invoice is overdue.
+
+Ownership
+- When the final invoice is paid, you own the work made for this project: designs, code and content. Until then it is licensed to you for review.
+- Third-party items (themes, plugins, fonts, stock images) stay under their own licences.
+- We may show the finished work in our portfolio unless you ask us not to.
+
+Revisions
+- Two rounds of revisions per deliverable are included. Further changes, or work outside the scope above, are quoted before we start them.
+
+Timeline
+- The timeline starts once the deposit is paid and we have the content and access we need. Feedback delays move the dates by the same amount.
+
+Cancellation
+- Either side may cancel in writing. You pay for the work done up to that point; the deposit is non-refundable once work has started.`;
+
+export const getProposalDefaultTerms = unstable_cache(
+  async (): Promise<string> => {
+    const row = await prisma.appSetting.findUnique({ where: { key: PROPOSAL_TERMS_KEY } });
+    // Unset → the default wording; explicitly emptied → proposals start blank.
+    return row ? row.value : DEFAULT_PROPOSAL_TERMS;
+  },
+  ["proposal-default-terms"],
+  { tags: [SETTINGS_CACHE_TAG], revalidate: 300 },
+);

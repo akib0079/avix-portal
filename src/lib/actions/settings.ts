@@ -242,3 +242,19 @@ export async function clearBrandingFile(
   revalidatePath("/admin/settings");
   return { ok: true };
 }
+
+// ---------- Proposals ----------
+import { PROPOSAL_TERMS_KEY } from "@/lib/dal/settings";
+
+/** The terms new proposals start with. Empty = new proposals start without terms. */
+export async function updateProposalDefaultTerms(text: string): Promise<ActionResult> {
+  await requireAdmin();
+  const trimmed = text.trim();
+  if (trimmed.length > 10000) {
+    return { ok: false, error: "Keep the terms under 10,000 characters." };
+  }
+  await setSetting(PROPOSAL_TERMS_KEY, trimmed);
+  revalidateTag(SETTINGS_CACHE_TAG, "max");
+  revalidatePath("/admin/settings");
+  return { ok: true };
+}
