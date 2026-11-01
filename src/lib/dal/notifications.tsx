@@ -56,14 +56,20 @@ export async function notifyAllAdmins(input: {
   title: string;
   body?: string;
   link?: string;
+  /**
+   * Files for the email copy only, never stored on the bell row (e.g. the
+   * signed proposal PDF). Ignored for types that aren't emailed.
+   */
+  attachments?: { filename: string; content: Buffer }[];
 }) {
+  const { attachments, ...notification } = input;
   const admins = await prisma.user.findMany({
     where: { role: "ADMIN", status: "ACTIVE" },
     select: { id: true },
   });
   if (admins.length === 0) return;
   await prisma.notification.createMany({
-    data: admins.map((admin) => ({ userId: admin.id, ...input })),
+    data: admins.map((admin) => ({ userId: admin.id, ...notification })),
   });
 
   // Best-effort: the mutation that triggered this has already committed, so a
@@ -82,6 +88,7 @@ export async function notifyAllAdmins(input: {
           actionUrl={`${appUrl()}${input.link ?? "/admin"}`}
         />
       ),
+      attachments,
       devHint: `admin alert (${input.type}) -> ${adminEmail}`,
     });
   } catch (err) {
