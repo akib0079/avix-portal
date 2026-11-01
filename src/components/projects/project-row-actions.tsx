@@ -56,7 +56,7 @@ export function ProjectRowActions({
             <DialogTitle>Delete “{project.projectName}”?</DialogTitle>
             <DialogDescription>
               This permanently deletes the project, its milestones, and any
-              task requests. Invoices are kept but unlinked from the project.
+              client requests. Invoices are kept but unlinked from the project.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

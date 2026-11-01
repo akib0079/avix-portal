@@ -3,38 +3,33 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { RichTextViewer } from "@/components/editor/rich-text-viewer";
+import { SoftPill } from "@/components/ui/status-pill";
 import { RequestReviewActions } from "./request-review-actions";
+import { COLUMN_BY_ID, workItemHref, type WorkRole } from "@/lib/board";
+import { requestLabel } from "@/lib/work-list";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { TaskRequestStatus } from "@prisma/client";
-import { CircleUser, FolderKanban, Clock, ChevronDown } from "lucide-react";
+import type { InboxRequest } from "./request-board";
+import { CircleUser, FolderKanban, Clock, ChevronDown, MessageSquare } from "lucide-react";
 
 /**
- * One request, as a card on its lane. The lane already says the status, so
- * the card spends its space on who asked, for which project, and what. A
- * long brief folds to a few lines — a lane of full essays could not be
- * scanned — and opens in place.
+ * One request, as a card on its lane. The lane already says how it was
+ * decided, so the card spends its space on who asked, for which project,
+ * what — and, once accepted, where the work is now. The title opens the
+ * item on its project. A long brief folds to a few lines and opens in place.
  */
 export function RequestCard({
   request,
   waitingDays,
   stale,
+  role,
 }: {
-  request: {
-    id: string;
-    title: string;
-    description: unknown;
-    status: TaskRequestStatus;
-    adminNote: string | null;
-    createdAt: Date;
-    resolvedAt: Date | null;
-    client: { id: string; firstName: string; lastName: string; company: string | null };
-    project: { id: string; projectName: string };
-  };
+  request: InboxRequest;
   /** Days since it was submitted. */
   waitingDays: number;
-  /** Pending past the SLA: called out on the card. */
+  /** Waiting past the SLA: called out on the card. */
   stale: boolean;
+  role: WorkRole;
 }) {
   const [open, setOpen] = useState(false);
   // Only offer "Show all" when the brief is actually cut off.
@@ -48,7 +43,13 @@ export function RequestCard({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const clientName = `${request.client.firstName} ${request.client.lastName}`;
+  const clientName = request.client
+    ? `${request.client.firstName} ${request.client.lastName}`.trim()
+    : "The client";
+  const { outcome } = request;
+  const href = request.itemId
+    ? workItemHref(request.project.id, request.itemId, "ADMIN", "list")
+    : `/admin/projects/${request.project.id}`;
 
   return (
     <article
@@ -66,19 +67,33 @@ export function RequestCard({
       )}
 
       <h3 className="text-sm leading-snug font-semibold [overflow-wrap:anywhere]">
-        {request.title}
+        <Link href={href} className="hover:text-primary">
+          {request.title}
+        </Link>
       </h3>
       <div className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">
-        <Link
-          href={`/admin/clients/${request.client.id}`}
-          className="flex min-w-0 items-center gap-1 hover:text-primary"
-        >
-          <CircleUser className="size-3 shrink-0" />
-          <span className="truncate">
-            {clientName}
-            {request.client.company ? ` · ${request.client.company}` : ""}
-          </span>
-        </Link>
+        {request.client &&
+          (role === "ADMIN" ? (
+            <Link
+              href={`/admin/clients/${request.client.id}`}
+              className="flex min-w-0 items-center gap-1 hover:text-primary"
+            >
+              <CircleUser className="size-3 shrink-0" />
+              <span className="truncate">
+                {clientName}
+                {request.client.company ? ` · ${request.client.company}` : ""}
+              </span>
+            </Link>
+          ) : (
+            // Client pages are an admin's (they carry money), so staff get the name only.
+            <p className="flex min-w-0 items-center gap-1">
+              <CircleUser className="size-3 shrink-0" />
+              <span className="truncate">
+                {clientName}
+                {request.client.company ? ` · ${request.client.company}` : ""}
+              </span>
+            </p>
+          ))}
         <Link
           href={`/admin/projects/${request.project.id}`}
           className="flex min-w-0 items-center gap-1 hover:text-primary"
@@ -86,37 +101,67 @@ export function RequestCard({
           <FolderKanban className="size-3 shrink-0" />
           <span className="truncate">{request.project.projectName}</span>
         </Link>
-        <p className="tabular-nums">
-          {formatDate(request.createdAt)}
-          {request.resolvedAt && ` → ${formatDate(request.resolvedAt)}`}
-          {request.status === "PENDING" && !stale && waitingDays > 0 && ` · ${waitingDays}d waiting`}
+        <p className="flex flex-wrap items-center gap-x-2 tabular-nums">
+          <span>
+            {formatDate(request.createdAt)}
+            {request.resolvedAt && ` → ${formatDate(request.resolvedAt)}`}
+            {outcome.kind === "waiting" && !stale && waitingDays > 0 && ` · ${waitingDays}d waiting`}
+          </span>
+          {request.comments > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <MessageSquare className="size-3" /> {request.comments}
+            </span>
+          )}
         </p>
       </div>
 
-      <div className="relative mt-3 rounded-lg bg-muted/50 px-3 py-2.5">
-        <div ref={bodyRef} className={cn("text-[13px]", !open && "max-h-28 overflow-hidden")}>
-          <RichTextViewer content={request.description} />
+      {request.description !== undefined && (
+        <div className="relative mt-3 rounded-lg bg-muted/50 px-3 py-2.5">
+          <div ref={bodyRef} className={cn("text-[13px]", !open && "max-h-28 overflow-hidden")}>
+            <RichTextViewer content={request.description} />
+          </div>
+          {!open && overflows && (
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              className="absolute inset-x-0 bottom-0 flex items-end justify-center rounded-b-lg bg-gradient-to-t from-muted via-muted/80 to-transparent pt-8 pb-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown className="mr-0.5 size-3" /> Show all
+            </button>
+          )}
         </div>
-        {!open && overflows && (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="absolute inset-x-0 bottom-0 flex items-end justify-center rounded-b-lg bg-gradient-to-t from-muted via-muted/80 to-transparent pt-8 pb-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-          >
-            <ChevronDown className="mr-0.5 size-3" /> Show all
-          </button>
-        )}
-      </div>
-
-      {request.status === "REJECTED" && request.adminNote && (
-        <p className="mt-2.5 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">
-          <span className="font-medium">Note:</span> {request.adminNote}
-        </p>
       )}
 
-      {request.status === "PENDING" && (
+      {outcome.kind === "accepted" && (
+        <p className="mt-2.5">
+          <SoftPill color={COLUMN_BY_ID[outcome.stage].color}>{requestLabel(outcome, "ADMIN")}</SoftPill>
+        </p>
+      )}
+      {outcome.kind === "closed" && (
+        <p className="mt-2.5 text-xs text-muted-foreground">{requestLabel(outcome, "ADMIN")}</p>
+      )}
+      {outcome.kind === "declined" && outcome.note && (
+        <p className="mt-2.5 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">
+          <span className="font-medium">Note:</span> {outcome.note}
+        </p>
+      )}
+      {outcome.kind === "withdrawn" && (
+        <p className="mt-2.5 text-xs text-muted-foreground">Withdrawn by {clientName}.</p>
+      )}
+
+      {outcome.kind === "waiting" && request.requestId && (
         <div className="mt-3 border-t pt-3">
-          <RequestReviewActions request={{ id: request.id, title: request.title, clientName }} />
+          <RequestReviewActions
+            request={{
+              id: request.requestId,
+              title: request.title,
+              clientName,
+              projectId: request.project.id,
+              billingType: request.project.billingType,
+              itemId: request.itemId,
+              role,
+            }}
+          />
         </div>
       )}
     </article>

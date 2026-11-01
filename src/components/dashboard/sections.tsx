@@ -386,7 +386,7 @@ export async function PulseRow({ range }: { range: DashboardRange }) {
         i={6}
         href="/admin/task-requests"
         icon={Inbox}
-        label="Task requests"
+        label="Client requests"
         value={String(k.pendingRequests)}
         sub={k.pendingRequests > 0 ? "awaiting your review" : "inbox clear"}
       />

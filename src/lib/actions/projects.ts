@@ -7,16 +7,17 @@ import { projectSchema, type ProjectInput } from "@/lib/validation/project";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { sendProjectCreatedEmail } from "@/lib/email/project-emails";
 import { projectTypeLabels } from "@/lib/format";
+import { POSITION_STEP, parseDay } from "@/lib/board";
+import { stageWrite } from "@/lib/work-stage";
 import type { Prisma, Priority, ProjectStatus } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
   | { ok: false; error: string };
 
+/** Calendar days are stored as UTC midnight everywhere (see parseDay). */
 function parseDate(value: string | undefined): Date | null {
-  if (!value) return null;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  return parseDay(value) ?? null;
 }
 
 async function resolveClientId(clientId: string): Promise<string | null | undefined> {
@@ -59,7 +60,10 @@ export async function createProject(
         create: template.map((m, index) => ({
           title: m.title,
           description: textToDoc(m.description),
+          ...stageWrite("TODO"),
           position: index,
+          boardPosition: (index + 1) * POSITION_STEP,
+          createdByRole: "ADMIN" as const,
         })),
       },
     },
@@ -158,6 +162,24 @@ export async function setProjectPriority(
 
   await prisma.project.update({ where: { id }, data: { priority } });
   revalidatePath("/admin/projects");
+  revalidatePath(`/admin/projects/${id}`);
+  return { ok: true };
+}
+
+/**
+ * Whether the client's additions skip the Requested column and land in To
+ * do, unpriced — for contract and retainer projects where small asks are in
+ * scope. Admin-only: it decides whether work gets priced before it starts.
+ */
+export async function setAutoAcceptClientTasks(
+  id: string,
+  enabled: boolean,
+): Promise<ActionResult> {
+  await requireAdmin();
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true } });
+  if (!project) return { ok: false, error: "Project not found." };
+
+  await prisma.project.update({ where: { id }, data: { autoAcceptClientTasks: enabled } });
   revalidatePath(`/admin/projects/${id}`);
   return { ok: true };
 }

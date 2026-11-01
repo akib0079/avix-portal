@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
+import { PLAN_ITEM } from "@/lib/work-scope";
 
 /**
  * Projects are team-visible (ADMIN + STAFF), but STAFF is money-blind: the
@@ -17,25 +18,26 @@ export async function listProjects() {
     include: {
       client: { select: { id: true, firstName: true, lastName: true, company: true } },
       owner: { select: { id: true, firstName: true, lastName: true } },
-      // Statuses only — enough for a progress bar on each board card.
-      milestones: { select: { status: true } },
-      _count: {
-        select: {
-          milestones: true,
-          boardTasks: { where: { status: { not: "DONE" } } },
-        },
-      },
+      // The plan's statuses only — enough for a progress bar on each card.
+      milestones: { where: PLAN_ITEM, select: { status: true } },
+      // Work still open, at any level: requests waiting, to do, in review.
+      _count: { select: { milestones: { where: { archivedAt: null, stage: { not: "DONE" } } } } },
     },
   });
-  if (viewer.role === "STAFF") {
-    return projects.map((p) => ({ ...p, contractPrice: null }));
-  }
-  return projects;
+  return projects.map(({ milestones, _count, ...p }) => ({
+    ...p,
+    ...(viewer.role === "STAFF" ? { contractPrice: null } : {}),
+    planTotal: milestones.length,
+    planDone: milestones.filter((m) => m.status === "COMPLETED").length,
+    openItems: _count.milestones,
+  }));
 }
 
-/** How many recent time entries each milestone carries into the page. */
-const RECENT_TIME_ENTRIES = 20;
-
+/**
+ * The project itself. Its work items load separately, through getWorkItems
+ * (src/lib/dal/project-board.ts) — the one read both views and the poll use —
+ * so the page doesn't load every milestone twice.
+ */
 export async function getProject(id: string) {
   const viewer = await requireTeam();
   const project = await prisma.project.findUnique({
@@ -53,35 +55,11 @@ export async function getProject(id: string) {
         },
       },
       owner: { select: { id: true, firstName: true, lastName: true } },
-      milestones: {
-        orderBy: { position: "asc" },
-        include: {
-          assignee: { select: { firstName: true, lastName: true } },
-          // Bounded: a long-running milestone can accumulate hundreds of
-          // entries and the page only ever shows the recent ones. Totals come
-          // from the aggregate below, not from this list.
-          timeEntries: {
-            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-            take: RECENT_TIME_ENTRIES,
-          },
-        },
-      },
       invoices: { orderBy: { createdAt: "desc" } },
     },
   });
   if (project && viewer.role === "STAFF") {
-    return {
-      ...project,
-      contractPrice: null,
-      invoices: [],
-      milestones: project.milestones.map((m) => ({
-        ...m,
-        pricingType: "NONE" as const,
-        hourlyRate: null,
-        fixedPrice: null,
-        estimatedHours: null,
-      })),
-    };
+    return { ...project, contractPrice: null, invoices: [] };
   }
   return project;
 }
@@ -90,9 +68,9 @@ export async function getProject(id: string) {
 export type ProjectWorkspace = Awaited<ReturnType<typeof getProjectWorkspace>>;
 
 /**
- * Everything the project page's tabs need beyond the project itself: true
- * logged-hour totals (the milestone include is capped), open requests, the
- * next meeting, linked retainers, and the project's audit trail.
+ * Everything the project page's tabs need beyond the project and its work
+ * items: the request history, the next meeting, linked retainers, and the
+ * project's audit trail. (Logged hours come with the work items.)
  *
  * Money-bearing pieces are omitted for STAFF, matching getProject.
  */
@@ -101,12 +79,7 @@ export async function getProjectWorkspace(projectId: string) {
   const isAdmin = viewer.role === "ADMIN";
   const now = new Date();
 
-  const [hourTotals, requests, meetings, retainers, activity] = await Promise.all([
-    prisma.timeEntry.groupBy({
-      by: ["milestoneId"],
-      where: { milestone: { projectId } },
-      _sum: { hours: true },
-    }),
+  const [requests, meetings, retainers, activity] = await Promise.all([
     prisma.taskRequest.findMany({
       where: { projectId },
       orderBy: { createdAt: "desc" },
@@ -149,10 +122,6 @@ export async function getProjectWorkspace(projectId: string) {
   ]);
 
   return {
-    /** milestoneId → total logged hours (all entries, not just the recent page). */
-    loggedHoursByMilestone: Object.fromEntries(
-      hourTotals.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
-    ) as Record<string, number>,
     requests: requests.map((r) => ({
       id: r.id,
       title: r.title,

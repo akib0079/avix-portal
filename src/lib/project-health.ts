@@ -1,15 +1,24 @@
+import {
+  isAwaitingRating,
+  isAwaitingReview,
+  isInvoiceToPay,
+  isOpenRequest,
+  isPlanItem,
+} from "@/lib/work-scope";
+
 /**
  * One definition of "how is this project doing", used by both the admin page
  * and the client portal so the two ends can never disagree about it.
  *
  * Dependency-free on purpose: takes already-serialized values, no Prisma types,
- * so client components can import it.
+ * so client components can import it. Which items count for what comes from
+ * work-scope.ts, the same rules the database counts use.
  */
 
 export type HealthTone = "good" | "warn" | "bad" | "neutral";
 
 export type ProjectHealth = {
-  /** Completed milestones / total, 0–100. */
+  /** Completed plan items / total, 0–100 (see PLAN_ITEM in work-scope.ts). */
   percent: number;
   done: number;
   total: number;
@@ -28,6 +37,14 @@ type MilestoneLike = {
   title: string;
   status: string;
   position?: number;
+  /**
+   * Since v49 sub-items, archived work and requests still awaiting a
+   * decision ride along in the same list; only the plan counts. Callers that
+   * load the plan alone may leave these out.
+   */
+  stage?: string;
+  parentId?: string | null;
+  archivedAt?: string | Date | null;
 };
 
 const DAY_MS = 86_400_000;
@@ -47,12 +64,14 @@ export function projectHealth(input: {
   now?: Date;
 }): ProjectHealth {
   const now = input.now ?? new Date();
-  const total = input.milestones.length;
-  const done = input.milestones.filter((m) => m.status === "COMPLETED").length;
+  // In review counts as done here: the team has finished it.
+  const plan = input.milestones.filter(isPlanItem);
+  const total = plan.length;
+  const done = plan.filter((m) => m.status === "COMPLETED").length;
   const percent = total === 0 ? 0 : Math.round((done / total) * 100);
 
   // In-progress wins over the first pending one — that's what's actually live.
-  const ordered = [...input.milestones].sort(
+  const ordered = [...plan].sort(
     (a, b) => (a.position ?? 0) - (b.position ?? 0),
   );
   const next =
@@ -103,43 +122,59 @@ export function projectHealth(input: {
  * client's "Needs you" block from the same counts.
  */
 export type PendingWork = {
-  /** Completed milestones the client hasn't approved. */
+  /** Work in review, waiting for the client's verdict. */
   milestonesAwaitingApproval: number;
-  /** Completed + approved milestones with no rating yet. */
+  /** Approved top-level work with no rating yet. */
   milestonesAwaitingRating: number;
   /** Deliverables with no review decision. */
   deliverablesAwaitingReview: number;
   /** Deliverables the client sent back. */
   deliverablesNeedingChanges: number;
-  /** Task requests still PENDING. */
+  /** Client requests still waiting in Requested. */
   openRequests: number;
-  /** Invoices neither PAID nor CANCELLED. */
+  /** Invoices not yet settled: neither paid, cancelled nor still a draft. */
   unpaidInvoices: number;
+  /**
+   * What the client can pay now: sent or part-paid, not reported paid (see
+   * INVOICE_TO_PAY). The client's own count — a draft is never theirs.
+   */
+  invoicesToPay: number;
   total: number;
 };
 
 export function pendingWork(input: {
-  milestones: { status: string; clientApprovedAt: string | null; clientRating: number | null }[];
+  /** Every work item of the project, as getWorkItems returns them. */
+  milestones: {
+    stage: string;
+    parentId: string | null;
+    archivedAt: string | null;
+    clientApprovedAt: string | null;
+    clientRating: number | null;
+  }[];
   deliverables: { reviewStatus: string | null }[];
-  requests?: { status: string }[];
-  invoices?: { status: string }[];
+  invoices?: {
+    status: string;
+    paymentClaimedAt?: string | Date | null;
+    amount?: number | null;
+    amountPaid?: number | null;
+  }[];
 }): PendingWork {
-  const milestonesAwaitingApproval = input.milestones.filter(
-    (m) => m.status === "COMPLETED" && !m.clientApprovedAt,
-  ).length;
-  const milestonesAwaitingRating = input.milestones.filter(
-    (m) => m.status === "COMPLETED" && m.clientApprovedAt && m.clientRating == null,
-  ).length;
+  const milestonesAwaitingApproval = input.milestones.filter(isAwaitingReview).length;
+  const milestonesAwaitingRating = input.milestones.filter(isAwaitingRating).length;
   const deliverablesAwaitingReview = input.deliverables.filter(
     (d) => d.reviewStatus == null,
   ).length;
   const deliverablesNeedingChanges = input.deliverables.filter(
     (d) => d.reviewStatus === "CHANGES_REQUESTED",
   ).length;
-  const openRequests = (input.requests ?? []).filter((r) => r.status === "PENDING").length;
-  const unpaidInvoices = (input.invoices ?? []).filter(
-    (i) => i.status !== "PAID" && i.status !== "CANCELLED",
+  const openRequests = input.milestones.filter(isOpenRequest).length;
+  const invoices = input.invoices ?? [];
+  // A draft is being prepared and owes nothing yet — counting it showed the
+  // client a "settle" nag for an invoice they can't even open.
+  const unpaidInvoices = invoices.filter(
+    (i) => i.status !== "PAID" && i.status !== "CANCELLED" && i.status !== "DRAFT",
   ).length;
+  const invoicesToPay = invoices.filter(isInvoiceToPay).length;
 
   return {
     milestonesAwaitingApproval,
@@ -148,6 +183,7 @@ export function pendingWork(input: {
     deliverablesNeedingChanges,
     openRequests,
     unpaidInvoices,
+    invoicesToPay,
     total:
       milestonesAwaitingApproval +
       milestonesAwaitingRating +

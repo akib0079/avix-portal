@@ -1,17 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { ProjectBillingType } from "@prisma/client";
 import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
-import type { MilestoneView } from "@/components/milestones/milestone-types";
-import type { TeamOption } from "@/lib/dal/users";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * dnd-kit ships with these two boards and is only needed once someone drags.
- * Both boards also pull in their form dialogs (and through them the editor),
- * so loading them on demand keeps a lot of code off the first paint of
- * /admin/leads and every project page.
+ * dnd-kit ships with the lead board and is only needed once someone drags.
+ * The board also pulls in its form dialogs (and through them the editor), so
+ * loading it on demand keeps a lot of code off the first paint of
+ * /admin/leads. (The project Milestones tab renders its list and board from
+ * one store, see components/board/work-tab.tsx.)
  */
 
 function BoardPlaceholder({ columns = 1 }: { columns?: number }) {
@@ -37,13 +35,3 @@ export const LeadBoard = dynamic<{ leads: LeadView[]; owners?: LeadOwnerOption[]
   { ssr: false, loading: () => <BoardPlaceholder columns={5} /> },
 );
 
-export const MilestoneBoard = dynamic<{
-  projectId: string;
-  milestones: MilestoneView[];
-  billingType?: ProjectBillingType;
-  canEditPricing?: boolean;
-  team?: TeamOption[];
-}>(() => import("./milestones/milestone-board").then((m) => m.MilestoneBoard), {
-  ssr: false,
-  loading: () => <BoardPlaceholder />,
-});

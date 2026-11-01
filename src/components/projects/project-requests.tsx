@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
+import { workItemHref } from "@/lib/board";
 import { Inbox, CalendarClock, ArrowUpRight, CheckCircle2 } from "lucide-react";
 import { toneChip } from "@/lib/tone";
 
@@ -12,6 +13,7 @@ export type ProjectRequestRow = {
   adminNote: string | null;
   createdAt: string;
   resolvedAt: string | null;
+  /** The work item the request created (since v49, from the moment it's sent). */
   milestone: { id: string; title: string } | null;
 };
 
@@ -24,9 +26,8 @@ export type ProjectMeetingRow = {
 
 const statusTone: Record<string, string> = {
   PENDING: toneChip.warn,
-  ACCEPTED: toneChip.good,
-  DECLINED: "bg-muted text-muted-foreground",
-  COMPLETED: toneChip.good,
+  APPROVED: toneChip.good,
+  REJECTED: "bg-muted text-muted-foreground",
 };
 
 /**
@@ -35,9 +36,11 @@ const statusTone: Record<string, string> = {
  * and /admin/calendar and filter by eye.
  */
 export function ProjectRequests({
+  projectId,
   requests,
   meetings,
 }: {
+  projectId: string;
   requests: ProjectRequestRow[];
   meetings: ProjectMeetingRow[];
 }) {
@@ -98,7 +101,11 @@ export function ProjectRequests({
                 <li key={r.id} className="rounded-lg border p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <Link
-                      href="/admin/task-requests"
+                      href={
+                        r.milestone
+                          ? workItemHref(projectId, r.milestone.id, "ADMIN")
+                          : "/admin/task-requests"
+                      }
                       className="min-w-0 text-sm font-medium hover:text-primary"
                     >
                       {r.title}
@@ -116,7 +123,7 @@ export function ProjectRequests({
                     Sent {formatDate(r.createdAt)}
                     {r.resolvedAt ? ` · resolved ${formatDate(r.resolvedAt)}` : ""}
                   </p>
-                  {r.milestone && (
+                  {r.milestone && r.status === "APPROVED" && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">
                       <CheckCircle2 className="size-3 shrink-0" />
                       Became milestone “{r.milestone.title}”

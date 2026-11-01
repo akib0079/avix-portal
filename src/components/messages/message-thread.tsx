@@ -8,8 +8,8 @@ import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import type { JSONContent } from "@tiptap/react";
 import { sendMessage, markThreadRead } from "@/lib/actions/messages";
 import type { MessageView } from "@/lib/dal/messages";
-import type { BoardCard } from "@/lib/board";
-import { boardTaskHref } from "@/lib/board";
+import type { WorkItem } from "@/lib/board";
+import { workItemHref } from "@/lib/board";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { RichTextViewer } from "@/components/editor/rich-text-viewer";
 import { toast } from "sonner";
@@ -615,13 +615,13 @@ export function MessageThread({
         viewer={{ id: "", side: viewerRole }}
         defaultTitle={firstLine(richTextToPlain(taskFrom.body))}
         defaultDescription={taskFrom.body}
-        onCreated={(card: BoardCard) => {
+        onCreated={(item: WorkItem) => {
           // Lands on an open board straight away, not on its next poll.
-          window.dispatchEvent(new CustomEvent("avix:board-card", { detail: { projectId, card } }));
-          toast.success("Task added to the board", {
+          window.dispatchEvent(new CustomEvent("avix:board-card", { detail: { projectId, item } }));
+          toast.success(item.stage === "REQUESTED" ? "Request sent to the team" : "Task added to the board", {
             action: {
               label: "Open",
-              onClick: () => router.push(boardTaskHref(viewerRole, projectId, card.id)),
+              onClick: () => router.push(workItemHref(projectId, item.id, viewerRole)),
             },
           });
         }}

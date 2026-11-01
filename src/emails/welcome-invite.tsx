@@ -13,7 +13,7 @@ export default function WelcomeInviteEmail({
       <EmailBody>
         Avix Digital has set up a private portal account for you. From your
         portal you can follow project progress in real time, review milestones,
-        download invoices, and submit task requests.
+        download invoices, and ask for new work.
       </EmailBody>
       <EmailBody>
         To get started, choose a password for your account. This link is valid

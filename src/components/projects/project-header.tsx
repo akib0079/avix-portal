@@ -2,11 +2,18 @@
 
 import { useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { Priority, ProjectStatus } from "@prisma/client";
-import { setProjectStatus, setProjectPriority, setProjectOwner } from "@/lib/actions/projects";
+import {
+  setAutoAcceptClientTasks,
+  setProjectStatus,
+  setProjectPriority,
+  setProjectOwner,
+} from "@/lib/actions/projects";
 import type { TeamOption } from "@/lib/dal/users";
 import { projectHealth } from "@/lib/project-health";
+import { isPlanItem } from "@/lib/work-scope";
+import { useWorkOptional } from "@/components/board/work-store";
+import type { WorkItem } from "@/lib/board";
 import { projectStatusColor, priorityColor } from "@/lib/status-colors";
 import {
   Select,
@@ -141,6 +148,32 @@ function Dot({ color }: { color: string }) {
   );
 }
 
+type HeaderStats = {
+  openTasks: number;
+  doneTasks: number;
+  helpRequests: number;
+  hoursLogged: number;
+  /** Admin only; null hides it. */
+  unbilled: number | null;
+};
+
+/** The header's figures, worked out from the live items (unbilled stays the server's). */
+function liveFigures(items: WorkItem[], server: HeaderStats) {
+  const open = items.filter((i) => i.stage !== "DONE").length;
+  return {
+    milestones: items
+      .filter(isPlanItem)
+      .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position })),
+    stats: {
+      ...server,
+      openTasks: open,
+      doneTasks: items.length - open,
+      helpRequests: items.filter((i) => i.helpFrom === "CLIENT").length,
+      hoursLogged: items.reduce((sum, i) => sum + i.loggedHours, 0),
+    },
+  };
+}
+
 /**
  * The project's header, across the full width of the page.
  *
@@ -152,11 +185,11 @@ function Dot({ color }: { color: string }) {
  */
 export function ProjectHeader({
   project,
-  milestones,
+  milestones: serverMilestones,
   team = [],
   canEdit,
   renderedAt,
-  stats,
+  stats: serverStats,
   attention,
   brief,
 }: {
@@ -171,6 +204,8 @@ export function ProjectHeader({
     dueDate: string | null;
     billingType: "MILESTONE" | "CONTRACT";
     contractPrice: number | null;
+    /** Client additions skip Requested and land in To do, unpriced. */
+    autoAcceptClientTasks: boolean;
     ownerId: string | null;
     client: {
       id: string;
@@ -186,24 +221,24 @@ export function ProjectHeader({
   canEdit: boolean;
   /** Server time, so "due in N days" matches between server and browser. */
   renderedAt: number;
-  stats: {
-    openTasks: number;
-    doneTasks: number;
-    helpRequests: number;
-    hoursLogged: number;
-    /** Admin only; null hides it. */
-    unbilled: number | null;
-  };
+  stats: HeaderStats;
   /** What's waiting on someone, rendered in the header's footer. */
   attention?: React.ReactNode;
   /** The project brief, folded under the header. */
   brief?: React.ReactNode;
 }) {
-  const router = useRouter();
+  // On the project page the work is live (the Milestones tab's store), so the
+  // ring and the counts follow a drag on the board at once instead of waiting
+  // for the next page load. Elsewhere, the server's figures.
+  const work = useWorkOptional();
+  const live = work ? liveFigures(work.items, serverStats) : null;
+  const milestones = live?.milestones ?? serverMilestones;
+  const stats = live?.stats ?? serverStats;
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ProjectStatus>(project.status);
   const [priority, setPriority] = useState<Priority>(project.priority);
   const [owner, setOwner] = useState<string>(project.ownerId ?? "none");
+  const [autoAccept, setAutoAccept] = useState(project.autoAcceptClientTasks);
   // Phones: owner, dates, billing and the stats fold away so the board is
   // reachable without scrolling past a screen of header. Wider screens show all.
   const [more, setMore] = useState(false);
@@ -216,6 +251,9 @@ export function ProjectHeader({
     now: new Date(renderedAt),
   });
 
+  // Each of these actions revalidates this page, and Next applies that
+  // render from the action's response: a router.refresh() on top rendered
+  // the whole project page a second time.
   async function changeStatus(next: ProjectStatus) {
     const previous = status;
     setStatus(next); // optimistic — the select shouldn't lag behind the click
@@ -227,7 +265,6 @@ export function ProjectHeader({
       return void toast.error(res.error);
     }
     toast.success(`Moved to ${projectStatusLabels[next]}.`);
-    router.refresh();
   }
 
   async function changePriority(next: Priority) {
@@ -240,7 +277,6 @@ export function ProjectHeader({
       setPriority(previous);
       return void toast.error(res.error);
     }
-    router.refresh();
   }
 
   async function changeOwner(next: string) {
@@ -253,7 +289,26 @@ export function ProjectHeader({
       setOwner(previous);
       return void toast.error(res.error);
     }
-    router.refresh();
+  }
+
+  // Whether the client's asks wait for a decision. Like the three above,
+  // the action revalidates this page itself.
+  async function changeAutoAccept(next: string) {
+    const enabled = next === "auto";
+    const previous = autoAccept;
+    setAutoAccept(enabled);
+    setBusy(true);
+    const res = await setAutoAcceptClientTasks(project.id, enabled);
+    setBusy(false);
+    if (!res.ok) {
+      setAutoAccept(previous);
+      return void toast.error(res.error);
+    }
+    toast.success(
+      enabled
+        ? "The client's asks now land in To do, at no charge."
+        : "The client's asks now wait for you to accept them.",
+    );
   }
 
   const ownerPerson = team.find((m) => m.id === owner);
@@ -435,6 +490,23 @@ export function ProjectHeader({
                   </p>
                 </Field>
               )}
+              {canEdit && project.client && (
+                <Field label="Client requests" className={foldable}>
+                  <Select
+                    value={autoAccept ? "auto" : "ask"}
+                    onValueChange={changeAutoAccept}
+                    disabled={busy}
+                  >
+                    <SelectTrigger size="sm" className="w-full" aria-label="Client requests">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ask">Wait for approval</SelectItem>
+                      <SelectItem value="auto">Accept automatically</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
             </div>
           </div>
         </div>
@@ -450,7 +522,7 @@ export function ProjectHeader({
           <Stat
             icon={KanbanSquare}
             label={`open · ${stats.doneTasks} done`}
-            value={`${stats.openTasks} task${stats.openTasks === 1 ? "" : "s"}`}
+            value={`${stats.openTasks} item${stats.openTasks === 1 ? "" : "s"}`}
           />
           <Stat
             icon={LifeBuoy}

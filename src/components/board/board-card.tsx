@@ -1,20 +1,30 @@
 "use client";
 
-import { memo, type CSSProperties } from "react";
+import { memo, type CSSProperties, type SyntheticEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { BoardCard, BoardMilestone, BoardPerson, BoardSide } from "@/lib/board";
+import type { BoardPerson, BoardPhase, BoardSide, WorkItem, WorkRole } from "@/lib/board";
 import { COLUMN_BY_ID } from "@/lib/board";
+import { formatHours, priceLabel, stageChoices } from "@/lib/work-list";
 import { cn } from "@/lib/utils";
-import { PersonAvatar, PriorityFlag, DueChip } from "./board-bits";
-import { MessageSquare, AlignLeft, LifeBuoy, Loader2 } from "lucide-react";
+import { HoursBar, PersonAvatar, PriorityFlag, DueChip } from "./board-bits";
+import { MessageSquare, AlignLeft, LifeBuoy, Loader2, Check, X, Clock } from "lucide-react";
 
 export type CardContext = {
   peopleById: Map<string, BoardPerson>;
-  milestonesById: Map<string, BoardMilestone>;
-  viewer: { id: string; side: BoardSide };
+  phasesById: Map<string, BoardPhase>;
+  viewer: { id: string; side: BoardSide; role: WorkRole };
   today: string;
+  /** Price chips: the admin's, on a project with per-item pricing. */
+  showPrice: boolean;
+  onAccept: (id: string) => void;
+  onDecline: (id: string) => void;
 };
+
+/** Keeps a click on a card's own button from opening the card or picking it up. */
+function hold(e: SyntheticEvent) {
+  e.stopPropagation();
+}
 
 /**
  * One card. Memoised on the card object itself: the board keeps unchanged
@@ -26,20 +36,23 @@ export const CardFace = memo(function CardFace({
   ctx,
   overlay,
 }: {
-  card: BoardCard;
+  card: WorkItem;
   ctx: CardContext;
   /** The copy that follows the pointer while dragging. */
   overlay?: boolean;
 }) {
   const assignee = card.assigneeId ? ctx.peopleById.get(card.assigneeId) : undefined;
-  const milestone = card.milestoneId ? ctx.milestonesById.get(card.milestoneId) : undefined;
-  const done = card.status === "DONE";
+  const phase = card.parentId ? ctx.phasesById.get(card.parentId) : undefined;
+  const done = card.stage === "DONE";
   const pending = card.id.startsWith("temp-");
+  const team = ctx.viewer.side === "ADMIN";
   // Help the viewer owes an answer to — the loud version. Help they asked for
   // themselves is shown quietly: they already know.
   const helpForMe = card.helpFrom && card.helpFrom !== ctx.viewer.side;
   const fromOtherSide = card.createdByRole !== ctx.viewer.side;
-  const column = COLUMN_BY_ID[card.status];
+  const column = COLUMN_BY_ID[card.stage];
+  const price = ctx.showPrice ? priceLabel(card) : null;
+  const decide = team && card.stage === "REQUESTED" && !!card.sourceTaskRequestId && !pending && !overlay;
 
   return (
     <div
@@ -55,7 +68,7 @@ export const CardFace = memo(function CardFace({
       {/* Column colour, as a hairline on the leading edge. */}
       <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[var(--col)] opacity-70" />
 
-      {(milestone || card.helpFrom) && (
+      {(phase || card.helpFrom) && (
         <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
           {card.helpFrom && (
             <span
@@ -74,9 +87,12 @@ export const CardFace = memo(function CardFace({
                 : "Help asked"}
             </span>
           )}
-          {milestone && (
-            <span className="max-w-full truncate rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {milestone.title}
+          {phase && (
+            <span
+              className="max-w-full truncate rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title={`Part of ${phase.title}`}
+            >
+              {phase.title}
             </span>
           )}
         </div>
@@ -94,6 +110,18 @@ export const CardFace = memo(function CardFace({
       <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <PriorityFlag priority={card.priority} />
         <DueChip day={card.dueDate} done={done} today={ctx.today} />
+        {price && (
+          <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary tabular-nums">
+            {price}
+          </span>
+        )}
+        {team && card.loggedHours > 0 && (
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
+            <Clock className="size-3" />
+            {formatHours(card.loggedHours)}
+            {card.estimatedHours != null ? `/${formatHours(card.estimatedHours)}` : ""}
+          </span>
+        )}
         {card.hasDescription && (
           <AlignLeft className="size-3.5 text-muted-foreground" aria-label="Has details" />
         )}
@@ -113,25 +141,63 @@ export const CardFace = memo(function CardFace({
           {assignee && <PersonAvatar person={assignee} size={22} />}
         </span>
       </div>
+
+      {team && <HoursBar logged={card.loggedHours} estimate={card.estimatedHours} className="mt-2.5" />}
+
+      {decide && (
+        // A request is decided from its card: one click to accept (the dialog
+        // asks where it starts), one to decline (it asks why).
+        <div
+          className="mt-2.5 flex gap-1.5 border-t pt-2.5"
+          onClick={hold}
+          onKeyDown={hold}
+          onPointerDown={hold}
+          onMouseDown={hold}
+          onTouchStart={hold}
+        >
+          <button
+            type="button"
+            onClick={() => ctx.onAccept(card.id)}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/85"
+          >
+            <Check className="size-3.5" /> Accept
+          </button>
+          <button
+            type="button"
+            onClick={() => ctx.onDecline(card.id)}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border bg-background px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X className="size-3.5" /> Decline
+          </button>
+        </div>
+      )}
     </div>
   );
 });
 
-/** A card the board can drag. Click (or Enter) opens it. */
+/**
+ * A card the board can drag. Click (or Enter) opens it. Only cards this
+ * viewer may move can be picked up (see canMoveWorkItem): a client's work in
+ * review, anything else of the team's — so nothing lifts under the pointer
+ * only to bounce back.
+ */
 export const SortableCard = memo(function SortableCard({
   card,
   ctx,
   onOpen,
 }: {
-  card: BoardCard;
+  card: WorkItem;
   ctx: CardContext;
   onOpen: (id: string) => void;
 }) {
   const pending = card.id.startsWith("temp-");
+  // The team can always reorder within a column; a client only lifts what
+  // has somewhere to go.
+  const movable = ctx.viewer.side === "ADMIN" || stageChoices(ctx.viewer.role, card).length > 0;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
-    data: { status: card.status },
-    disabled: pending,
+    data: { stage: card.stage },
+    disabled: pending || !movable,
   });
 
   return (
@@ -140,7 +206,7 @@ export const SortableCard = memo(function SortableCard({
       style={{ transform: CSS.Translate.toString(transform), transition }}
       {...attributes}
       {...listeners}
-      aria-label={`${card.title} — open task`}
+      aria-label={`${card.title} — open`}
       onClick={() => !pending && onOpen(card.id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !isDragging && !pending) {

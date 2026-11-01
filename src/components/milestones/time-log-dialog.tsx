@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { timeEntrySchema, type TimeEntryInput } from "@/lib/validation/time-entry";
@@ -10,7 +9,9 @@ import {
   updateTimeEntry,
   deleteTimeEntry,
 } from "@/lib/actions/time-entries";
-import type { MilestoneView, TimeEntryView } from "./milestone-types";
+import type { PricingType } from "@prisma/client";
+import type { TimeEntryView } from "./milestone-types";
+import { useWorkItemDetail } from "@/components/board/use-work-item-detail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/form";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/format";
+import { formatHours } from "@/lib/work-list";
 import { Clock, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 
 function today(): string {
@@ -40,22 +42,37 @@ function today(): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
-export function formatHours(hours: number): string {
-  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
-}
+/** What the log needs to know about the item — a list row or a board card both fit. */
+type LoggedItem = {
+  id: string;
+  title: string;
+  loggedHours: number;
+  pricingType: PricingType;
+  estimatedHours: number | null;
+  timeEntries?: TimeEntryView[];
+};
 
+/**
+ * Hours logged on one item: add, correct or remove an entry. The entries
+ * come with the item's detail (shared with the drawer, so both stay in step);
+ * the totals on the list and the board catch up through `onChanged`.
+ */
 export function TimeLogDialog({
   milestone,
   open,
   onOpenChange,
+  onChanged,
 }: {
-  milestone: MilestoneView | null;
+  milestone: LoggedItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** After a change lands — the page holding the item refreshes its totals. */
+  onChanged?: () => void;
 }) {
-  const router = useRouter();
   const [editing, setEditing] = useState<TimeEntryView | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // The list carries no time entries; the recent ones come with the item.
+  const detail = useWorkItemDetail(open && milestone ? milestone.id : null);
 
   const form = useForm<TimeEntryInput>({
     resolver: zodResolver(timeEntrySchema),
@@ -80,7 +97,10 @@ export function TimeLogDialog({
     if (!result.ok) return void toast.error(result.error);
     toast.success(editing ? "Entry updated." : "Time logged.");
     cancelEdit();
-    router.refresh();
+    // The action revalidates the project page itself; no router.refresh(),
+    // which would render it a second time.
+    void detail.mutate();
+    onChanged?.();
   }
 
   async function onDelete(id: string) {
@@ -89,11 +109,12 @@ export function TimeLogDialog({
     setDeletingId(null);
     if (!result.ok) return void toast.error(result.error);
     toast.success("Entry deleted.");
-    router.refresh();
+    void detail.mutate();
+    onChanged?.();
   }
 
-  const entries = milestone?.timeEntries ?? [];
-  const total = milestone?.loggedHours ?? 0;
+  const entries = detail.data?.timeEntries ?? milestone?.timeEntries ?? [];
+  const total = detail.data?.item.loggedHours ?? milestone?.loggedHours ?? 0;
 
   return (
     <Dialog

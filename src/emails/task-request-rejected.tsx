@@ -14,8 +14,8 @@ export default function TaskRequestRejectedEmail({
   portalUrl: string;
 }) {
   return (
-    <EmailShell preview="Update on your task request">
-      <EmailHeading>About your task request</EmailHeading>
+    <EmailShell preview="Update on your request">
+      <EmailHeading>About your request</EmailHeading>
       <EmailBody>
         Hi {firstName}, we&apos;ve reviewed your request{" "}
         <strong>“{title}”</strong> on <strong>{projectName}</strong> and

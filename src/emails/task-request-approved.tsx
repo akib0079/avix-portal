@@ -14,12 +14,12 @@ export default function TaskRequestApprovedEmail({
   portalUrl: string;
 }) {
   return (
-    <EmailShell preview={`Your task request was approved`}>
-      <EmailHeading>Request approved 🎉</EmailHeading>
+    <EmailShell preview="Your request was accepted">
+      <EmailHeading>Request accepted 🎉</EmailHeading>
       <EmailBody>
-        Hi {firstName}, your task request <strong>“{title}”</strong> on{" "}
-        <strong>{projectName}</strong> has been approved and added to the
-        project board{pricingLine ? <> with pricing <strong>{pricingLine}</strong></> : null}.
+        Hi {firstName}, your request <strong>“{title}”</strong> on{" "}
+        <strong>{projectName}</strong> has been accepted and added to your
+        project&apos;s milestones{pricingLine ? <> with pricing <strong>{pricingLine}</strong></> : null}.
       </EmailBody>
       <EmailBody>
         You can follow its progress from your portal like any other milestone.

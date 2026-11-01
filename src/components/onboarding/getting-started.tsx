@@ -38,7 +38,7 @@ export function GettingStarted({ state }: { state: ChecklistState }) {
     {
       done: state.submittedRequest,
       label: "Need something extra?",
-      hint: "Send us a task request",
+      hint: "Ask us for it — it goes straight to the team",
       href: "/portal/requests",
     },
   ];

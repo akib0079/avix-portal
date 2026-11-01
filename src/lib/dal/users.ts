@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireTeam } from "@/lib/dal/session";
 import { usdValue } from "@/lib/invoice-usd";
+import { OPEN_REQUEST } from "@/lib/work-scope";
 
 export type ClientHealth = "green" | "amber" | "red";
 
@@ -206,7 +207,8 @@ export async function getClientSnapshot(clientId: string) {
         orderBy: { createdAt: "desc" },
         select: { createdAt: true, senderRole: true },
       }),
-      prisma.taskRequest.count({ where: { clientId, status: "PENDING" } }),
+      // Requests waiting in their projects' Requested columns.
+      prisma.milestone.count({ where: { ...OPEN_REQUEST, project: { clientId } } }),
       prisma.meeting.findFirst({
         where: { clientId, startsAt: { gte: now } },
         orderBy: { startsAt: "asc" },

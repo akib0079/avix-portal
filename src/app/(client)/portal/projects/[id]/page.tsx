@@ -1,18 +1,25 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getMyProject, getMyProjectExtras, listMyProjectOptions } from "@/lib/dal/portal";
+import { getMyProject, getMyProjectExtras } from "@/lib/dal/portal";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { listByProject } from "@/lib/dal/deliverables";
-import { getBoardCards, getBoardPeople } from "@/lib/dal/project-board";
+import {
+  getBoardPeople,
+  getWorkItems,
+  getWorkVersion,
+  phasesOf,
+} from "@/lib/dal/project-board";
 import { requireClient } from "@/lib/dal/session";
 import { DeliverablesList } from "@/components/deliverables/deliverables-list";
 import { getWhatsappSupportUrl } from "@/lib/dal/settings";
-import { ClientProjectTimeline } from "@/components/projects/client-project-timeline";
 import { ProjectNeedsYou } from "@/components/projects/project-needs-you";
+import { PortalPulse, PortalUpNext } from "@/components/projects/portal-pulse";
 import { ProjectTabs } from "@/components/projects/project-tabs";
-import { ProjectBoard } from "@/components/board/project-board";
+import { WorkProvider } from "@/components/board/work-store";
+import { WorkTab } from "@/components/board/work-tab";
 import { ChatWidget } from "@/components/messages/chat-widget";
-import { toMilestoneView } from "@/components/milestones/milestone-types";
+import { WORK_TAB, resolveWorkLink } from "@/lib/board";
+import { clientWaiting } from "@/lib/work-scope";
 import { ProjectStatusBadge, InvoiceStatusBadge } from "@/components/status-badges";
 import { RichTextViewer, hasRichTextContent } from "@/components/editor/rich-text-viewer";
 import { RequestFormDialog } from "@/components/task-requests/request-form-dialog";
@@ -26,7 +33,6 @@ import {
   ArrowLeft,
   CalendarDays,
   BadgeDollarSign,
-  CircleDot,
   CalendarClock,
   ReceiptText,
   AlertTriangle,
@@ -41,93 +47,64 @@ export default async function MyProjectPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ task?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ id }, { task: taskParam }] = await Promise.all([params, searchParams]);
-  // The board loads in the same wave as the ownership check. Its reads do no
-  // check of their own; nothing they return is rendered unless getMyProject —
-  // scoped to the session — found the project.
-  const [user, project, options, whatsappUrl, cards, people] = await Promise.all([
-    requireClient(),
-    getMyProject(id),
-    listMyProjectOptions(),
-    getWhatsappSupportUrl(),
-    getBoardCards(id),
-    getBoardPeople(id),
-  ]);
-  if (!project) notFound();
-  // Milestones are already on the project; the board doesn't fetch them again.
-  const board = {
-    cards,
-    people,
-    milestones: project.milestones.map((m) => ({ id: m.id, title: m.title })),
-  };
-  // After ownership is confirmed above (getMyProject scopes to the session).
-  const [messages, deliverables, extras] = await Promise.all([
-    getProjectMessages(project.id),
-    listByProject(project.id),
-    getMyProjectExtras(project.id),
-  ]);
-
-  const milestones = project.milestones.map((m) => {
-    const view = toMilestoneView(m);
-    return {
-      ...view,
-      loggedHours: extras.loggedHoursByMilestone[m.id] ?? view.loggedHours,
-    };
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  // ?tab=milestones&view=board&item=<id>, and the older shapes that
+  // notifications already sent still carry (?view=board&task=<id>, …).
+  const link = resolveWorkLink({
+    get: (name) => {
+      const value = query[name];
+      return typeof value === "string" ? value : null;
+    },
   });
+  // Everything loads in the same wave as the ownership check. The work reads
+  // scope themselves to the session; the messages and deliverables don't, so
+  // nothing is rendered unless getMyProject — scoped to the session — found
+  // the project.
+  const [user, project, whatsappUrl, items, version, people, messages, deliverables, extras] =
+    await Promise.all([
+      requireClient(),
+      getMyProject(id),
+      getWhatsappSupportUrl(),
+      getWorkItems(id),
+      getWorkVersion(id),
+      getBoardPeople(id),
+      getProjectMessages(id),
+      listByProject(id),
+      getMyProjectExtras(id),
+    ]);
+  if (!project) notFound();
+  // Read once: the header's "due in N days" and the store's freshness check
+  // agree on what now is.
+  const renderedAt = serverNow();
+  const board = { items, people, phases: phasesOf(items), version: version ?? "" };
+  // A draft is being prepared and isn't the client's to see yet — kept off
+  // this page whatever the read hands back.
+  const invoices = extras.invoices.filter((i) => i.status !== "DRAFT");
 
   const health = projectHealth({
-    milestones,
+    milestones: items,
     status: project.status,
     dueDate: project.dueDate,
+    now: new Date(renderedAt),
   });
   const pending = pendingWork({
-    milestones,
+    milestones: items,
     deliverables,
-    invoices: extras.invoices,
+    invoices,
   });
-  const boardWaiting = {
-    review: board.cards.filter((c) => c.status === "REVIEW").length,
-    help: board.cards.filter((c) => c.helpFrom === "ADMIN").length,
-  };
-  const openTasks = board.cards.filter((c) => c.status !== "DONE").length;
-  const viewer = {
-    id: user.id,
-    side: "CLIENT" as const,
-    name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.name,
-  };
+  const waiting = clientWaiting(items);
+  const openTasks = items.filter((i) => i.stage !== "DONE").length;
 
   const tabs = [
     {
-      value: "board",
-      label: "Board",
-      icon: "board" as const,
+      value: WORK_TAB,
+      label: "Milestones",
+      icon: "milestones" as const,
       count: openTasks,
-      alert: boardWaiting.review + boardWaiting.help > 0,
-      content: (
-        <ProjectBoard
-          projectId={project.id}
-          viewer={viewer}
-          initial={board}
-          renderedAt={serverNow()}
-          initialTaskId={taskParam ?? null}
-        />
-      ),
-    },
-    {
-      value: "timeline",
-      label: "Timeline",
-      icon: "timeline" as const,
-      count: milestones.length,
-      alert: pending.milestonesAwaitingApproval + pending.milestonesAwaitingRating > 0,
-      content: (
-        <Card>
-          <CardContent className="pt-6">
-            <ClientProjectTimeline milestones={milestones} billingType={project.billingType} />
-          </CardContent>
-        </Card>
-      ),
+      alert: waiting.review + waiting.questions + waiting.rating > 0,
+      content: <WorkTab initialView={link.view} />,
     },
     {
       value: "files",
@@ -141,11 +118,11 @@ export default async function MyProjectPage({
       value: "billing",
       label: "Billing & calls",
       icon: "money" as const,
-      count: extras.invoices.length,
-      alert: pending.unpaidInvoices > 0,
+      count: invoices.length,
+      alert: pending.invoicesToPay > 0,
       content: (
         <BillingAndCalls
-          invoices={extras.invoices}
+          invoices={invoices}
           meetings={extras.meetings}
           timezone={extras.timezone}
         />
@@ -154,124 +131,115 @@ export default async function MyProjectPage({
   ];
 
   return (
-    <div>
-      <Link
-        href="/portal/projects"
-        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> Back to My Projects
-      </Link>
+    // The work is held once for the whole page — the header's progress, the
+    // "needs you" box, the list, the board and the item drawer all read it.
+    <WorkProvider
+      projectId={project.id}
+      viewer={{
+        id: user.id,
+        side: "CLIENT",
+        role: "CLIENT",
+        name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.name,
+      }}
+      billingType={project.billingType}
+      initial={board}
+      renderedAt={renderedAt}
+      initialItemId={link.itemId}
+    >
+      <div>
+        <Link
+          href="/portal/projects"
+          className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" /> Back to My Projects
+        </Link>
 
-      {/* Project header — where it stands, in one glance. */}
-      <section className="surface mb-4 overflow-hidden p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="eyebrow">{projectTypeLabels[project.type]}</p>
-            <h1 className="title-page mt-1 [overflow-wrap:anywhere]">{project.projectName}</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <ProjectStatusBadge status={project.status} />
-            <RequestFormDialog projects={options} defaultProjectId={project.id} />
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">
-                {health.done} of {health.total} milestones complete
-              </span>
-              <span className="num font-semibold">{health.percent}%</span>
+        {/* Project header — where it stands, in one glance. */}
+        <section className="surface mb-4 overflow-hidden p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="eyebrow">{projectTypeLabels[project.type]}</p>
+              <h1 className="title-page mt-1 [overflow-wrap:anywhere]">{project.projectName}</h1>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-[width] duration-700"
-                style={{ width: `${health.percent}%` }}
+            <div className="flex flex-wrap items-center gap-3">
+              <ProjectStatusBadge status={project.status} />
+              {/* The one way to ask for something new: it waits for the team
+                  in Requested, on the list and the board. */}
+              <RequestFormDialog
+                projects={[{ id: project.id, projectName: project.projectName }]}
+                defaultProjectId={project.id}
               />
             </div>
           </div>
-          <div className="flex gap-5 text-sm sm:justify-end">
-            <Stat label="Open tasks" value={openTasks} />
-            <Stat label="Waiting on you" value={boardWaiting.review + boardWaiting.help} hot />
+
+          <PortalPulse
+            status={project.status}
+            dueDate={project.dueDate?.toISOString() ?? null}
+            renderedAt={renderedAt}
+          />
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <PortalUpNext status={project.status} />
+            {(project.startDate || project.dueDate) && (
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <CalendarDays className="size-3.5 shrink-0" />
+                {formatDate(project.startDate)} → {formatDate(project.dueDate)}
+              </span>
+            )}
+            {health.dueLabel && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                  health.tone === "bad"
+                    ? toneChip.bad
+                    : health.tone === "warn"
+                      ? toneChip.warn
+                      : toneChip.good,
+                )}
+              >
+                {health.overdue && <AlertTriangle className="size-3" />}
+                {health.dueLabel}
+              </span>
+            )}
+            {project.billingType === "CONTRACT" && project.contractPrice != null && (
+              <span className="flex items-center gap-1.5 font-semibold text-foreground">
+                <BadgeDollarSign className="size-3.5 shrink-0" />
+                {usd.format(Number(project.contractPrice))} fixed contract
+              </span>
+            )}
           </div>
-        </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-          {health.nextMilestone && project.status !== "COMPLETED" && (
-            <span className="flex items-center gap-1.5">
-              <CircleDot className="size-3.5 shrink-0 text-primary" />
-              <span className="text-muted-foreground">Up next:</span>
-              <span className="font-medium">{health.nextMilestone.title}</span>
-            </span>
+          {hasRichTextContent(project.description) && (
+            <details className="group mt-4 border-t pt-3">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+                Project brief
+              </summary>
+              <div className="mt-3">
+                <RichTextViewer content={project.description} />
+              </div>
+            </details>
           )}
-          {(project.startDate || project.dueDate) && (
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <CalendarDays className="size-3.5 shrink-0" />
-              {formatDate(project.startDate)} → {formatDate(project.dueDate)}
-            </span>
-          )}
-          {health.dueLabel && (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                health.tone === "bad"
-                  ? toneChip.bad
-                  : health.tone === "warn"
-                    ? toneChip.warn
-                    : toneChip.good,
-              )}
-            >
-              {health.overdue && <AlertTriangle className="size-3" />}
-              {health.dueLabel}
-            </span>
-          )}
-          {project.billingType === "CONTRACT" && project.contractPrice != null && (
-            <span className="flex items-center gap-1.5 font-semibold text-foreground">
-              <BadgeDollarSign className="size-3.5 shrink-0" />
-              {usd.format(Number(project.contractPrice))} fixed contract
-            </span>
-          )}
-        </div>
+        </section>
 
-        {hasRichTextContent(project.description) && (
-          <details className="group mt-4 border-t pt-3">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
-              Project brief
-            </summary>
-            <div className="mt-3">
-              <RichTextViewer content={project.description} />
-            </div>
-          </details>
-        )}
-      </section>
+        <ProjectNeedsYou
+          pending={pending}
+          projectId={project.id}
+          questions={waiting.questions}
+          className="mb-5"
+        />
 
-      <ProjectNeedsYou
-        pending={pending}
-        projectId={project.id}
-        board={boardWaiting}
-        className="mb-5"
-      />
+        <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
 
-      <ProjectTabs tabs={tabs} defaultTab="board" param="view" />
-
-      <ChatWidget
-        projectId={project.id}
-        viewerRole="CLIENT"
-        initialMessages={messages}
-        title="Avix Digital"
-        whatsappUrl={whatsappUrl}
-      />
-    </div>
-  );
-}
-
-function Stat({ label, value, hot }: { label: string; value: number; hot?: boolean }) {
-  return (
-    <div className="text-right">
-      <p className={cn("num text-xl font-semibold", hot && value > 0 && "text-primary")}>{value}</p>
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-    </div>
+        <ChatWidget
+          projectId={project.id}
+          viewerRole="CLIENT"
+          initialMessages={messages}
+          title="Avix Digital"
+          whatsappUrl={whatsappUrl}
+        />
+      </div>
+    </WorkProvider>
   );
 }
 

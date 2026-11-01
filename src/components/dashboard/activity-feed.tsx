@@ -11,6 +11,14 @@ import {
   Activity as ActivityIcon,
   Target,
   ArrowRightLeft,
+  ListPlus,
+  Inbox,
+  CircleCheck,
+  CircleX,
+  Archive,
+  ArchiveRestore,
+  LifeBuoy,
+  Trash2,
 } from "lucide-react";
 
 /** Icon + colour per activity type; shared with the dashboard timeline. */
@@ -21,6 +29,21 @@ export const ACTIVITY_META: Record<string, { icon: React.ComponentType<{ classNa
   "proposal.accepted": { icon: FileSignature, tone: "text-emerald-600" },
   "milestone.completed": { icon: Flag, tone: "text-primary" },
   "milestone.approved": { icon: ThumbsUp, tone: "text-emerald-600" },
+  // Project work (v49: the board and the milestone list are one set of items).
+  "work.created": { icon: ListPlus, tone: "text-sky-600" },
+  "work.requested": { icon: Inbox, tone: "text-amber-600" },
+  "work.accepted": { icon: CircleCheck, tone: "text-emerald-600" },
+  "work.declined": { icon: CircleX, tone: "text-muted-foreground" },
+  "work.moved": { icon: ArrowRightLeft, tone: "text-primary" },
+  "work.archived": { icon: Archive, tone: "text-muted-foreground" },
+  "work.restored": { icon: ArchiveRestore, tone: "text-sky-600" },
+  "work.deleted": { icon: Trash2, tone: "text-muted-foreground" },
+  "work.help": { icon: LifeBuoy, tone: "text-red-600" },
+  // The v48 board's events, still in the log.
+  "board.created": { icon: ListPlus, tone: "text-sky-600" },
+  "board.moved": { icon: ArrowRightLeft, tone: "text-primary" },
+  "board.help": { icon: LifeBuoy, tone: "text-red-600" },
+  "board.deleted": { icon: Trash2, tone: "text-muted-foreground" },
   "meeting.scheduled": { icon: CalendarDays, tone: "text-sky-600" },
   "lead.created": { icon: Target, tone: "text-sky-600" },
   "lead.stage": { icon: ArrowRightLeft, tone: "text-amber-600" },

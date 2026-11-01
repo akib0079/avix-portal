@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import type { PendingWork } from "@/lib/project-health";
+import { isAwaitingReview, isOpenRequest } from "@/lib/work-scope";
+import { useWorkOptional } from "@/components/board/work-store";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 
@@ -8,13 +12,14 @@ type Item = { label: string; href: string; tone: "warn" | "bad" | "info" };
 /**
  * What's waiting on someone, at the top of the project. Renders nothing when
  * the project is clean — an always-present empty banner trains people to
- * ignore it.
+ * ignore it. On the project page the work counts follow the live items, so
+ * accepting a request clears its chip at once.
  */
 export function ProjectAttention({
-  pending,
+  pending: serverPending,
   projectId,
   overdue,
-  boardHelp = 0,
+  boardHelp: serverHelp = 0,
   className,
 }: {
   pending: PendingWork;
@@ -24,19 +29,28 @@ export function ProjectAttention({
   boardHelp?: number;
   className?: string;
 }) {
+  const work = useWorkOptional();
+  const pending: PendingWork = work
+    ? {
+        ...serverPending,
+        openRequests: work.items.filter(isOpenRequest).length,
+        milestonesAwaitingApproval: work.items.filter(isAwaitingReview).length,
+      }
+    : serverPending;
+  const boardHelp = work ? work.items.filter((i) => i.helpFrom === "CLIENT").length : serverHelp;
   const base = `/admin/projects/${projectId}`;
   const items: Item[] = [];
 
   if (boardHelp > 0) {
     items.push({
-      label: `Client needs help on ${boardHelp} task${boardHelp === 1 ? "" : "s"}`,
-      href: `${base}?tab=board`,
+      label: `Client needs help on ${boardHelp} item${boardHelp === 1 ? "" : "s"}`,
+      href: `${base}?tab=milestones&view=board`,
       tone: "bad",
     });
   }
 
   if (overdue) {
-    items.push({ label: "Past its due date", href: `${base}?tab=milestones`, tone: "bad" });
+    items.push({ label: "Past its due date", href: `${base}?tab=milestones&view=list`, tone: "bad" });
   }
   if (pending.deliverablesNeedingChanges > 0) {
     items.push({
@@ -48,14 +62,15 @@ export function ProjectAttention({
   if (pending.openRequests > 0) {
     items.push({
       label: `${pending.openRequests} open request${pending.openRequests === 1 ? "" : "s"}`,
-      href: `${base}?tab=requests`,
+      // Pinned at the top of the list, where each is accepted or declined.
+      href: `${base}?tab=milestones&view=list`,
       tone: "warn",
     });
   }
   if (pending.milestonesAwaitingApproval > 0) {
     items.push({
       label: `${pending.milestonesAwaitingApproval} awaiting client approval`,
-      href: `${base}?tab=milestones`,
+      href: `${base}?tab=milestones&view=board`,
       tone: "info",
     });
   }
