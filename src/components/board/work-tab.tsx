@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ViewToggle, VIEW_MODES, type ViewMode } from "@/components/ui/lanes";
 import { useLocalChoice } from "@/lib/use-local-pref";
-import type { WorkView } from "@/lib/board";
+import { WORK_TAB, type WorkView } from "@/lib/board";
 import { MilestoneList } from "@/components/milestones/milestone-board";
 import { ClientWorkList } from "@/components/projects/client-project-timeline";
 import { ProjectBoard } from "./project-board";
@@ -33,6 +33,27 @@ export function WorkTab({ initialView }: { initialView: WorkView | null }) {
     if (initialView) setPicked(initialView);
   }
   const view = picked ?? remembered;
+
+  // An old link (?tab=board&task=…, ?tab=requests, ?view=timeline) has
+  // already opened the right place; rewrite the address bar to today's
+  // shape, so a copied link is the canonical one. Not a navigation.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const before = url.search;
+    const tab = url.searchParams.get("tab");
+    if (tab === "board" || tab === "requests" || tab === "timeline") {
+      url.searchParams.set("tab", WORK_TAB);
+      // Say which view, or "?tab=milestones" alone would read as the list.
+      if (!url.searchParams.get("view")) url.searchParams.set("view", tab === "board" ? "board" : "list");
+    }
+    if (url.searchParams.get("view") === "timeline") url.searchParams.set("view", "list");
+    const task = url.searchParams.get("task");
+    if (task) {
+      url.searchParams.delete("task");
+      if (!url.searchParams.get("item")) url.searchParams.set("item", task);
+    }
+    if (url.search !== before) window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  }, []);
   // The server renders the linked view, or the board (no stored choice there).
   const [visited, setVisited] = useState<ViewMode[]>(() => [initialView ?? "board"]);
   if (!visited.includes(view)) setVisited([...visited, view]);
