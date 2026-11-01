@@ -48,6 +48,29 @@ export async function getInvoice(id: string) {
       creditNotes: { select: { id: true, invoiceNumber: true, amount: true, status: true } },
       creditNoteFor: { select: { id: true, invoiceNumber: true } },
       duplicatedFrom: { select: { id: true, invoiceNumber: true } },
+      // The Repeat card: the plan this invoice is part of, and the plans
+      // that copy it.
+      retainer: {
+        select: {
+          id: true,
+          title: true,
+          active: true,
+          frequency: true,
+          interval: true,
+          dayOfMonth: true,
+          nextRunAt: true,
+          endAfterCount: true,
+          endDate: true,
+          runCount: true,
+          autoSend: true,
+          lastGeneratedPeriod: true,
+          lastRunError: true,
+          templateInvoice: {
+            select: { id: true, title: true, issueDate: true, retainerId: true, retainerPeriod: true },
+          },
+        },
+      },
+      retainerTemplateFor: { select: { id: true, title: true } },
     },
   });
 }

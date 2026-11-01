@@ -147,8 +147,8 @@ function buildRunInput(
     // the distance from that period to this one. An issue date is a calendar
     // day stored at midnight UTC, so it is read as one, not in a time zone.
     const from =
-      template.retainerId === plan.id && template.retainerPeriod
-        ? template.retainerPeriod
+      template.retainerId === plan.id && /^\d{4}-\d{2}$/.test(template.retainerPeriod ?? "")
+        ? template.retainerPeriod!
         : periodKey(dateToDay(template.issueDate), "MONTH");
     const offset = plan.frequency === "MONTH" ? monthsBetween(from, day) : 0;
     const text = (value: string) => renderPeriodTags(shiftMonths(value, offset), vars);

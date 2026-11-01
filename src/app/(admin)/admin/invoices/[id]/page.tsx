@@ -23,6 +23,9 @@ import { serverNow } from "@/lib/server-now";
 import { InvoiceReminders } from "@/components/invoices/invoice-reminders";
 import { canDeleteInvoice, sendBlocker } from "@/lib/invoice-rules";
 import { requireAdmin } from "@/lib/dal/session";
+import { getBookingConfig } from "@/lib/dal/availability";
+import { InvoiceRepeat, type InvoicePlanView } from "@/components/invoices/invoice-repeat";
+import { dateToDay, dayIn, planEnd, planSummary } from "@/lib/recurring";
 
 export const metadata = { title: "Invoice" };
 
@@ -35,11 +38,12 @@ export default async function InvoiceDetailPage({
   const { id } = await params;
   // One wave: the projects are the invoice's client's (found through the
   // invoice itself, so they needn't wait for it), and the accounts are cached.
-  const [invoice, clients, projects, paymentAccounts] = await Promise.all([
+  const [invoice, clients, projects, paymentAccounts, booking] = await Promise.all([
     getInvoice(id),
     listActiveClientOptions(),
     listInvoiceProjectOptions({ ofInvoice: id }),
     listActivePaymentAccounts(),
+    getBookingConfig(),
   ]);
   if (!invoice) notFound();
 
@@ -49,8 +53,42 @@ export default async function InvoiceDetailPage({
   // Only an invoice that can still owe money has reminders to talk about.
   const showReminders =
     !isCreditNote && invoice.status !== "PAID" && invoice.status !== "CANCELLED" && balance > 0;
+  const now = new Date(serverNow());
   const reminders = showReminders
-    ? reminderSummary({ ...invoice, balance }, new Date(serverNow()), (d) => formatDate(d))
+    ? reminderSummary({ ...invoice, balance }, now, (d) => formatDate(d))
+    : null;
+
+  // The schedule reads in the agency's time zone, as the duty runs it.
+  const timeZone = booking.agencyTimezone;
+  const plan = invoice.retainer;
+  const template = plan?.templateInvoice ?? null;
+  const planView: InvoicePlanView | null = plan
+    ? (() => {
+        const summary = planSummary(plan, timeZone, now);
+        const end = planEnd(plan);
+        return {
+          id: plan.id,
+          title: plan.title,
+          frequency: plan.frequency,
+          interval: plan.interval,
+          state: summary.state,
+          autoSend: plan.autoSend,
+          nextDay: summary.nextDay,
+          due: summary.due,
+          remaining: summary.remaining,
+          endAfterCount: end.endAfterCount,
+          endDay: end.endDay,
+          runCount: plan.runCount,
+          lastRunError: plan.lastRunError,
+          isTemplate: template?.id === invoice.id,
+          templateTitle: template?.title ?? null,
+          templatePeriod: template
+            ? template.retainerId === plan.id && /^\d{4}-\d{2}$/.test(template.retainerPeriod ?? "")
+              ? template.retainerPeriod
+              : dateToDay(template.issueDate).slice(0, 7)
+            : null,
+        };
+      })()
     : null;
 
   return (
@@ -161,6 +199,22 @@ export default async function InvoiceDetailPage({
               invoiceId={invoice.id}
               paused={invoice.remindersPaused}
               summary={reminders}
+            />
+          </div>
+        )}
+        {!isCreditNote && (
+          <div className="mt-3">
+            <InvoiceRepeat
+              invoice={{
+                id: invoice.id,
+                invoiceNumber: invoice.invoiceNumber,
+                title: invoice.title ?? "",
+                issueDay: dateToDay(invoice.issueDate),
+                cancelled: invoice.status === "CANCELLED",
+              }}
+              plan={planView}
+              templateFor={invoice.retainerTemplateFor.filter((p) => p.id !== plan?.id)}
+              today={dayIn(now, timeZone)}
             />
           </div>
         )}

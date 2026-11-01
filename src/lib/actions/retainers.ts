@@ -596,7 +596,7 @@ export async function makeInvoiceRecurring(
  * period on. Only one of the plan's own invoices, for the same client, and
  * never a credit note or a cancelled one. The plan's amount follows it.
  */
-export async function usePlanTemplate(invoiceId: string): Promise<ActionResult> {
+export async function setPlanTemplate(invoiceId: string): Promise<ActionResult> {
   await requireAdmin();
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },

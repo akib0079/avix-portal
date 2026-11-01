@@ -131,12 +131,34 @@ export async function updateInvoice(
   const [invoice, refs] = await Promise.all([
     prisma.invoice.findUnique({
       where: { id },
-      select: { ...moneySelect, pdfPath: true, dueDate: true },
+      select: {
+        ...moneySelect,
+        pdfPath: true,
+        dueDate: true,
+        retainer: { select: { title: true } },
+        retainerTemplateFor: { select: { title: true } },
+      },
     }),
     resolveRefs(data, id),
   ]);
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if ("error" in refs) return { ok: false, error: refs.error };
+  // A plan bills one client. Its invoices and its template stay with it.
+  if (data.clientId !== invoice.clientId) {
+    if (invoice.retainer) {
+      return {
+        ok: false,
+        error: `This invoice is part of the recurring plan “${invoice.retainer.title}”, which bills its current client. Unlink it from the plan first.`,
+      };
+    }
+    const copiedBy = invoice.retainerTemplateFor[0];
+    if (copiedBy) {
+      return {
+        ok: false,
+        error: `This invoice is the template for the recurring plan “${copiedBy.title}”, which bills its current client. Give the plan another template first.`,
+      };
+    }
+  }
   const columns = formColumns(data, refs);
   const next = formStatus(invoice, data.status, columns.amount);
   if ("error" in next) return { ok: false, error: next.error };
@@ -175,6 +197,26 @@ export async function updateInvoice(
           }),
         ]
       : []),
+    // A template's plans bill what it bills from now on, so their amount (and
+    // the MRR it feeds) follows the edit. A USD value not known yet keeps the
+    // plan's own, unless the currency changed under it.
+    ...(invoice.retainerTemplateFor.length > 0
+      ? [
+          prisma.retainer.updateMany({
+            where: { templateInvoiceId: id },
+            data: {
+              amount: columns.amount,
+              currency: columns.currency,
+              paymentTermsDays: columns.paymentTermsDays,
+              ...(columns.amountUsd != null
+                ? { amountUsd: columns.amountUsd }
+                : columns.currency !== invoice.currency
+                  ? { amountUsd: null }
+                  : {}),
+            },
+          }),
+        ]
+      : []),
   ]);
 
   await resettleCredited(invoice.creditNoteForId);
@@ -188,6 +230,7 @@ export async function updateInvoice(
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${id}`);
   revalidatePath("/admin");
+  if (invoice.retainerTemplateFor.length > 0) revalidatePath("/admin/retainers");
   return { ok: true };
 }
 
@@ -613,7 +656,11 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
       pdfPath: true,
       paymentClaimedAt: true,
       creditNoteForId: true,
+      retainerId: true,
       _count: { select: { payments: true, creditNotes: true } },
+      retainerTemplateFor: {
+        select: { id: true, title: true, _count: { select: { invoices: true } } },
+      },
     },
   });
   if (!invoice) return { ok: false, error: "Invoice not found." };
@@ -633,12 +680,33 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
     };
   }
 
-  await prisma.invoice.delete({ where: { id } });
+  // A plan copies its template for every new period. A plan this invoice
+  // started (it has no other invoices) goes with it, as when an invoice made
+  // recurring by mistake is deleted; one with a history needs a new template
+  // first, rather than quietly falling back to a single line.
+  const plans = invoice.retainerTemplateFor;
+  const kept = plans.find(
+    (p) => p._count.invoices > (invoice.retainerId === p.id ? 1 : 0),
+  );
+  if (kept) {
+    return {
+      ok: false,
+      error: `This invoice is the template for the recurring plan “${kept.title}”. Use another of its invoices as the template, or delete the plan, first.`,
+    };
+  }
+
+  await prisma.$transaction([
+    ...(plans.length > 0
+      ? [prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } })]
+      : []),
+    prisma.invoice.delete({ where: { id } }),
+  ]);
   const file = invoice.pdfPath;
   if (file) after(() => deleteUpload("invoices", file));
   await resettleCredited(invoice.creditNoteForId);
 
   revalidatePath("/admin/invoices");
   revalidatePath("/admin");
+  if (plans.length > 0 || invoice.retainerId) revalidatePath("/admin/retainers");
   return { ok: true };
 }
