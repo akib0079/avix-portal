@@ -78,13 +78,15 @@ export function InvoiceStatusSelect({
 export function SendInvoiceButton({
   invoiceId,
   clientEmail,
+  sent = false,
   size = "sm",
 }: {
   invoiceId: string;
   clientEmail: string;
+  /** Already emailed once: the button says Resend. */
+  sent?: boolean;
   size?: "sm" | "default";
 }) {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
 
   return (
@@ -97,12 +99,12 @@ export function SendInvoiceButton({
         const result = await sendInvoice(invoiceId);
         setBusy(false);
         if (!result.ok) return void toast.error(result.error);
+        // sendInvoice revalidates the page; a refresh would render it twice.
         toast.success(`Invoice emailed to ${clientEmail}.`);
-        router.refresh();
       }}
     >
       {busy ? <Loader2 className="animate-spin" /> : <Send />}
-      Send to client
+      {sent ? "Resend" : "Send to client"}
     </Button>
   );
 }

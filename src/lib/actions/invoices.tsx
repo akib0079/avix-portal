@@ -18,12 +18,9 @@ import {
 import { draftBlocker, paymentBlocker } from "@/lib/invoice-rules";
 import { getBillableWork } from "@/lib/dal/billable";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
-import { sendEmail } from "@/lib/email/resend";
-import InvoiceSentEmail from "@/emails/invoice-sent";
-import { renderInvoicePdfById } from "@/lib/pdf/invoice-render";
 import { logActivity } from "@/lib/dal/activity";
+import { sendInvoiceCore } from "@/lib/invoice-send";
 import { formatCurrency } from "@/lib/currency";
-import { appUrl } from "@/lib/app-url";
 import type { InvoiceStatus, Prisma } from "@prisma/client";
 import type { InvoiceInput } from "@/lib/validation/invoice";
 
@@ -525,94 +522,15 @@ export async function setInvoiceStatus(
   return { ok: true };
 }
 
+/**
+ * The admin's "Send to client". The sending itself is sendInvoiceCore, which
+ * a recurring plan's auto-send shares; this is where it is authorized.
+ */
 export async function sendInvoice(id: string): Promise<ActionResult> {
   await requireAdmin();
-  const invoice = await prisma.invoice.findUnique({
-    where: { id },
-    include: {
-      client: { select: { id: true, firstName: true, email: true } },
-      project: { select: { projectName: true } },
-    },
-  });
-  if (!invoice) return { ok: false, error: "Invoice not found." };
-
-  const accounts = await prisma.paymentAccount.findMany({
-    where: { isActive: true },
-    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-  });
-  const paymentAccounts = accounts.map((a) => ({
-    title: a.title,
-    holderName: a.holderName,
-    bankName: a.bankName,
-    bankNote: a.bankNote,
-    fields: (a.fields as { label: string; value: string }[]) ?? [],
-  }));
-
-  // Attach the generated PDF unless the admin supplied their own document
-  // (an uploaded file or an external link the client opens directly).
-  let attachments: { filename: string; content: Buffer }[] | undefined;
-  if (!invoice.pdfPath && !invoice.pdfExternalUrl) {
-    const pdf = await renderInvoicePdfById(invoice.id);
-    if (pdf) attachments = [{ filename: `${invoice.invoiceNumber}.pdf`, content: pdf }];
-  }
-
-  const portalUrl = `${appUrl()}/portal/invoices/${invoice.id}`;
-  const sent = await sendEmail({
-    to: invoice.client.email,
-    subject: `Invoice ${invoice.invoiceNumber} from Avix Digital`,
-    react: (
-      <InvoiceSentEmail
-        firstName={invoice.client.firstName || "there"}
-        invoiceNumber={invoice.invoiceNumber}
-        amount={formatCurrency(Number(invoice.amount), invoice.currency)}
-        projectName={invoice.project?.projectName}
-        portalUrl={portalUrl}
-        paymentAccounts={paymentAccounts}
-        pdfAttached={!!attachments}
-      />
-    ),
-    attachments,
-    devHint: `invoice ${invoice.invoiceNumber} → ${invoice.client.email}`,
-  });
-  if (!sent.ok) {
-    return { ok: false, error: "Email failed to send — check the Resend configuration." };
-  }
-
-  await prisma.$transaction([
-    prisma.invoice.update({
-      where: { id },
-      data: {
-        sentAt: new Date(),
-        // A draft or an unsent invoice is now with the client. Don't regress
-        // a further-along status back to SENT.
-        ...(invoice.status === "DRAFT" || invoice.status === "ASSIGNED"
-          ? { status: "SENT" as const }
-          : {}),
-      },
-    }),
-    prisma.notification.create({
-      data: {
-        userId: invoice.client.id,
-        type: "INVOICE_SENT",
-        title: `Invoice ${invoice.invoiceNumber} is ready`,
-        body: `${formatCurrency(Number(invoice.amount), invoice.currency)}${invoice.project ? ` · ${invoice.project.projectName}` : ""}`,
-        link: `/portal/invoices/${invoice.id}`,
-      },
-    }),
-  ]);
-
-  await logActivity({
-    type: "invoice.sent",
-    summary: `Invoice ${invoice.invoiceNumber} sent · ${formatCurrency(Number(invoice.amount), invoice.currency)}`,
-    clientId: invoice.client.id,
-    projectId: invoice.projectId,
-    entity: "invoice",
-    entityId: invoice.id,
-    link: `/admin/invoices/${invoice.id}`,
-  });
-
-  revalidatePath("/admin/invoices");
-  revalidatePath(`/admin/invoices/${id}`);
+  const result = await sendInvoiceCore(id);
+  if (!result.ok) return result;
+  revalidateInvoice(id);
   return { ok: true };
 }
 
