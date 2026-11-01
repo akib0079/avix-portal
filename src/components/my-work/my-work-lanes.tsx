@@ -106,7 +106,10 @@ export function MyWorkLanes({
                 overdue={b.name === "Overdue"}
                 role={role}
                 onMove={(stage) => move(item, stage)}
-                onDecided={() => setGone((prev) => new Set(prev).add(item.id))}
+                // Accepted, it's still this person's — now in the stage they picked.
+                onAccepted={(stage) => setMoved((m) => ({ ...m, [item.id]: stage }))}
+                // Declined, it isn't anyone's work any more.
+                onDeclined={() => setGone((prev) => new Set(prev).add(item.id))}
               />
             ))}
           </Lane>
@@ -121,14 +124,15 @@ function ItemCard({
   overdue,
   role,
   onMove,
-  onDecided,
+  onAccepted,
+  onDeclined,
 }: {
   item: MyWorkItem;
   overdue: boolean;
   role: WorkRole;
   onMove: (stage: ProjectTaskStatus) => Promise<void>;
-  /** A request was accepted or declined here — it isn't on this list any more. */
-  onDecided: () => void;
+  onAccepted: (stage: ProjectTaskStatus) => void;
+  onDeclined: () => void;
 }) {
   const [deciding, setDeciding] = useState<"accept" | "decline" | null>(null);
   const column = COLUMN_BY_ID[item.stage];
@@ -232,7 +236,7 @@ function ItemCard({
           role={role}
           billingType={item.projectBillingType}
           itemId={item.id}
-          onAccepted={onDecided}
+          onAccepted={(choice) => onAccepted(choice.stage)}
         />
       )}
       {deciding === "decline" && item.sourceTaskRequestId && (
@@ -242,7 +246,7 @@ function ItemCard({
           requestId={item.sourceTaskRequestId}
           title={item.title}
           clientName={item.clientName}
-          onDeclined={onDecided}
+          onDeclined={onDeclined}
         />
       )}
     </div>
