@@ -62,7 +62,7 @@ first upload.
 
 | Name | Value |
 |---|---|
-| `DATABASE_URL` | Supabase *Transaction pooler* string + `?pgbouncer=true&connection_limit=1` |
+| `DATABASE_URL` | Supabase *Session pooler* string (port 5432) or the *Direct connection* — not the transaction pooler (see the note below) |
 | `DIRECT_URL` | Supabase *Direct connection* string |
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 32` (any long random string) |
 | `BETTER_AUTH_URL` | `https://admin.avixdigital.com` |
@@ -77,15 +77,24 @@ first upload.
 | `SEED_ADMIN_EMAIL` | `akibzawayed0079@gmail.com` |
 | `SEED_ADMIN_PASSWORD` | a strong password — this becomes your admin login |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional — for Google sign-in |
-| `STORAGE_BACKEND` | leave **unset** on this host — see the note below |
+| `STORAGE_BACKEND` | `disk` — see the note below |
+| `UPLOAD_DIR` | `/home/<user>/portal-uploads` (absolute, outside the app directory) |
 
-**Where uploaded files go.** `src/lib/uploads.ts` sends every upload (invoice
-PDFs, editor images, deliverables) to Supabase Storage whenever `SUPABASE_URL`
-and `SUPABASE_SERVICE_ROLE_KEY` are both present. That is what you want here:
-Hostinger's app directory is replaced on redeploy, so anything written to local
-disk disappears with the next push. Set `STORAGE_BACKEND=disk` **only** on a VPS
-with a persistent volume, and pair it with an absolute `UPLOAD_DIR` outside the
-deploy directory (`/home/<user>/avix-uploads`, never the default `./uploads`).
+**Where uploaded files go.** `src/lib/uploads.ts` writes to local disk when
+`STORAGE_BACKEND=disk`, and otherwise to Supabase Storage whenever
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are both present. This
+deployment keeps its uploads (invoice PDFs, editor images, deliverables) on
+disk in a folder **outside** the app directory, so redeploys never touch them.
+Keep both variables set: if `STORAGE_BACKEND` is missing while the Supabase
+keys are present, the app silently switches to Supabase Storage, where none of
+the existing files are, and every image and PDF returns 404. Never point
+`UPLOAD_DIR` at the default `./uploads`, which a redeploy replaces.
+
+**Database connection.** The app keeps a small pool of long-lived connections
+(`src/lib/prisma.ts`), so use a persistent connection: the session pooler on
+port 5432 or the direct host. The transaction pooler (port 6543) adds nothing
+for a long-running server and `connection_limit=1` would cap the pool at one
+connection. Every query also pays the distance to the database region; see §8.
 
 6. **Deploy.** The build log should show Prisma migrations applying, then the
    Next.js build. On first boot the super admin account is created
@@ -179,6 +188,34 @@ Rotate in this order, redeploying after each so the running app picks it up.
 `SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET`, `NEXT_PUBLIC_APP_URL` and
 `GOOGLE_CLIENT_ID` are not secrets — they are public identifiers and need no
 rotation.
+
+## 8. Speed: put the database next to the app
+
+The app server is in the UK and the Supabase project in Tokyo, so every query
+waits about 230 ms for the round trip, and a page that needs eight queries in a
+row waits about two seconds before it renders anything. The code now loads
+each page in as few round trips as it can, but distance is the floor. Moving
+the database to Supabase's London region (eu-west-2) cuts each round trip to a
+few milliseconds. Supabase can't move a project between regions, so:
+
+1. Create a new Supabase project in **London (eu-west-2)** on the same plan.
+2. Pick a quiet time and pause writes: put the app in maintenance or ask the
+   team not to edit for ~20 minutes.
+3. Copy the data (any machine with the PostgreSQL 17 client tools):
+   `pg_dump --no-owner --no-acl --format=custom "$OLD_DIRECT_URL" -f portal.dump`
+   then `pg_restore --no-owner --no-acl --dbname "$NEW_DIRECT_URL" portal.dump`.
+   The `_prisma_migrations` table comes along, so `prisma migrate deploy`
+   continues from the same point.
+4. Compare row counts on a few tables (`users`, `invoices`, `milestones`) in
+   both projects.
+5. Point `DATABASE_URL` and `DIRECT_URL` at the new project in **both** places
+   the server reads them: `~/portal-secrets.env` and the hPanel environment
+   variables. Redeploy (or `touch tmp/restart.txt`).
+6. Keep the Tokyo project read-only for a week as a fallback, then delete it.
+
+Uploads live on the app server's disk, so only Postgres moves. If the new
+direct host doesn't resolve over IPv4 from Hostinger, use the London session
+pooler (`aws-0-eu-west-2.pooler.supabase.com:5432`) instead.
 
 ## Trade-offs vs the VPS path — and their fixes
 
