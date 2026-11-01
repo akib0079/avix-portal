@@ -7,7 +7,15 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { parseInvoiceForm } from "@/lib/invoice-form-data";
 import { createWithNextNumber, nextInvoiceNumber } from "@/lib/invoice-number";
-import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
+import {
+  balanceDue,
+  creditedTotal,
+  dueDateFromTerms,
+  invoiceTotals,
+  settleStatus,
+  unsettledStatus,
+} from "@/lib/invoice-totals";
+import { draftBlocker, paymentBlocker } from "@/lib/invoice-rules";
 import { getBillableWork } from "@/lib/dal/billable";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { sendEmail } from "@/lib/email/resend";
@@ -16,7 +24,7 @@ import { renderInvoicePdfById } from "@/lib/pdf/invoice-render";
 import { logActivity } from "@/lib/dal/activity";
 import { formatCurrency } from "@/lib/currency";
 import { appUrl } from "@/lib/app-url";
-import type { InvoiceStatus } from "@prisma/client";
+import type { InvoiceStatus, Prisma } from "@prisma/client";
 import type { InvoiceInput } from "@/lib/validation/invoice";
 
 export type ActionResult<T = undefined> =
@@ -156,6 +164,173 @@ function formColumns(data: InvoiceInput, refs: Refs) {
   };
 }
 
+/** The columns every money rule reads: the total, what came in, credits, history. */
+const moneySelect = {
+  id: true,
+  invoiceNumber: true,
+  amount: true,
+  amountPaid: true,
+  amountUsd: true,
+  currency: true,
+  status: true,
+  sentAt: true,
+  paymentClaimedAt: true,
+  creditNoteForId: true,
+  clientId: true,
+  projectId: true,
+  creditNotes: { select: { amount: true, status: true } },
+} satisfies Prisma.InvoiceSelect;
+
+type MoneyRow = Prisma.InvoiceGetPayload<{ select: typeof moneySelect }>;
+
+/** Rounded to cents, the way the Decimal columns store it. */
+function cents(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** The method on the payment "Mark paid" records for a balance nobody entered. */
+const MARKED_PAID = "Marked paid";
+
+/** settleStatus for a loaded invoice, given whichever figures are changing. */
+function settledStatus(
+  invoice: MoneyRow,
+  change: { total?: number; paid?: number; credited?: number; status?: InvoiceStatus } = {},
+): InvoiceStatus {
+  return settleStatus({
+    total: change.total ?? Number(invoice.amount),
+    paid: change.paid ?? Number(invoice.amountPaid),
+    credited: change.credited ?? creditedTotal(invoice.creditNotes),
+    current: change.status ?? invoice.status,
+    fallback: unsettledStatus(invoice),
+  });
+}
+
+/**
+ * The status a form save writes. The form's status select says what the owner
+ * means; the payments say what happened. PAID with a balance left records that
+ * balance as a payment, so amountPaid agrees with the badge. A draft can't hide
+ * an invoice the client already has. Anything else settles against what has
+ * been paid and credited, so editing the amount of a paid invoice upward turns
+ * it back into part paid instead of leaving it PAID with money owing.
+ *
+ * A claim the owner moves back to Sent is a claim they rejected: it is cleared
+ * so reminders resume and the client can report the payment again.
+ */
+function formStatus(
+  invoice: MoneyRow | null,
+  requested: InvoiceStatus,
+  total: number,
+): { status: InvoiceStatus; markPaid: number; clearClaim: boolean } | { error: string } {
+  const paid = invoice ? Number(invoice.amountPaid) : 0;
+  const credited = invoice ? creditedTotal(invoice.creditNotes) : 0;
+
+  if (requested === "DRAFT" && invoice && invoice.status !== "DRAFT") {
+    if (invoice.creditNoteForId) return { error: "A credit note can't be a draft." };
+    const blocked = draftBlocker({ sentAt: invoice.sentAt, amountPaid: paid });
+    if (blocked) return { error: blocked };
+  }
+  if (requested === "PAID" && !invoice?.creditNoteForId) {
+    const balance = balanceDue(total, paid, credited);
+    if (balance > 0) return { status: "PAID", markPaid: balance, clearClaim: false };
+  }
+  const status = settleStatus({
+    total,
+    paid,
+    credited,
+    current: requested,
+    fallback: invoice ? unsettledStatus(invoice) : "ASSIGNED",
+  });
+  const clearClaim =
+    !!invoice?.paymentClaimedAt && (status === "SENT" || status === "ASSIGNED" || status === "DRAFT");
+  return { status, markPaid: 0, clearClaim };
+}
+
+/**
+ * Adds a payment and moves the status with it, in one batched transaction.
+ *
+ * amountPaid is incremented in the database rather than rewritten from the
+ * figure read here, so two payments saved at once can't overwrite each other.
+ * The status is worked out from the total this payment should produce; if the
+ * total that comes back says another payment landed in between, it is put
+ * right. `as` is the status being asked for ("Mark paid" on a draft).
+ */
+async function addPayment(
+  invoice: MoneyRow,
+  payment: { amount: number; paidAt: Date; method: string | null; note: string | null },
+  as?: InvoiceStatus,
+): Promise<void> {
+  const expected = cents(Number(invoice.amountPaid) + payment.amount);
+  const status = settledStatus(invoice, { paid: expected, status: as });
+  const [, saved] = await prisma.$transaction([
+    prisma.invoicePayment.create({
+      data: { invoiceId: invoice.id, ...payment },
+      select: { id: true },
+    }),
+    prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { amountPaid: { increment: payment.amount }, status },
+      select: { amountPaid: true },
+    }),
+  ]);
+  await settleIfRaced(invoice, Number(saved.amountPaid), expected, status);
+}
+
+/** Another payment changed amountPaid between our read and our write: re-settle. */
+async function settleIfRaced(
+  invoice: MoneyRow,
+  actual: number,
+  expected: number,
+  written: InvoiceStatus,
+): Promise<void> {
+  if (cents(actual) === expected) return;
+  const status = settledStatus(invoice, { paid: actual, status: written });
+  if (status !== written) {
+    await prisma.invoice.update({ where: { id: invoice.id }, data: { status } });
+  }
+}
+
+/**
+ * A credit note's amount or status changed, so what it takes off the invoice
+ * it credits did too: re-settle that invoice (a cancelled credit note puts
+ * the money back to being owed).
+ */
+async function resettleCredited(invoiceId: string | null): Promise<void> {
+  if (!invoiceId) return;
+  const parent = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: moneySelect });
+  if (!parent) return;
+  const status = settledStatus(parent);
+  if (status !== parent.status) {
+    await prisma.invoice.update({ where: { id: parent.id }, data: { status } });
+  }
+  revalidatePath(invoiceLink(parent.id));
+}
+
+/** Why the payments rule out a status the owner picked, in their terms. */
+function statusConflict(requested: InvoiceStatus, settled: InvoiceStatus): string {
+  if (requested === "PARTIALLY_PAID") {
+    return settled === "PAID"
+      ? "The payments recorded already cover this invoice in full."
+      : "Record the part payment first. Part paid follows the money that came in.";
+  }
+  if (settled === "PAID") {
+    return "This invoice is paid in full. Remove a payment before changing its status.";
+  }
+  if (settled === "PARTIALLY_PAID") {
+    return "Part of this invoice is paid, so it stays Part paid until the rest comes in or a payment is removed.";
+  }
+  return "That status doesn't match the payments recorded on this invoice.";
+}
+
+function invoiceLink(id: string) {
+  return `/admin/invoices/${id}`;
+}
+
+function revalidateInvoice(id: string) {
+  revalidatePath("/admin/invoices");
+  revalidatePath(invoiceLink(id));
+  revalidatePath("/admin");
+}
+
 /** Stores an uploaded PDF, if the form carried one. */
 async function handlePdf(formData: FormData): Promise<
   { ok: true; fileName: string | null; originalName: string | null } | { ok: false; error: string }
@@ -181,6 +356,9 @@ export async function createInvoice(
 
   const refs = await resolveRefs(data);
   if ("error" in refs) return { ok: false, error: refs.error };
+  const columns = formColumns(data, refs);
+  const next = formStatus(null, data.status, columns.amount);
+  if ("error" in next) return { ok: false, error: next.error };
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
@@ -192,8 +370,17 @@ export async function createInvoice(
     prisma.invoice.create({
       data: {
         invoiceNumber,
-        ...formColumns(data, refs),
-        status: data.status,
+        ...columns,
+        status: next.status,
+        // Created as already paid: the payment it stands for is on the record.
+        ...(next.markPaid > 0
+          ? {
+              amountPaid: next.markPaid,
+              payments: {
+                create: [{ amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID }],
+              },
+            }
+          : {}),
         pdfPath: pdf.fileName,
         pdfOriginalName: pdf.originalName,
         items: { create: itemRows(data.items) },
@@ -221,16 +408,20 @@ export async function updateInvoice(
   const data = parsed.data;
 
   const [invoice, refs] = await Promise.all([
-    prisma.invoice.findUnique({ where: { id }, select: { id: true, pdfPath: true } }),
+    prisma.invoice.findUnique({ where: { id }, select: { ...moneySelect, pdfPath: true } }),
     resolveRefs(data, id),
   ]);
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if ("error" in refs) return { ok: false, error: refs.error };
+  const columns = formColumns(data, refs);
+  const next = formStatus(invoice, data.status, columns.amount);
+  if ("error" in next) return { ok: false, error: next.error };
 
   const pdf = await handlePdf(formData);
   if (!pdf.ok) return { ok: false, error: pdf.error };
 
-  // Batched rather than interactive: neither write needs the other's result.
+  // Batched rather than interactive: none of these writes needs another's
+  // result. amountPaid moves in place, as it does for any other payment.
   await prisma.$transaction([
     prisma.invoiceItem.deleteMany({ where: { invoiceId: id } }),
     prisma.invoice.update({
@@ -238,15 +429,26 @@ export async function updateInvoice(
       data: {
         // A blank number field keeps the current number.
         ...(refs.customNumber ? { invoiceNumber: refs.customNumber } : {}),
-        ...formColumns(data, refs),
-        status: data.status,
+        ...columns,
+        status: next.status,
+        ...(next.markPaid > 0 ? { amountPaid: { increment: next.markPaid } } : {}),
+        ...(next.clearClaim ? { paymentClaimedAt: null } : {}),
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
           : {}),
         items: { create: itemRows(data.items) },
       },
     }),
+    ...(next.markPaid > 0
+      ? [
+          prisma.invoicePayment.create({
+            data: { invoiceId: id, amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID },
+          }),
+        ]
+      : []),
   ]);
+
+  await resettleCredited(invoice.creditNoteForId);
 
   // Only now is the old file safe to drop. Deleting it before the update meant
   // any later failure — a rejected rename, a transaction rollback — left the
@@ -260,29 +462,62 @@ export async function updateInvoice(
   return { ok: true };
 }
 
+/**
+ * The status menu and the board's drag. Status follows the money, so a status
+ * the payments contradict is refused rather than written: marking an invoice
+ * paid used to leave amountPaid at 0, so it stayed in the Open filter and the
+ * aging buckets while its PDF said PAID.
+ *
+ * PAID with a balance left records that balance as a payment ("Marked paid"),
+ * which is what the owner means by it. The UI opens the payment dialog first,
+ * prefilled with the balance; this is the backstop for everything else.
+ */
 export async function setInvoiceStatus(
   id: string,
   status: InvoiceStatus,
 ): Promise<ActionResult> {
   await requireAdmin();
-  const invoice = await prisma.invoice.findUnique({ where: { id } });
+  const invoice = await prisma.invoice.findUnique({ where: { id }, select: moneySelect });
   if (!invoice) return { ok: false, error: "Invoice not found." };
+  if (status === invoice.status) return { ok: true };
 
-  await prisma.invoice.update({ where: { id }, data: { status } });
-  if (status === "PAID" && invoice.status !== "PAID") {
-    await logActivity({
-      type: "invoice.paid",
-      summary: `Invoice ${invoice.invoiceNumber} marked paid · ${formatCurrency(Number(invoice.amount), invoice.currency)}`,
-      clientId: invoice.clientId,
-      projectId: invoice.projectId,
-      entity: "invoice",
-      entityId: invoice.id,
-      link: `/admin/invoices/${invoice.id}`,
+  const next = formStatus(invoice, status, Number(invoice.amount));
+  if ("error" in next) return { ok: false, error: next.error };
+  if (next.status !== status) return { ok: false, error: statusConflict(status, next.status) };
+
+  if (next.markPaid > 0) {
+    await addPayment(
+      invoice,
+      { amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID, note: null },
+      "PAID",
+    );
+  } else {
+    await prisma.invoice.update({
+      where: { id },
+      data: { status, ...(next.clearClaim ? { paymentClaimedAt: null } : {}) },
     });
   }
-  revalidatePath("/admin/invoices");
-  revalidatePath(`/admin/invoices/${id}`);
-  revalidatePath("/admin");
+
+  await resettleCredited(invoice.creditNoteForId);
+
+  const money = formatCurrency(Number(invoice.amount), invoice.currency);
+  if (status === "PAID" || status === "CANCELLED") {
+    after(() =>
+      logActivity({
+        type: status === "PAID" ? "invoice.paid" : "invoice.cancelled",
+        summary:
+          status === "PAID"
+            ? `Invoice ${invoice.invoiceNumber} marked paid · ${money}`
+            : `Invoice ${invoice.invoiceNumber} cancelled · ${money}`,
+        clientId: invoice.clientId,
+        projectId: invoice.projectId,
+        entity: "invoice",
+        entityId: invoice.id,
+        link: invoiceLink(invoice.id),
+      }),
+    );
+  }
+  revalidateInvoice(id);
   return { ok: true };
 }
 
@@ -458,89 +693,74 @@ export async function recordPayment(
   input: { amount: number; paidAt: string; method?: string; note?: string },
 ): Promise<ActionResult> {
   await requireAdmin();
+  const amount = cents(Number(input.amount));
+  if (!(amount > 0)) return { ok: false, error: "Enter an amount above zero." };
+
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    select: { id: true, amount: true, currency: true, invoiceNumber: true, clientId: true, projectId: true },
+    select: moneySelect,
   });
   if (!invoice) return { ok: false, error: "Invoice not found." };
-  if (!(input.amount > 0)) return { ok: false, error: "Enter an amount above zero." };
+  const blocked = paymentBlocker(invoice);
+  if (blocked) return { ok: false, error: blocked };
 
-  const paidAt = parseDate(input.paidAt) ?? new Date();
-
-  await prisma.$transaction(async (tx) => {
-    await tx.invoicePayment.create({
-      data: {
-        invoiceId,
-        amount: input.amount,
-        paidAt,
-        method: input.method?.trim() || null,
-        note: input.note?.trim() || null,
-      },
-    });
-    const agg = await tx.invoicePayment.aggregate({
-      where: { invoiceId },
-      _sum: { amount: true },
-    });
-    const paid = Number(agg._sum.amount ?? 0);
-    const total = Number(invoice.amount);
-    await tx.invoice.update({
-      where: { id: invoiceId },
-      data: {
-        amountPaid: paid,
-        // Status follows the money: nothing owing means paid, part means part.
-        status: paid >= total ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : undefined,
-      },
-    });
+  await addPayment(invoice, {
+    amount,
+    paidAt: parseDate(input.paidAt) ?? new Date(),
+    method: input.method?.trim().slice(0, 100) || null,
+    note: input.note?.trim().slice(0, 500) || null,
   });
 
-  await logActivity({
-    type: "invoice.payment",
-    summary: `Payment recorded on ${invoice.invoiceNumber} · ${formatCurrency(input.amount, invoice.currency)}`,
-    clientId: invoice.clientId,
-    projectId: invoice.projectId,
-    entity: "invoice",
-    entityId: invoice.id,
-    link: `/admin/invoices/${invoice.id}`,
-  });
-
-  revalidatePath("/admin/invoices");
-  revalidatePath(`/admin/invoices/${invoiceId}`);
-  revalidatePath("/admin");
+  after(() =>
+    logActivity({
+      type: "invoice.payment",
+      summary: `Payment recorded on ${invoice.invoiceNumber} · ${formatCurrency(amount, invoice.currency)}`,
+      clientId: invoice.clientId,
+      projectId: invoice.projectId,
+      entity: "invoice",
+      entityId: invoice.id,
+      link: invoiceLink(invoice.id),
+    }),
+  );
+  revalidateInvoice(invoiceId);
   return { ok: true };
 }
 
+/**
+ * Remove a payment recorded by mistake. The status settles back to where the
+ * remaining money puts it, and no further: it used to be forced to SENT,
+ * which overwrote a cancelled invoice, a draft, or one the client had just
+ * said they paid.
+ */
 export async function deletePayment(paymentId: string): Promise<ActionResult> {
   await requireAdmin();
   const payment = await prisma.invoicePayment.findUnique({
     where: { id: paymentId },
-    select: { id: true, invoiceId: true },
+    select: { id: true, amount: true, invoice: { select: moneySelect } },
   });
   if (!payment) return { ok: false, error: "Payment not found." };
 
-  await prisma.$transaction(async (tx) => {
-    await tx.invoicePayment.delete({ where: { id: paymentId } });
-    const [agg, invoice] = await Promise.all([
-      tx.invoicePayment.aggregate({
-        where: { invoiceId: payment.invoiceId },
-        _sum: { amount: true },
-      }),
-      tx.invoice.findUnique({
-        where: { id: payment.invoiceId },
-        select: { amount: true, status: true },
-      }),
-    ]);
-    const paid = Number(agg._sum.amount ?? 0);
-    const total = Number(invoice?.amount ?? 0);
-    await tx.invoice.update({
-      where: { id: payment.invoiceId },
+  const { invoice } = payment;
+  const amount = Number(payment.amount);
+  const paidBefore = Number(invoice.amountPaid);
+  const expected = cents(Math.max(paidBefore - amount, 0));
+  const status = settledStatus(invoice, { paid: expected });
+  const [, saved] = await prisma.$transaction([
+    prisma.invoicePayment.delete({ where: { id: paymentId } }),
+    prisma.invoice.update({
+      where: { id: invoice.id },
       data: {
-        amountPaid: paid,
-        status: paid >= total && total > 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "SENT",
+        // Decremented in place, like recordPayment increments. A total that
+        // was never in step with its payment rows bottoms out at zero.
+        amountPaid: paidBefore >= amount ? { decrement: amount } : 0,
+        status,
       },
-    });
-  });
+      select: { amountPaid: true },
+    }),
+  ]);
+  await settleIfRaced(invoice, Number(saved.amountPaid), expected, status);
 
-  revalidatePath(`/admin/invoices/${payment.invoiceId}`);
+  revalidateInvoice(invoice.id);
   return { ok: true };
 }
 
@@ -548,60 +768,106 @@ export async function deletePayment(paymentId: string): Promise<ActionResult> {
  * Issue a credit note against an invoice — a separate document carrying the
  * credited amount, linked back to the original. Cancelling an invoice outright
  * would lose the paper trail.
+ *
+ * The credit counts toward settling the original (settleStatus), so crediting
+ * the rest of a part-paid invoice marks it paid, and the chaser and the
+ * balances stop asking for money that was written off. Its USD value is the
+ * same share of the original's, when that is known.
  */
 export async function createCreditNote(
   invoiceId: string,
   input: { amount: number; reason?: string },
 ): Promise<ActionResult<{ id: string }>> {
   await requireAdmin();
+  const amount = cents(Number(input.amount));
+  if (!(amount > 0)) return { ok: false, error: "Enter an amount above zero." };
+
   const source = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    select: {
-      id: true,
-      invoiceNumber: true,
-      clientId: true,
-      projectId: true,
-      currency: true,
-      amount: true,
-    },
+    select: moneySelect,
   });
   if (!source) return { ok: false, error: "Invoice not found." };
-  if (!(input.amount > 0)) return { ok: false, error: "Enter an amount above zero." };
-  if (input.amount > Number(source.amount)) {
-    return { ok: false, error: "A credit note can't exceed the invoice total." };
+  if (source.creditNoteForId) return { ok: false, error: "A credit note can't itself be credited." };
+  if (source.status === "CANCELLED") {
+    return { ok: false, error: "This invoice is cancelled, so there's nothing to credit." };
+  }
+  if (source.status === "DRAFT") {
+    return { ok: false, error: "This invoice is still a draft. Edit it instead of crediting it." };
   }
 
-  const note = await prisma.$transaction(async (tx) => {
-    const number = await nextInvoiceNumber(tx);
-    return tx.invoice.create({
-      data: {
-        invoiceNumber: `CN-${number.replace(/^INV-/, "")}`,
-        title: `Credit note for ${source.invoiceNumber}`,
-        clientId: source.clientId,
-        projectId: source.projectId,
-        currency: source.currency,
-        creditNoteForId: source.id,
-        amount: input.amount,
-        subtotal: input.amount,
-        status: "SENT",
-        issueDate: new Date(),
-        notes: input.reason?.trim() || null,
-        items: {
-          create: [
-            {
-              description: `Credit against ${source.invoiceNumber}${input.reason ? ` — ${input.reason}` : ""}`,
-              qty: 1,
-              rate: input.amount,
-              sortOrder: 0,
-            },
-          ],
-        },
-      },
-    });
-  });
+  const total = Number(source.amount);
+  const credited = creditedTotal(source.creditNotes);
+  const room = cents(total - credited);
+  if (amount > room) {
+    return {
+      ok: false,
+      error:
+        room > 0
+          ? `A credit note can't take the invoice below zero. ${formatCurrency(room, source.currency)} is left to credit.`
+          : "This invoice has already been credited in full.",
+    };
+  }
 
-  revalidatePath("/admin/invoices");
-  revalidatePath(`/admin/invoices/${invoiceId}`);
+  const reason = input.reason?.trim().slice(0, 300) || null;
+  // Pro rata from the original's settled USD value, so a EUR credit note isn't
+  // left needing a value of its own; usdToStore covers a USD original without one.
+  const amountUsd =
+    source.amountUsd != null && total > 0
+      ? cents((Number(source.amountUsd) * amount) / total)
+      : usdToStore(source.currency, amount, null);
+  const parentStatus = settledStatus(source, { credited: cents(credited + amount) });
+
+  const note = await createWithNextNumber(
+    prisma,
+    async (invoiceNumber) => {
+      const [created] = await prisma.$transaction([
+        prisma.invoice.create({
+          data: {
+            invoiceNumber,
+            title: `Credit note for ${source.invoiceNumber}`,
+            clientId: source.clientId,
+            projectId: source.projectId,
+            currency: source.currency,
+            creditNoteForId: source.id,
+            amount,
+            subtotal: amount,
+            amountUsd,
+            status: "SENT",
+            issueDate: new Date(),
+            notes: reason,
+            items: {
+              create: [
+                {
+                  description: `Credit against ${source.invoiceNumber}${reason ? ` — ${reason}` : ""}`,
+                  qty: 1,
+                  rate: amount,
+                  sortOrder: 0,
+                },
+              ],
+            },
+          },
+          select: { id: true, invoiceNumber: true },
+        }),
+        prisma.invoice.update({ where: { id: source.id }, data: { status: parentStatus } }),
+      ]);
+      return created;
+    },
+    // Same number as the invoice series, under its own prefix.
+    (number) => `CN-${number.replace(/^INV-/, "")}`,
+  );
+
+  after(() =>
+    logActivity({
+      type: "invoice.credited",
+      summary: `Credit note ${note.invoiceNumber} issued against ${source.invoiceNumber} · ${formatCurrency(amount, source.currency)}`,
+      clientId: source.clientId,
+      projectId: source.projectId,
+      entity: "invoice",
+      entityId: note.id,
+      link: invoiceLink(note.id),
+    }),
+  );
+  revalidateInvoice(invoiceId);
   return { ok: true, data: { id: note.id } };
 }
 

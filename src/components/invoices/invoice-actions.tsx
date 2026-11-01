@@ -33,13 +33,22 @@ const STATUS_OPTIONS = (Object.keys(invoiceStatusLabels) as InvoiceStatus[]).map
  * useOptimistic reverts on its own if the save fails. No router.refresh():
  * setInvoiceStatus calls revalidatePath, so the fresh page already comes
  * back in the action's own response.
+ *
+ * Paid and Part paid are money, not labels: with a balance owing they open
+ * the payment dialog (onPay) rather than flipping the status, so amountPaid
+ * and the badge can't disagree.
  */
 export function InvoiceStatusSelect({
   invoiceId,
   status,
+  balance,
+  onPay,
 }: {
   invoiceId: string;
   status: InvoiceStatus;
+  /** What's still owed; with nothing owed, Paid is just a status change. */
+  balance: number;
+  onPay: (prefill: "balance" | "none") => void;
 }) {
   const [shown, setShown] = useOptimistic(status);
   const [, startTransition] = useTransition();
@@ -52,6 +61,10 @@ export function InvoiceStatusSelect({
       className="w-[120px]"
       onValueChange={(value) => {
         if (value === shown) return;
+        if (balance > 0 && (value === "PAID" || value === "PARTIALLY_PAID")) {
+          onPay(value === "PAID" ? "balance" : "none");
+          return;
+        }
         startTransition(async () => {
           setShown(value);
           const result = await setInvoiceStatus(invoiceId, value);

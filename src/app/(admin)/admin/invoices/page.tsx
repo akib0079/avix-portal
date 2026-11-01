@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { serverNow } from "@/lib/server-now";
 import { requireAdmin } from "@/lib/dal/session";
+import { creditedTotal } from "@/lib/invoice-totals";
+import { canDeleteInvoice } from "@/lib/invoice-rules";
 
 export const metadata = { title: "Invoices" };
 
@@ -43,11 +45,22 @@ export default async function InvoicesPage() {
           dueDate: invoice.dueDate?.toISOString() ?? null,
           amount: Number(invoice.amount),
           amountPaid: Number(invoice.amountPaid),
+          credited: creditedTotal(invoice.creditNotes),
           currency: invoice.currency,
           amountUsd: invoice.amountUsd === null ? null : Number(invoice.amountUsd),
           status: invoice.status,
+          creditNoteForId: invoice.creditNoteForId,
           hasDocument: !!(invoice.pdfPath || invoice.pdfExternalUrl),
+          suppliedLink: !!invoice.pdfExternalUrl,
           paymentClaimed: !!invoice.paymentClaimedAt,
+          sent: !!invoice.sentAt,
+          deletable: canDeleteInvoice({
+            status: invoice.status,
+            sentAt: invoice.sentAt,
+            amountPaid: Number(invoice.amountPaid),
+            paymentCount: invoice._count.payments,
+            creditNoteCount: invoice.creditNotes.length,
+          }),
         }))}
       />
     </div>

@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
 import { Download, ExternalLink } from "lucide-react";
 import { currencySymbol } from "@/lib/currency";
+import { creditedTotal } from "@/lib/invoice-totals";
 import { requireAdmin } from "@/lib/dal/session";
 
 export const metadata = { title: "Invoice" };
@@ -98,9 +99,16 @@ export default async function InvoiceDetailPage({
       {/* Money first: what's owed is the question you open an invoice with. */}
       <div className="mb-6">
         <InvoicePayments
-          invoiceId={invoice.id}
+          invoice={{
+            id: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
+            currency: invoice.currency,
+            status: invoice.status,
+            creditNoteForId: invoice.creditNoteForId,
+          }}
           total={Number(invoice.amount)}
           amountPaid={Number(invoice.amountPaid)}
+          credited={creditedTotal(invoice.creditNotes)}
           currencySymbol={currencySymbol(invoice.currency)}
           payments={invoice.payments.map((p) => ({
             id: p.id,

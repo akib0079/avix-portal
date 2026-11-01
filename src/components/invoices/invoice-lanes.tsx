@@ -15,7 +15,7 @@ import {
 } from "@dnd-kit/core";
 import type { InvoiceStatus } from "@prisma/client";
 import { setInvoiceStatus } from "@/lib/actions/invoices";
-import { invoiceStatusLabels, usd } from "@/lib/format";
+import { invoiceStatusLabels } from "@/lib/format";
 import { formatCurrency } from "@/lib/currency";
 import { usdValue } from "@/lib/invoice-usd";
 import { invoiceStatusColor } from "@/lib/status-colors";
@@ -34,7 +34,8 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Building2, Paperclip, HandCoins, Loader2 } from "lucide-react";
-import type { InvoiceListRow } from "./invoice-table";
+import { rowBalance, type InvoiceListRow } from "./invoice-row";
+import { isReceivable } from "@/lib/invoice-rules";
 
 const LANES: { status: InvoiceStatus; hint: string }[] = [
   { status: "ASSIGNED", hint: "Created, not sent yet" },
@@ -52,24 +53,19 @@ const usdWhole = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-/** Statuses that change the money, so a drop asks before it commits. */
-const CONFIRM: Partial<Record<InvoiceStatus, true>> = { PAID: true, CANCELLED: true };
-
-function balanceOf(row: InvoiceListRow) {
-  return Math.max(row.amount - row.amountPaid, 0);
-}
-
 /**
  * What a lane is worth in USD, per the multi-currency rule: each invoice at
  * its own recorded USD value, never at face value. Paid lanes count what
  * was invoiced; the rest count what is still owed. Rows without a USD value
- * are left out and counted, so the gap is visible instead of silent.
+ * are left out and counted, so the gap is visible instead of silent. Credit
+ * notes are money we owe, not money owed to us, so they count in no lane.
  */
 function laneUsd(status: InvoiceStatus, rows: InvoiceListRow[]) {
   let total = 0;
   let missing = 0;
   for (const row of rows) {
-    const value = status === "PAID" ? row.amount : balanceOf(row);
+    if (row.creditNoteForId) continue;
+    const value = status === "PAID" ? row.amount : rowBalance(row);
     if (value <= 0) continue;
     // usdValue, not amountUsd: a USD invoice is worth its own total even when
     // the column was never filled (retainer runs and older rows leave it null).
@@ -88,17 +84,21 @@ function laneUsd(status: InvoiceStatus, rows: InvoiceListRow[]) {
  * what it is worth in USD, so the board reads as a pipeline: what's drafted,
  * what's out, what the client says they've paid, what's in.
  *
- * Dragging a card is the same action as the status menu in the list. Paid
- * and Cancelled ask first — one stray drop should not book revenue.
+ * Dragging a card is the same action as the status menu in the list. A drop
+ * on Paid or Part paid with money owing opens the payment dialog (onPay), so
+ * the board books the payment rather than just the label; Cancelled asks
+ * first. One stray drop should not book revenue.
  */
 export function InvoiceLanes({
   invoices,
   now,
   today,
+  onPay,
 }: {
   invoices: InvoiceListRow[];
   now: number;
   today: string;
+  onPay: (row: InvoiceListRow, prefill: "balance" | "none") => void;
 }) {
   const [folded, toggleFold] = useLocalSet("avix.invoices.folded", ["CANCELLED"]);
   const [moved, setMoved] = useState<Record<string, InvoiceStatus>>({});
@@ -148,17 +148,16 @@ export function InvoiceLanes({
     const to = event.over?.id as InvoiceStatus | undefined;
     const row = rows.find((i) => i.id === event.active.id);
     if (!row || !to || row.status === to || !LANES.some((l) => l.status === to)) return;
-    if (CONFIRM[to]) {
+    if ((to === "PAID" || to === "PARTIALLY_PAID") && rowBalance(row) > 0) {
+      onPay(row, to === "PAID" ? "balance" : "none");
+      return;
+    }
+    if (to === "CANCELLED") {
       setConfirming({ row, to });
       return;
     }
     commit(row, to);
   }
-
-  const confirmUsd =
-    confirming && confirming.row.amountUsd !== null && confirming.row.currency !== "USD"
-      ? ` (${usd.format(confirming.row.amountUsd)})`
-      : "";
 
   return (
     <>
@@ -192,15 +191,9 @@ export function InvoiceLanes({
       <Dialog open={!!confirming} onOpenChange={(o) => !o && !saving && setConfirming(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {confirming?.to === "PAID"
-                ? `Mark ${confirming.row.invoiceNumber} as paid?`
-                : `Cancel ${confirming?.row.invoiceNumber}?`}
-            </DialogTitle>
+            <DialogTitle>Cancel {confirming?.row.invoiceNumber}?</DialogTitle>
             <DialogDescription>
-              {confirming?.to === "PAID"
-                ? `This books ${formatCurrency(confirming.row.amount, confirming.row.currency)}${confirmUsd} from ${confirming.row.clientName} as collected.`
-                : "The invoice stays on record, struck through, and stops counting as owed."}
+              The invoice stays on record, struck through, and stops counting as owed.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -208,12 +201,12 @@ export function InvoiceLanes({
               Keep as is
             </Button>
             <Button
-              variant={confirming?.to === "CANCELLED" ? "destructive" : "default"}
+              variant="destructive"
               disabled={saving}
               onClick={() => confirming && commit(confirming.row, confirming.to)}
             >
               {saving && <Loader2 className="animate-spin" />}
-              {confirming?.to === "PAID" ? "Mark paid" : "Cancel invoice"}
+              Cancel invoice
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -310,8 +303,8 @@ function InvoiceCardFace({
   overlay?: boolean;
   ghost?: boolean;
 }) {
-  const balance = balanceOf(row);
-  const settled = row.status === "PAID" || row.status === "CANCELLED";
+  const balance = rowBalance(row);
+  const settled = !isReceivable(row);
   const overdue = !settled && !!row.dueDate && Date.parse(row.dueDate) < now && balance > 0;
   const claimed = row.paymentClaimed && row.status !== "PAID";
 

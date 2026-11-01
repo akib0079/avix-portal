@@ -24,29 +24,12 @@ import { ViewToggle, VIEW_MODES } from "@/components/ui/lanes";
 import { todayKey } from "@/components/board/board-bits";
 import { useLocalChoice } from "@/lib/use-local-pref";
 import { InvoiceLanes } from "./invoice-lanes";
+import { rowBalance, toPaymentTarget, type InvoiceListRow } from "./invoice-row";
+import { RecordPaymentDialog } from "./record-payment-dialog";
+import { isReceivable } from "@/lib/invoice-rules";
 import { cn } from "@/lib/utils";
 import { Search, Paperclip, FileText } from "lucide-react";
-import type { InvoiceStatus } from "@prisma/client";
 import { toneText } from "@/lib/tone";
-
-export type InvoiceListRow = {
-  id: string;
-  invoiceNumber: string;
-  clientName: string;
-  clientId: string;
-  projectName: string | null;
-  issueDate: string;
-  dueDate: string | null;
-  amount: number;
-  amountPaid: number;
-  /** The invoice's own currency; `amount` and `amountPaid` are in it. */
-  currency: string;
-  /** USD value of `amount`, null until set for a non-USD invoice. */
-  amountUsd: number | null;
-  status: InvoiceStatus;
-  hasDocument: boolean;
-  paymentClaimed: boolean;
-};
 
 /** Receivables age from the due date; undated invoices sit in "Current". */
 type Bucket = "current" | "d30" | "d60" | "d90";
@@ -92,34 +75,39 @@ export function InvoiceTable({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["value"]>("all");
 
-  const outstanding = invoices.map((i) => ({
-    row: i,
-    balance: Math.max(i.amount - i.amountPaid, 0),
-  }));
+  // One payment dialog for the whole list, opened by a row's status menu, its
+  // row menu or a drop on the board's Paid lane.
+  const [paying, setPaying] = useState<{
+    row: InvoiceListRow;
+    prefill: "balance" | "none";
+  } | null>(null);
+  const pay = (row: InvoiceListRow, prefill: "balance" | "none") => setPaying({ row, prefill });
 
   // Aging is in USD: a balance is converted at the invoice's own recorded
   // USD value, and one without a USD value yet is left out rather than
-  // added at face value (EUR 1,400 is not $1,400).
+  // added at face value (EUR 1,400 is not $1,400). Only receivables age:
+  // drafts, void invoices and credit notes are nobody's debt.
   const aging = useMemo(() => {
     const totals: Record<Bucket, number> = { current: 0, d30: 0, d60: 0, d90: 0 };
-    for (const { row, balance } of outstanding) {
-      if (balance <= 0 || row.status === "CANCELLED") continue;
+    for (const row of invoices) {
+      const balance = rowBalance(row);
+      if (balance <= 0 || !isReceivable(row)) continue;
       // usdValue covers a USD invoice whose amountUsd was never filled in.
       const worth = usdValue(row);
       if (worth === null || row.amount <= 0) continue;
       totals[bucketOf(row, now)] += balance * (worth / row.amount);
     }
     return totals;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoices, now]);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return invoices.filter((i) => {
-      const balance = Math.max(i.amount - i.amountPaid, 0);
-      const overdue = !!i.dueDate && Date.parse(i.dueDate) < now && balance > 0;
+      const balance = rowBalance(i);
+      const owed = balance > 0 && isReceivable(i);
+      const overdue = owed && !!i.dueDate && Date.parse(i.dueDate) < now;
 
-      if (filter === "open" && (balance <= 0 || i.status === "CANCELLED")) return false;
+      if (filter === "open" && !owed) return false;
       if (filter === "overdue" && !overdue) return false;
       if (filter === "paid" && i.status !== "PAID") return false;
 
@@ -128,7 +116,6 @@ export function InvoiceTable({
         .toLowerCase()
         .includes(needle);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoices, search, filter, now]);
 
   const totalOutstanding = aging.current + aging.d30 + aging.d60 + aging.d90;
@@ -212,7 +199,7 @@ export function InvoiceTable({
       </div>
 
       {view === "board" && visible.length > 0 ? (
-        <InvoiceLanes invoices={visible} now={now} today={today} />
+        <InvoiceLanes invoices={visible} now={now} today={today} onPay={pay} />
       ) : (
         <Card>
           <CardContent className="pt-6">
@@ -236,9 +223,12 @@ export function InvoiceTable({
                 </TableHeader>
                 <TableBody>
                   {page.shown.map((invoice) => {
-                    const balance = Math.max(invoice.amount - invoice.amountPaid, 0);
+                    const balance = rowBalance(invoice);
                     const overdue =
-                      !!invoice.dueDate && Date.parse(invoice.dueDate) < now && balance > 0;
+                      isReceivable(invoice) &&
+                      !!invoice.dueDate &&
+                      Date.parse(invoice.dueDate) < now &&
+                      balance > 0;
                     return (
                       <TableRow key={invoice.id}>
                         <TableCell>
@@ -294,6 +284,8 @@ export function InvoiceTable({
                           <InvoiceStatusSelect
                             invoiceId={invoice.id}
                             status={invoice.status}
+                            balance={balance}
+                            onPay={(prefill) => pay(invoice, prefill)}
                           />
                         </TableCell>
                         <TableCell>
@@ -312,6 +304,12 @@ export function InvoiceTable({
           </CardContent>
         </Card>
       )}
+
+      <RecordPaymentDialog
+        target={paying ? toPaymentTarget(paying.row) : null}
+        prefill={paying?.prefill ?? "none"}
+        onClose={() => setPaying(null)}
+      />
     </div>
   );
 }
