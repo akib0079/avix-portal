@@ -65,7 +65,10 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
   const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
   const startOfLastWeek = new Date(startOfWeek.getTime() - 7 * 86_400_000);
 
-  const unpaid = Prisma.sql`status <> 'PAID'`;
+  // Issued money only: a draft hasn't been sent, a cancelled invoice is void,
+  // and a credit note is money owed to the client, not by them.
+  const issued = Prisma.sql`status NOT IN ('DRAFT', 'CANCELLED') AND "creditNoteForId" IS NULL`;
+  const unpaid = Prisma.sql`status <> 'PAID' AND ${issued}`;
   const inWindow = Prisma.sql`"issueDate" >= ${ts(win.start)} AND "issueDate" < ${ts(win.end)}`;
 
   const [
@@ -80,7 +83,7 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
     prisma.$queryRaw<InvoiceTotalsRow[]>`
       SELECT
         COALESCE(SUM("amountUsd") FILTER (WHERE status = 'PAID' AND ${inWindow}), 0) AS "collected",
-        COALESCE(SUM("amountUsd") FILTER (WHERE ${inWindow}), 0) AS "invoiced",
+        COALESCE(SUM("amountUsd") FILTER (WHERE ${issued} AND ${inWindow}), 0) AS "invoiced",
         COALESCE(SUM("amountUsd") FILTER (WHERE ${unpaid}), 0) AS "outstanding",
         COALESCE(SUM("amountUsd") FILTER (
           WHERE ${unpaid} AND "dueDate" >= ${ts(now)} AND "dueDate" <= ${ts(in30Days)}
@@ -100,7 +103,7 @@ export const getDashboardKpis = cache(async (range: DashboardRange = "month") =>
         COALESCE(SUM("amountUsd") FILTER (WHERE ${unpaid} AND "dueDate" < ${ts(days60Ago)}), 0)
           AS "aging3Amount",
         COUNT(*) FILTER (WHERE ${unpaid} AND "dueDate" < ${ts(days60Ago)}) AS "aging3Count",
-        COUNT(*) FILTER (WHERE "amountUsd" IS NULL) AS "missingUsd"
+        COUNT(*) FILTER (WHERE "amountUsd" IS NULL AND ${issued}) AS "missingUsd"
       FROM invoices`,
     prisma.$queryRaw<HoursRow[]>`
       SELECT
@@ -184,7 +187,11 @@ export const getDashboardLists = cache(async () => {
       },
     }),
     prisma.invoice.findMany({
-      where: { status: { not: "PAID" }, dueDate: { not: null, lte: soon } },
+      where: {
+        status: { notIn: ["PAID", "DRAFT", "CANCELLED"] },
+        creditNoteForId: null,
+        dueDate: { not: null, lte: soon },
+      },
       orderBy: { dueDate: "asc" },
       take: 5,
       select: {
@@ -260,7 +267,11 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     helpRequests,
   ] = await Promise.all([
       prisma.invoice.findMany({
-        where: { status: { not: "PAID" }, dueDate: { not: null, lt: now } },
+        where: {
+          status: { notIn: ["PAID", "DRAFT", "CANCELLED"] },
+          creditNoteForId: null,
+          dueDate: { not: null, lt: now },
+        },
         orderBy: { dueDate: "asc" },
         take: 5,
         include: { client: { select: { firstName: true, lastName: true } } },
@@ -278,8 +289,11 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
         orderBy: { startsAt: "asc" },
         include: { client: { select: { firstName: true, lastName: true } } },
       }),
+      // A plan's draft waiting to be reviewed and sent. Found by its plan, not
+      // by guessing from the notes (an em dash used to be the tell). DRAFT
+      // since v49; plans drafted ASSIGNED invoices before that.
       prisma.invoice.findMany({
-        where: { status: "ASSIGNED", notes: { contains: "—" } },
+        where: { retainerId: { not: null }, status: { in: ["DRAFT", "ASSIGNED"] }, sentAt: null },
         orderBy: { createdAt: "desc" },
         take: 5,
         include: { client: { select: { firstName: true, lastName: true } } },

@@ -822,7 +822,10 @@ export async function MissingUsdNotice({ range }: { range: DashboardRange }) {
         currency with no USD value set, so {n === 1 ? "it is" : "they are"} not counted in the
         figures below.
       </span>
-      <Link href="/admin/invoices" className="font-medium underline underline-offset-2">
+      <Link
+        href="/admin/invoices?filter=needs-usd"
+        className="font-medium underline underline-offset-2"
+      >
         Set {n === 1 ? "it" : "them"}
       </Link>
     </div>
