@@ -1,5 +1,6 @@
 import type { InvoiceStatus } from "@prisma/client";
 import { balanceDue } from "@/lib/invoice-totals";
+import { usdValue } from "@/lib/invoice-usd";
 import type { PaymentTarget } from "@/components/invoices/record-payment-dialog";
 
 /** One invoice as the list, the board and their row menus see it. */
@@ -46,4 +47,30 @@ export function toPaymentTarget(row: InvoiceListRow): PaymentTarget {
     creditNoteForId: row.creditNoteForId,
     balance: rowBalance(row),
   };
+}
+
+export const INVOICE_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "overdue", label: "Overdue" },
+  { value: "paid", label: "Paid" },
+  { value: "draft", label: "Draft" },
+  { value: "needs-usd", label: "Needs USD value" },
+] as const;
+
+export type InvoiceFilter = (typeof INVOICE_FILTERS)[number]["value"];
+
+/**
+ * A non-USD invoice with no USD value yet, and one that should have one: it
+ * is issued and real money, so the stats are leaving it out until the owner
+ * enters what it settled at. Drafts, void invoices and credit notes don't
+ * count toward any total, so they don't need one.
+ */
+export function needsUsd(row: InvoiceListRow): boolean {
+  return (
+    usdValue(row) === null &&
+    !row.creditNoteForId &&
+    row.status !== "DRAFT" &&
+    row.status !== "CANCELLED"
+  );
 }

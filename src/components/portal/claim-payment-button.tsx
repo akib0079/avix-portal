@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { claimInvoicePayment } from "@/lib/actions/portal";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -14,7 +13,6 @@ export function ClaimPaymentButton({
   invoiceId: string;
   claimed: boolean;
 }) {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [reported, setReported] = useState(claimed);
 
@@ -40,8 +38,8 @@ export function ClaimPaymentButton({
           toast.error(result.error);
           return;
         }
+        // No router.refresh(): the action revalidates this page itself.
         toast.success("Thanks! We'll confirm the payment shortly.");
-        router.refresh();
       }}
     >
       {busy ? <Loader2 className="animate-spin" /> : <HandCoins />}

@@ -226,6 +226,9 @@ function formStatus(
 
   if (requested === "DRAFT" && invoice && invoice.status !== "DRAFT") {
     if (invoice.creditNoteForId) return { error: "A credit note can't be a draft." };
+    if (invoice.creditNotes.length > 0) {
+      return { error: "This invoice has credit notes against it, so it can't go back to being a draft." };
+    }
     const blocked = draftBlocker({ sentAt: invoice.sentAt, amountPaid: paid });
     if (blocked) return { error: blocked };
   }
@@ -579,8 +582,11 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
       where: { id },
       data: {
         sentAt: new Date(),
-        // Don't regress a further-along status back to SENT.
-        ...(invoice.status === "ASSIGNED" ? { status: "SENT" } : {}),
+        // A draft or an unsent invoice is now with the client. Don't regress
+        // a further-along status back to SENT.
+        ...(invoice.status === "DRAFT" || invoice.status === "ASSIGNED"
+          ? { status: "SENT" as const }
+          : {}),
       },
     }),
     prisma.notification.create({
@@ -611,8 +617,8 @@ export async function sendInvoice(id: string): Promise<ActionResult> {
 
 /**
  * Draft an invoice straight from work that has happened: completed fixed-price
- * milestones and logged hourly time. Creates it as ASSIGNED so it can be
- * reviewed and edited before anything is sent.
+ * milestones and logged hourly time. Created as a DRAFT, which the client
+ * can't see, so it can be reviewed and edited before anything is sent.
  */
 export async function createInvoiceFromWork(
   projectId: string,
@@ -653,7 +659,7 @@ export async function createInvoiceFromWork(
         taxRate: options?.taxRate ?? null,
         taxLabel: options?.taxLabel || null,
         paymentTermsDays: termsDays,
-        status: "ASSIGNED",
+        status: "DRAFT",
         issueDate,
         dueDate,
         // Work is priced in dollars, so the draft is worth its own total.

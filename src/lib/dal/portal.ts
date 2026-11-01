@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { getBookingConfig } from "@/lib/dal/availability";
@@ -8,6 +9,19 @@ import { getBookingConfig } from "@/lib/dal/availability";
  * session — never from a parameter. Single-record lookups use findFirst with
  * the clientId in the where clause and read as 404 on miss.
  */
+
+/**
+ * A draft is an invoice still being prepared (duplicated, drafted from work or
+ * by a plan): the client never sees one, in any list, total or link, until it
+ * is sent. ASSIGNED invoices stay visible, as they always have been.
+ */
+const shownToClient = { not: "DRAFT" } as const;
+
+/** What a credit note takes off its invoice, for the balance the client sees. */
+const creditNotesShown = {
+  where: { status: { notIn: ["DRAFT", "CANCELLED"] } },
+  select: { amount: true, status: true },
+} satisfies Prisma.Invoice$creditNotesArgs;
 
 export async function getPortalOverview() {
   const user = await requireClient();
@@ -22,9 +36,23 @@ export async function getPortalOverview() {
           milestones: { select: { status: true } },
         },
       }),
+      // What they still owe: issued, not settled or void, and not a credit
+      // note (that is money owed to them).
       prisma.invoice.findMany({
-        where: { clientId: user.id, status: { not: "PAID" } },
+        where: {
+          clientId: user.id,
+          status: { notIn: ["PAID", "CANCELLED", "DRAFT"] },
+          creditNoteForId: null,
+        },
         orderBy: { issueDate: "desc" },
+        select: {
+          id: true,
+          amount: true,
+          amountPaid: true,
+          currency: true,
+          dueDate: true,
+          creditNotes: creditNotesShown,
+        },
       }),
       prisma.notification.findMany({
         where: { userId: user.id },
@@ -38,6 +66,7 @@ export async function getPortalOverview() {
       prisma.invoice.count({
         where: {
           clientId: user.id,
+          status: shownToClient,
           OR: [{ status: "PAID" }, { paymentClaimedAt: { not: null } }],
         },
       }),
@@ -105,7 +134,7 @@ export async function getMyProjectExtras(projectId: string) {
 
   const [invoices, meetings, hourTotals, viewer] = await Promise.all([
     prisma.invoice.findMany({
-      where: { projectId, clientId: user.id },
+      where: { projectId, clientId: user.id, status: shownToClient },
       orderBy: { issueDate: "desc" },
       select: {
         id: true,
@@ -162,17 +191,49 @@ export async function getMyProjectExtras(projectId: string) {
 export async function listMyInvoices() {
   const user = await requireClient();
   return prisma.invoice.findMany({
-    where: { clientId: user.id },
+    where: { clientId: user.id, status: shownToClient },
     orderBy: { issueDate: "desc" },
-    include: { project: { select: { projectName: true } } },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      issueDate: true,
+      dueDate: true,
+      amount: true,
+      amountPaid: true,
+      currency: true,
+      status: true,
+      pdfPath: true,
+      pdfExternalUrl: true,
+      creditNoteForId: true,
+      project: { select: { projectName: true } },
+      creditNotes: creditNotesShown,
+    },
   });
 }
 
 export async function getMyInvoice(id: string) {
   const user = await requireClient();
   return prisma.invoice.findFirst({
-    where: { id, clientId: user.id },
-    include: { project: { select: { id: true, projectName: true } } },
+    where: { id, clientId: user.id, status: shownToClient },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      issueDate: true,
+      dueDate: true,
+      amount: true,
+      amountPaid: true,
+      currency: true,
+      status: true,
+      notes: true,
+      pdfPath: true,
+      pdfExternalUrl: true,
+      paymentClaimedAt: true,
+      paymentAccountId: true,
+      creditNoteForId: true,
+      project: { select: { id: true, projectName: true } },
+      creditNoteFor: { select: { id: true, invoiceNumber: true } },
+      creditNotes: creditNotesShown,
+    },
   });
 }
 

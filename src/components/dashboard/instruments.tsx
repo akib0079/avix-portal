@@ -234,6 +234,7 @@ const STATUS_ORDER: InvoiceStatus[] = [
   "SENT",
   "IN_REVIEW",
   "ASSIGNED",
+  "DRAFT",
   "CANCELLED",
 ];
 

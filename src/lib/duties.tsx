@@ -161,8 +161,8 @@ async function sendMeetingReminders(now: Date) {
 
 /**
  * Retainers: once per month (on/after each retainer's dayOfMonth) draft an
- * ASSIGNED invoice for the admin to review and send — money never goes out
- * automatically.
+ * invoice for the admin to review and send — money never goes out
+ * automatically. It is a DRAFT, so the client sees nothing until it is sent.
  */
 async function generateRetainerInvoices(now: Date) {
   const period = currentPeriod(now);
@@ -196,7 +196,7 @@ async function generateRetainerInvoices(now: Date) {
           // A dollar plan's draft is worth its own total; any other currency
           // waits for the value it settles at, like every invoice.
           amountUsd: usdToStore(retainer.currency, Number(retainer.amount), null),
-          status: "ASSIGNED",
+          status: "DRAFT",
           issueDate: now,
           dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
           title: `${retainer.title} — ${monthLabel}`,

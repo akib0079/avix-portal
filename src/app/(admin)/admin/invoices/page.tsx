@@ -2,6 +2,7 @@ import Link from "next/link";
 import { listInvoices } from "@/lib/dal/invoices";
 import { PageHeader } from "@/components/page-header";
 import { InvoiceTable } from "@/components/invoices/invoice-table";
+import { INVOICE_FILTERS } from "@/components/invoices/invoice-row";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { serverNow } from "@/lib/server-now";
@@ -11,9 +12,14 @@ import { canDeleteInvoice } from "@/lib/invoice-rules";
 
 export const metadata = { title: "Invoices" };
 
-export default async function InvoicesPage() {
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
   await requireAdmin();
-  const invoices = await listInvoices();
+  const [invoices, { filter }] = await Promise.all([listInvoices(), searchParams]);
+  const initialFilter = INVOICE_FILTERS.find((f) => f.value === filter)?.value ?? "all";
   // Server-rendered timestamp keeps the aging buckets stable across renders.
   const renderedAt = serverNow();
 
@@ -33,6 +39,7 @@ export default async function InvoicesPage() {
 
       <InvoiceTable
         now={renderedAt}
+        initialFilter={initialFilter}
         invoices={invoices.map((invoice) => ({
           id: invoice.id,
           invoiceNumber: invoice.invoiceNumber,

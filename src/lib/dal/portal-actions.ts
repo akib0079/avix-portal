@@ -40,6 +40,8 @@ export async function getClientActionItems(clientId: string) {
         clientId,
         status: "SENT",
         paymentClaimedAt: null,
+        // A credit note is money back to them, not a bill to pay.
+        creditNoteForId: null,
       },
       orderBy: { issueDate: "desc" },
       select: {
@@ -98,7 +100,7 @@ export async function countClientActionItems(clientId: string): Promise<number> 
       where: { status: "COMPLETED", clientApprovedAt: null, project: { clientId } },
     }),
     prisma.invoice.count({
-      where: { clientId, status: "SENT", paymentClaimedAt: null },
+      where: { clientId, status: "SENT", paymentClaimedAt: null, creditNoteForId: null },
     }),
     prisma.projectTask.count({ where: boardTasksWaiting(clientId) }),
   ]);

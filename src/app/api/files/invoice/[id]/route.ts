@@ -15,10 +15,17 @@ export async function GET(
   const { id } = await params;
   const viewer = session.user;
 
-  // Admins can fetch any invoice; clients only their own. findFirst + 404
-  // avoids revealing whether an invoice id exists.
+  // Admins can fetch any invoice; clients only their own, and never a draft.
+  // STAFF are money-blind, so they match nothing. findFirst + 404 avoids
+  // revealing whether an invoice id exists.
+  if (viewer.role !== "ADMIN" && viewer.role !== "CLIENT") {
+    return new NextResponse(null, { status: 404 });
+  }
   const invoice = await prisma.invoice.findFirst({
-    where: viewer.role === "ADMIN" ? { id } : { id, clientId: viewer.id },
+    where:
+      viewer.role === "ADMIN"
+        ? { id }
+        : { id, clientId: viewer.id, status: { not: "DRAFT" } },
     select: {
       pdfPath: true,
       pdfOriginalName: true,

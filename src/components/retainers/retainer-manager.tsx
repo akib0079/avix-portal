@@ -110,7 +110,8 @@ function laneOf(r: RetainerView, period: string): LaneId {
   const current = currentInvoice(r, period);
   if (current) {
     if (current.status === "PAID") return "paid";
-    if (current.status === "ASSIGNED") return "drafted";
+    // DRAFT since v49; plans drafted before that left ASSIGNED invoices.
+    if (current.status === "DRAFT" || current.status === "ASSIGNED") return "drafted";
     return "sent";
   }
   // Stamped as drafted but its invoice is gone (deleted or unlinked): it

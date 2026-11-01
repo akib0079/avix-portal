@@ -18,7 +18,8 @@ import { setInvoiceStatus } from "@/lib/actions/invoices";
 import { invoiceStatusLabels } from "@/lib/format";
 import { formatCurrency } from "@/lib/currency";
 import { usdValue } from "@/lib/invoice-usd";
-import { invoiceStatusColor } from "@/lib/status-colors";
+import { HUE, invoiceStatusColor } from "@/lib/status-colors";
+import { SoftPill } from "@/components/ui/status-pill";
 import { useLocalSet } from "@/lib/use-local-pref";
 import { Lane, LaneCard, LaneEmpty, LaneScroller } from "@/components/ui/lanes";
 import { DueChip } from "@/components/board/board-bits";
@@ -38,7 +39,8 @@ import { rowBalance, type InvoiceListRow } from "./invoice-row";
 import { isReceivable } from "@/lib/invoice-rules";
 
 const LANES: { status: InvoiceStatus; hint: string }[] = [
-  { status: "ASSIGNED", hint: "Created, not sent yet" },
+  { status: "DRAFT", hint: "Being prepared — the client can't see it" },
+  { status: "ASSIGNED", hint: "In the client's portal, not emailed yet" },
   { status: "SENT", hint: "With the client" },
   { status: "IN_REVIEW", hint: "Client says it's paid — confirm" },
   { status: "PARTIALLY_PAID", hint: "Some of it has landed" },
@@ -65,7 +67,8 @@ function laneUsd(status: InvoiceStatus, rows: InvoiceListRow[]) {
   let missing = 0;
   for (const row of rows) {
     if (row.creditNoteForId) continue;
-    const value = status === "PAID" ? row.amount : rowBalance(row);
+    // Drafts aren't owed yet: their lane shows what they will bill.
+    const value = status === "PAID" || status === "DRAFT" ? row.amount : rowBalance(row);
     if (value <= 0) continue;
     // usdValue, not amountUsd: a USD invoice is worth its own total even when
     // the column was never filled (retainer runs and older rows leave it null).
@@ -252,7 +255,9 @@ function InvoiceLane({
                 ? `${worth.missing} invoice${worth.missing === 1 ? " has" : "s have"} no USD value yet and ${worth.missing === 1 ? "is" : "are"} not in this total`
                 : status === "PAID"
                   ? "Invoiced value of everything in this lane, in USD"
-                  : "Still owed on everything in this lane, in USD"
+                  : status === "DRAFT"
+                    ? "What these drafts will bill, in USD. Not counted as owed until sent"
+                    : "Still owed on everything in this lane, in USD"
             }
           >
             {usdWhole.format(worth.total)}
@@ -363,6 +368,11 @@ function InvoiceCardFace({
             >
               no USD value
             </span>
+          )}
+          {row.creditNoteForId && (
+            <SoftPill color={HUE.violet} className="px-2 text-[10px]">
+              Credit note
+            </SoftPill>
           )}
         </div>
       </LaneCard>

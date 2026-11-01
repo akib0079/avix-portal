@@ -67,8 +67,8 @@ export async function getReportsData(): Promise<ReportsData> {
   const [invoices, timeEntries, clients, hourlyMilestones, leads, retainers, teamHours] =
     await Promise.all([
     prisma.invoice.findMany({
-      // Cancelled documents and credit notes aren't revenue.
-      where: { status: { not: "CANCELLED" }, creditNoteForId: null },
+      // Cancelled documents, drafts and credit notes aren't revenue.
+      where: { status: { notIn: ["CANCELLED", "DRAFT"] }, creditNoteForId: null },
       select: {
         amount: true,
         amountUsd: true,

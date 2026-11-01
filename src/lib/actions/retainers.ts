@@ -94,8 +94,8 @@ export async function updateRetainer(
 /**
  * Draft this month's invoice for a retainer NOW, instead of waiting for the
  * duties engine to reach its bill-on day. Same shape as the automatic draft
- * (ASSIGNED, 14-day terms, one line item) and it stamps lastGeneratedPeriod so
- * the scheduled run won't duplicate it.
+ * (a DRAFT the client can't see yet, 14-day terms, one line item) and it
+ * stamps lastGeneratedPeriod so the scheduled run won't duplicate it.
  */
 export async function generateRetainerInvoice(
   id: string,
@@ -127,7 +127,7 @@ export async function generateRetainerInvoice(
         // A dollar plan's draft is worth its own total; any other currency
         // waits for the value it settles at, like every invoice.
         amountUsd: usdToStore(retainer.currency, Number(retainer.amount), null),
-        status: "ASSIGNED",
+        status: "DRAFT",
         issueDate: now,
         dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
         title: `${retainer.title} — ${monthLabel}`,

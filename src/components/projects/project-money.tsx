@@ -114,7 +114,10 @@ export function ProjectMoney({
   const liveInvoices = invoices.filter((i) => i.status !== "CANCELLED");
   const invoiced = liveInvoices.reduce((sum, i) => sum + i.amount, 0);
   const paid = liveInvoices.reduce((sum, i) => sum + i.amountPaid, 0);
-  const outstanding = invoiced - paid;
+  // Nor are drafts: nothing on one is owed until it has been sent.
+  const outstanding = liveInvoices
+    .filter((i) => i.status !== "DRAFT")
+    .reduce((sum, i) => sum + i.amount - i.amountPaid, 0);
   const unbilled = Math.max(earned - invoiced, 0);
 
   return (

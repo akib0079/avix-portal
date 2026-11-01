@@ -26,7 +26,11 @@ export async function GET(
   const { id } = await params;
   // Authorize ownership before rendering (client sees only their own).
   const owned = await prisma.invoice.findFirst({
-    where: viewer.role === "ADMIN" ? { id } : { id, clientId: viewer.id },
+    where:
+      viewer.role === "ADMIN"
+        ? { id }
+        : // A draft is never the client's to see, by link or otherwise.
+          { id, clientId: viewer.id, status: { not: "DRAFT" } },
     select: { id: true, invoiceNumber: true },
   });
   if (!owned) return new NextResponse(null, { status: 404 });
