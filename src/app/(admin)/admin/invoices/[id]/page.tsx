@@ -163,12 +163,19 @@ export default async function InvoiceDetailPage({
               invoiceNumber: invoice.invoiceNumber,
               title: invoice.title ?? "",
               currency: invoice.currency,
+              // Without it every save of a EUR or GBP invoice wiped the USD
+              // value the owner had entered.
+              amountUsd: invoice.amountUsd == null ? null : Number(invoice.amountUsd),
               paymentAccountId: invoice.paymentAccountId ?? "none",
               billToCompany: invoice.billToCompany ?? "",
               billToAddress: invoice.billToAddress ?? "",
               billToEmail: invoice.billToEmail ?? "",
               items: invoice.items.map((i) => ({
                 description: i.description,
+                // The editor's own document. Leaving it out made the editor
+                // rebuild one from the plain text, losing bold, italics and
+                // nesting, and the next save stored that lossy copy.
+                descriptionRich: i.descriptionRich ?? null,
                 qty: Number(i.qty),
                 rate: Number(i.rate),
               })),

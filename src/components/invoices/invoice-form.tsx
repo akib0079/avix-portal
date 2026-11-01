@@ -10,6 +10,7 @@ import {
   type InvoiceInput,
 } from "@/lib/validation/invoice";
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
+import { serializeInvoiceForm } from "@/lib/invoice-form-data";
 import { CURRENCIES, currencySymbol as symbolFor } from "@/lib/currency";
 import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { richTextToLines, linesToRichDoc } from "@/lib/rich-text";
@@ -156,29 +157,26 @@ export function InvoiceForm({
   }
 
   async function onSubmit(values: InvoiceInput) {
-    const formData = new FormData();
     // Only the chosen document mode's data is submitted, so switching modes
     // clears the others rather than leaving a stale link/upload behind.
-    const { items, ...scalars } = values;
-    Object.entries(scalars).forEach(([key, value]) => {
-      if (key === "pdfExternalUrl" && docMode !== "link") {
-        formData.append(key, "");
-        return;
-      }
-      formData.append(key, String(value ?? ""));
-    });
-    if (docMode === "generate" && items?.length) {
+    // serializeInvoiceForm writes every field the schema knows; the server
+    // reads them back with the same table (lib/invoice-form-data).
+    const formData = serializeInvoiceForm({
+      ...values,
+      pdfExternalUrl: docMode === "link" ? values.pdfExternalUrl : "",
       // descriptionRich is the source of truth; the plain text is derived here
       // rather than trusted from form state, so what is stored can never drift
       // from what was typed even if a field failed to register.
-      const withPlain = items.map((item) => ({
-        ...item,
-        description: item.descriptionRich
-          ? richTextToLines(item.descriptionRich)
-          : item.description,
-      }));
-      formData.append("items", JSON.stringify(withPlain));
-    }
+      items:
+        docMode === "generate"
+          ? values.items?.map((item) => ({
+              ...item,
+              description: item.descriptionRich
+                ? richTextToLines(item.descriptionRich)
+                : item.description,
+            }))
+          : undefined,
+    });
     const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
 

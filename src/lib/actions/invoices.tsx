@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { usdToStore } from "@/lib/invoice-usd";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
-import { invoiceSchema } from "@/lib/validation/invoice";
+import { parseInvoiceForm } from "@/lib/invoice-form-data";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
 import { invoiceTotals, dueDateFromTerms } from "@/lib/invoice-totals";
 import { getBillableWork } from "@/lib/dal/billable";
@@ -25,42 +25,6 @@ function parseDate(value: string | undefined): Date | null {
   if (!value) return null;
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function extractFields(formData: FormData) {
-  // Line items travel as one JSON field (FormData is flat). Invalid JSON is
-  // treated as "no items" and the amount field governs, exactly as before.
-  let items: unknown;
-  const rawItems = formData.get("items");
-  if (typeof rawItems === "string" && rawItems) {
-    try {
-      items = JSON.parse(rawItems);
-    } catch {
-      items = undefined;
-    }
-  }
-  const amountRaw = Number(formData.get("amount"));
-  const raw = {
-    items,
-    clientId: String(formData.get("clientId") ?? ""),
-    projectId: String(formData.get("projectId") ?? "none"),
-    // NaN (empty field while using line items) → 0; superRefine rejects 0
-    // only when there are no items.
-    amount: Number.isNaN(amountRaw) ? 0 : amountRaw,
-    status: String(formData.get("status") ?? "ASSIGNED"),
-    issueDate: String(formData.get("issueDate") ?? ""),
-    dueDate: String(formData.get("dueDate") ?? ""),
-    notes: String(formData.get("notes") ?? ""),
-    pdfExternalUrl: String(formData.get("pdfExternalUrl") ?? ""),
-    invoiceNumber: String(formData.get("invoiceNumber") ?? ""),
-    title: String(formData.get("title") ?? ""),
-    currency: String(formData.get("currency") ?? "USD"),
-    paymentAccountId: String(formData.get("paymentAccountId") ?? ""),
-    billToCompany: String(formData.get("billToCompany") ?? ""),
-    billToAddress: String(formData.get("billToAddress") ?? ""),
-    billToEmail: String(formData.get("billToEmail") ?? ""),
-  };
-  return invoiceSchema.safeParse(raw);
 }
 
 /** "none"/empty → null; else the id (validated against active accounts). */
@@ -126,14 +90,7 @@ async function validateRelations(clientId: string, projectId: string) {
   return { resolvedProjectId };
 }
 
-/**
- * What to store in `amountUsd`.
- *
- * A USD invoice is worth its own total, so it mirrors and the field never has
- * to be typed. Anything else takes the hand-entered figure, and null when it
- * has not been given — the totals then leave the invoice out and say so, which
- * is the whole point of the column.
- */
+/** Stores an uploaded PDF, if the form carried one. */
 async function handlePdf(formData: FormData): Promise<
   { ok: true; fileName: string | null; originalName: string | null } | { ok: false; error: string }
 > {
@@ -150,7 +107,7 @@ export async function createInvoice(
   formData: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   await requireAdmin();
-  const parsed = extractFields(formData);
+  const parsed = parseInvoiceForm(formData);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
@@ -221,7 +178,7 @@ export async function updateInvoice(
   formData: FormData,
 ): Promise<ActionResult> {
   await requireAdmin();
-  const parsed = extractFields(formData);
+  const parsed = parseInvoiceForm(formData);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
