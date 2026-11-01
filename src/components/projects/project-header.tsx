@@ -2,7 +2,6 @@
 
 import { useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { Priority, ProjectStatus } from "@prisma/client";
 import {
   setAutoAcceptClientTasks,
@@ -228,7 +227,6 @@ export function ProjectHeader({
   /** The project brief, folded under the header. */
   brief?: React.ReactNode;
 }) {
-  const router = useRouter();
   // On the project page the work is live (the Milestones tab's store), so the
   // ring and the counts follow a drag on the board at once instead of waiting
   // for the next page load. Elsewhere, the server's figures.
@@ -253,6 +251,9 @@ export function ProjectHeader({
     now: new Date(renderedAt),
   });
 
+  // Each of these actions revalidates this page, and Next applies that
+  // render from the action's response: a router.refresh() on top rendered
+  // the whole project page a second time.
   async function changeStatus(next: ProjectStatus) {
     const previous = status;
     setStatus(next); // optimistic — the select shouldn't lag behind the click
@@ -264,7 +265,6 @@ export function ProjectHeader({
       return void toast.error(res.error);
     }
     toast.success(`Moved to ${projectStatusLabels[next]}.`);
-    router.refresh();
   }
 
   async function changePriority(next: Priority) {
@@ -277,7 +277,6 @@ export function ProjectHeader({
       setPriority(previous);
       return void toast.error(res.error);
     }
-    router.refresh();
   }
 
   async function changeOwner(next: string) {
@@ -290,11 +289,10 @@ export function ProjectHeader({
       setOwner(previous);
       return void toast.error(res.error);
     }
-    router.refresh();
   }
 
-  // Whether the client's asks wait for a decision. The action revalidates
-  // this page, so no router.refresh() on top.
+  // Whether the client's asks wait for a decision. Like the three above,
+  // the action revalidates this page itself.
   async function changeAutoAccept(next: string) {
     const enabled = next === "auto";
     const previous = autoAccept;
