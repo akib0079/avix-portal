@@ -9,8 +9,9 @@
  * code writes, so it is safe to repeat.
  *
  * Keep in step with
- * prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql —
- * work-backfill.test.ts fails if the two drift. Only the boot pass bounds
+ * prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql
+ * (steps 1–7) and 20261102134000_v49c_b4_legacy_repairs (the rest) —
+ * work-backfill.test.ts fails if they drift. Only the boot pass bounds
  * steps 3 and 4 to rows created since the last pass ($1): cards and comments
  * the new code has deleted since must not come back.
  */
@@ -102,6 +103,23 @@ WHERE "stage" <> 'REQUESTED' AND "status" <> (CASE "stage" WHEN 'IN_PROGRESS' TH
   //    forgot to store it, which kept them out of every USD total.
   `UPDATE "invoices" SET "amountUsd" = "amount"
 WHERE "currency" = 'USD' AND "amountUsd" IS NULL AND "creditNoteForId" IS NULL`,
+
+  // The v49c migration: repairs to rows the old code wrote that v49b left in
+  // a shape the new code can't handle. The current time is written in UTC,
+  // as Prisma writes it, whatever the session's zone.
+
+  // 8. A request the old code declined after step 5 gave it an item: the item
+  //    leaves the board the way a decline leaves it now (archived, still
+  //    Requested), instead of waiting where no action can clear it.
+  `UPDATE "milestones" m SET "archivedAt" = COALESCE(r."resolvedAt", now() AT TIME ZONE 'UTC')
+FROM "task_requests" r
+WHERE r."id" = m."sourceTaskRequestId" AND r."status" = 'REJECTED'
+  AND m."stage" = 'REQUESTED' AND m."archivedAt" IS NULL`,
+
+  // 9. A Requested item whose request was deleted with its client. Only a
+  //    client's addition and step 5 write Requested, both with a request.
+  `UPDATE "milestones" SET "archivedAt" = now() AT TIME ZONE 'UTC'
+WHERE "stage" = 'REQUESTED' AND "sourceTaskRequestId" IS NULL AND "archivedAt" IS NULL`,
 ];
 
 type Db = {

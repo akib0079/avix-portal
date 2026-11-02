@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { FIRST_PASS_KEY, WORK_BACKFILL_SQL, backfillWorkItemsOnBoot } from "./work-backfill";
 import { stageToStatus, stageWrite, statusToStage } from "./work-stage";
 
-const MIGRATIONS = ["prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql"];
+const MIGRATIONS = [
+  "prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql",
+  "prisma/migrations/20261102134000_v49c_b4_legacy_repairs/migration.sql",
+];
 const squash = (sql: string) => sql.replace(/\s+/g, " ").trim();
 /** The boot pass's own bound on the copying steps; the migrations copy everything. */
 const unbounded = (sql: string) => squash(sql).replace(/ (?:AND|WHERE) [a-z]\."createdAt" > \$1/, "");
@@ -17,7 +20,7 @@ function statementsOf(path: string): string[] {
   return body.split(/;\s*(?:\n|$)/).map(squash).filter(Boolean);
 }
 
-test("the migrations run exactly the statements the boot-time pass runs", () => {
+test("v49b then v49c run exactly the statements the boot-time pass runs", () => {
   assert.deepEqual(MIGRATIONS.flatMap(statementsOf), WORK_BACKFILL_SQL.map(unbounded));
 });
 
