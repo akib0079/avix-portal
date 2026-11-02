@@ -126,6 +126,33 @@ WHERE "stage" = 'REQUESTED' AND "sourceTaskRequestId" IS NULL AND "archivedAt" I
   //     (sending it for review clears one), so this only finds those.
   `UPDATE "milestones" SET "stage" = 'DONE'
 WHERE "stage" = 'REVIEW' AND "clientApprovedAt" IS NOT NULL`,
+
+  // 11. Cards the old board edited after step 3 copied them: a rename, a new
+  //     assignee, a move to another column (a client dragging one to Done
+  //     must not find it back in Review). Every write of the new code bumps
+  //     updatedAt, so its own edits win. Stage, status and completedAt follow
+  //     stageWrite, and an approval is kept only in Done. A card keeps its
+  //     place unless it changed column, and its phase isn't copied: the copy
+  //     may have become a phase with work under it since.
+  `UPDATE "milestones" m SET "title" = t."title", "description" = t."description",
+  "stage" = t."status",
+  "status" = (CASE t."status" WHEN 'IN_PROGRESS' THEN 'IN_PROGRESS' WHEN 'REVIEW' THEN 'COMPLETED'
+    WHEN 'DONE' THEN 'COMPLETED' ELSE 'PENDING' END)::"MilestoneStatus",
+  "completedAt" = CASE WHEN t."status" IN ('REVIEW', 'DONE') THEN COALESCE(
+    CASE WHEN m."stage" IN ('REVIEW', 'DONE') THEN m."completedAt" END, t."completedAt", t."updatedAt") END,
+  "clientApprovedAt" = CASE WHEN t."status" = 'DONE' THEN m."clientApprovedAt" END,
+  "boardPosition" = CASE WHEN t."status" = m."stage" THEN m."boardPosition"
+    WHEN t."position" > 0 THEN t."position" ELSE 1024 END,
+  "priority" = t."priority", "dueDate" = t."dueDate", "assigneeId" = t."assigneeId",
+  "updatedAt" = t."updatedAt"
+FROM "project_tasks" t
+WHERE m."id" = t."id" AND t."updatedAt" > m."updatedAt"`,
+
+  // 12. Help questions the old board marked answered after step 4 copied
+  //     them. Nothing reopens an answered one now.
+  `UPDATE "milestone_comments" mc SET "resolvedAt" = c."resolvedAt", "resolvedById" = c."resolvedById"
+FROM "project_task_comments" c
+WHERE mc."id" = c."id" AND mc."resolvedAt" IS NULL AND c."resolvedAt" IS NOT NULL`,
 ];
 
 type Db = {
