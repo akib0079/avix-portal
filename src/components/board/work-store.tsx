@@ -41,7 +41,7 @@ import {
 import { stageToStatus } from "@/lib/work-stage";
 import { endOfColumn, planPhases } from "@/lib/work-list";
 import { acceptedItem, sameBilling } from "@/lib/work-sync";
-import { todayKey } from "./board-bits";
+import { useToday } from "./board-bits";
 import {
   AcceptRequestDialog,
   DeclineRequestDialog,
@@ -229,7 +229,7 @@ export function WorkProvider({
   const [people, setPeople] = useState(initial.people);
   const phases = useMemo(() => planPhases(items), [items]);
   const [openId, setOpenId] = useState<string | null>(initialItemId);
-  const [today] = useState(todayKey);
+  const today = useToday(renderedAt);
   const [sendingBack, setSendingBack] = useState<SendingBack | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);

@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import type { Priority } from "@prisma/client";
-import { PRIORITY_META, type BoardMention, type BoardPerson } from "@/lib/board";
+import { PRIORITY_META, dayKey, type BoardMention, type BoardPerson } from "@/lib/board";
 import { formatHours, hoursProgress } from "@/lib/work-list";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -85,6 +85,20 @@ export function PriorityFlag({
 export function todayKey(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const noSubscribe = () => () => {};
+
+/**
+ * Today in the viewer's own calendar, for a component the server renders
+ * too. The server can't know the viewer's day, so it and the hydrating
+ * browser both use the UTC day of `renderedAt` (the server's clock, passed
+ * down), and React re-renders straight after hydration with the browser's
+ * own day. Reading the browser's day during hydration would draw a different
+ * "Today" chip than the server did, and React would throw the page away.
+ */
+export function useToday(renderedAt: number): string {
+  return useSyncExternalStore(noSubscribe, todayKey, () => dayKey(new Date(renderedAt)));
 }
 
 export type DueState = "overdue" | "today" | "soon" | "later";
