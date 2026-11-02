@@ -247,6 +247,9 @@ export function WorkProvider({
   const dragging = useRef(false);
   const pending = useRef(0);
   const lastLocal = useRef(0);
+  // A client's send-back is waiting on its reason: the card is painted moved
+  // and the board before it is held to go back to, so nothing may land.
+  const sendBackOpen = useRef(false);
   const itemsRef = useRef(items);
   const versionRef = useRef(initial.version);
   const seenInitial = useRef(initial);
@@ -272,7 +275,7 @@ export function WorkProvider({
       onSuccess: (res) => {
         const data = res?.data;
         if (!res || !data) return;
-        if (dragging.current || pending.current > 0 || res.startedAt < lastLocal.current) return;
+        if (dragging.current || pending.current > 0 || sendBackOpen.current || res.startedAt < lastLocal.current) return;
         versionRef.current = data.version;
         setItems((prev) => reconcile(prev, data.items));
         setPeople((prev) => (samePeople(prev, data.people) ? prev : data.people));
@@ -292,7 +295,7 @@ export function WorkProvider({
   useEffect(() => {
     if (initial === seenInitial.current) return;
     seenInitial.current = initial;
-    if (dragging.current || pending.current > 0) return;
+    if (dragging.current || pending.current > 0 || sendBackOpen.current) return;
     if (Date.now() - renderedAt > 5_000) {
       void mutate();
       return;
@@ -412,6 +415,7 @@ export function WorkProvider({
       );
       if (check.kind === "send-back") {
         // The team needs to know why: ask before writing anything.
+        sendBackOpen.current = true;
         setSendingBack({ id, stage, boardPosition, revert });
         return true;
       }
@@ -647,6 +651,8 @@ export function WorkProvider({
         onCancel={() => {
           if (sendingBack) setItems(sendingBack.revert);
           setSendingBack(null);
+          sendBackOpen.current = false;
+          lastLocal.current = Date.now();
         }}
         onSend={async (comment) => {
           if (!sendingBack) return false;
@@ -654,6 +660,7 @@ export function WorkProvider({
           const ok = await commitMove(id, stage, boardPosition, revert, comment);
           if (ok) {
             setSendingBack(null);
+            sendBackOpen.current = false;
             toast.success(`Sent back to ${COLUMN_BY_ID[stage].clientLabel} — the team has your note.`);
           }
           return ok;
