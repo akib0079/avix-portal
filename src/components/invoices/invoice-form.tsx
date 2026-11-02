@@ -96,6 +96,7 @@ export function InvoiceForm({
   const router = useRouter();
   const { track } = useActivity();
   const isEdit = !!invoice;
+  const canCancel = !!invoice && invoice.status !== "DRAFT";
   // Edit reads the saved invoice; a prefilled create reads its starting values.
   const start: Partial<InvoiceInput> | undefined = invoice ?? initial;
   const fileRef = useRef<HTMLInputElement>(null);
@@ -510,11 +511,15 @@ export function InvoiceForm({
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {Object.entries(invoiceStatusLabels).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
+                    {Object.entries(invoiceStatusLabels)
+                      // A draft, or an invoice not saved yet, is deleted rather
+                      // than cancelled: cancelling would show it to the client.
+                      .filter(([value]) => value !== "CANCELLED" || canCancel)
+                      .map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">

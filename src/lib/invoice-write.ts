@@ -247,7 +247,8 @@ export function settledStatus(
  * The status a form save writes. The form's status select says what the owner
  * means; the payments say what happened. PAID with a balance left records that
  * balance as a payment, so amountPaid agrees with the badge. A draft can't hide
- * an invoice the client already has. Anything else settles against what has
+ * an invoice the client already has, and cancelling one would show it to them,
+ * so a draft is deleted instead. Anything else settles against what has
  * been paid and credited, so editing the amount of a paid invoice upward turns
  * it back into part paid instead of leaving it PAID with money owing.
  *
@@ -269,6 +270,15 @@ export function formStatus(
     }
     const blocked = draftBlocker({ sentAt: invoice.sentAt, amountPaid: paid });
     if (blocked) return { error: blocked };
+  }
+  // The client sees every invoice but a draft, a cancelled one included, so
+  // cancelling one that was never issued would publish it to them.
+  if (requested === "CANCELLED" && (!invoice || invoice.status === "DRAFT")) {
+    return {
+      error: invoice
+        ? "This draft was never sent, so there's nothing to cancel. Delete it, or leave it as a draft: the client can't see it."
+        : "A new invoice can't start cancelled. Save it as a draft instead: the client can't see a draft.",
+    };
   }
   if (requested === "PAID" && !invoice?.creditNoteForId) {
     const balance = balanceDue(total, paid, credited);

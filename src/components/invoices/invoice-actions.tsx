@@ -28,6 +28,8 @@ const STATUS_OPTIONS = (Object.keys(invoiceStatusLabels) as InvoiceStatus[]).map
   value,
   label: invoiceStatusLabels[value],
 }));
+// A draft is deleted rather than cancelled: cancelling would show it to the client.
+const DRAFT_OPTIONS = STATUS_OPTIONS.filter((option) => option.value !== "CANCELLED");
 
 /**
  * Row-level status control. Moves the moment you pick — the old version sat
@@ -58,7 +60,7 @@ export function InvoiceStatusSelect({
   return (
     <LazySelect
       value={shown}
-      options={STATUS_OPTIONS}
+      options={status === "DRAFT" ? DRAFT_OPTIONS : STATUS_OPTIONS}
       ariaLabel="Invoice status"
       className="w-[120px]"
       onValueChange={(value) => {
