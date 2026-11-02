@@ -38,6 +38,7 @@ import {
 } from "@/lib/actions/project-board";
 import { stageToStatus } from "@/lib/work-stage";
 import { endOfColumn, planPhases } from "@/lib/work-list";
+import { acceptedItem } from "@/lib/work-sync";
 import { todayKey } from "./board-bits";
 import {
   AcceptRequestDialog,
@@ -528,26 +529,13 @@ export function WorkProvider({
     (id: string, choice: AcceptChoice) => {
       const item = itemsRef.current.find((c) => c.id === id);
       if (!item) return;
-      const person = choice.assigneeId ? people.find((p) => p.id === choice.assigneeId) : null;
-      const priced = viewer.role === "ADMIN";
-      upsert({
-        ...item,
-        stage: choice.stage,
-        status: stageToStatus(choice.stage),
-        boardPosition: endOfColumn(itemsRef.current, choice.stage, id),
-        assigneeId: choice.assigneeId,
-        assignee: person ? { id: person.id, name: person.name, image: null } : null,
-        dueDate: choice.dueDate,
-        parentId: choice.parentId,
-        ...(priced
-          ? {
-              pricingType: choice.pricingType,
-              hourlyRate: choice.pricingType === "HOURLY" ? (choice.hourlyRate ?? null) : null,
-              estimatedHours: choice.pricingType === "HOURLY" ? (choice.estimatedHours ?? null) : null,
-              fixedPrice: choice.pricingType === "FIXED" ? (choice.fixedPrice ?? null) : null,
-            }
-          : {}),
-      });
+      upsert(
+        acceptedItem(item, choice, {
+          boardPosition: endOfColumn(itemsRef.current, choice.stage, id),
+          people,
+          priced: viewer.role === "ADMIN",
+        }),
+      );
       refresh();
     },
     [people, viewer.role, upsert, refresh],
@@ -685,12 +673,7 @@ export function WorkProvider({
           people={people}
           phases={phases}
           itemId={acceptingItem.id}
-          defaultPricing={{
-            pricingType: acceptingItem.pricingType,
-            hourlyRate: acceptingItem.hourlyRate,
-            estimatedHours: acceptingItem.estimatedHours,
-            fixedPrice: acceptingItem.fixedPrice,
-          }}
+          item={acceptingItem}
           onAccepted={(choice) => accepted(acceptingItem.id, choice)}
         />
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -11,9 +11,14 @@ import {
   type BoardData,
   type BoardPerson,
   type BoardPhase,
+  type WorkItem,
   type WorkRole,
 } from "@/lib/board";
-import { approvalPricingSchema, type ApprovalPricingInput } from "@/lib/validation/task-request";
+import {
+  approvalPricingSchema,
+  type AcceptRequestInput,
+  type ApprovalPricingInput,
+} from "@/lib/validation/task-request";
 import { approveTaskRequest, rejectTaskRequest } from "@/lib/actions/task-requests";
 import { PricingFields } from "@/components/milestones/pricing-fields";
 import { Button } from "@/components/ui/button";
@@ -36,6 +41,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { PersonAvatar } from "./board-bits";
+import { useWorkItemDetail } from "./use-work-item-detail";
 import { Check, ChevronDown, Loader2, Milestone as MilestoneIcon, UserRound, X } from "lucide-react";
 
 /**
@@ -121,13 +127,30 @@ export function SendBackDialog({
 const START_STAGES = ["BACKLOG", "TODO", "IN_PROGRESS"] as const;
 export type StartStage = (typeof START_STAGES)[number];
 
-/** What the team chose when accepting — enough to paint the item before the next poll. */
-export type AcceptChoice = ApprovalPricingInput & {
-  stage: StartStage;
-  assigneeId: string | null;
-  dueDate: string | null;
-  parentId: string | null;
-};
+/**
+ * What the team chose when accepting — enough to paint the item before the
+ * next poll. It holds only what the accepter changed: whatever is left out,
+ * the item keeps (the person the client pinned, the date and phase they
+ * picked, a price an admin already set).
+ */
+export type AcceptChoice = AcceptRequestInput & { stage: StartStage };
+
+/** What the dialog starts from: the request's item as this viewer sees it (staff get no price). */
+type AcceptBase = Pick<
+  WorkItem,
+  "assigneeId" | "assignee" | "dueDate" | "parentId" | "pricingType" | "hourlyRate" | "estimatedHours" | "fixedPrice"
+>;
+
+function pricingOf(item: AcceptBase | null | undefined): ApprovalPricingInput {
+  return item
+    ? {
+        pricingType: item.pricingType,
+        hourlyRate: item.hourlyRate,
+        estimatedHours: item.estimatedHours,
+        fixedPrice: item.fixedPrice,
+      }
+    : { pricingType: "NONE", hourlyRate: null, estimatedHours: null, fixedPrice: null };
+}
 
 const boardFetcher = (url: string) =>
   fetch(url).then((r) => (r.ok ? (r.json() as Promise<BoardData>) : null));
@@ -144,7 +167,7 @@ export function AcceptRequestDialog({
   people: givenPeople,
   phases: givenPhases,
   itemId,
-  defaultPricing,
+  item: givenItem,
   onAccepted,
 }: {
   open: boolean;
@@ -154,7 +177,7 @@ export function AcceptRequestDialog({
   title: string;
   clientName?: string | null;
   projectId: string;
-  /** Pricing is the admin's call; staff accept work at no charge. */
+  /** Pricing is the admin's call; staff accept work without touching it. */
   role: WorkRole;
   billingType: ProjectBillingType;
   /** Omit outside a project page: they load from the project's board. */
@@ -162,8 +185,8 @@ export function AcceptRequestDialog({
   phases?: BoardPhase[];
   /** The request's own item, which can't be its own phase. */
   itemId?: string | null;
-  /** A price an admin already put on the request, so accepting doesn't wipe it. */
-  defaultPricing?: ApprovalPricingInput;
+  /** That item as the caller holds it (the board). Omit elsewhere: it loads here. */
+  item?: AcceptBase | null;
   onAccepted?: (choice: AcceptChoice) => void;
 }) {
   const { data } = useSWR(
@@ -172,36 +195,51 @@ export function AcceptRequestDialog({
     boardFetcher,
     { revalidateOnFocus: false },
   );
+  // Outside the board the item comes with its detail, priced for this viewer
+  // (staff get none), so the dialog starts from what accepting keeps.
+  const { data: detail } = useWorkItemDetail(open && !givenItem && itemId ? itemId : null);
+  const current = givenItem ?? detail?.item ?? null;
   const people = givenPeople ?? data?.people ?? [];
   const phases = (givenPhases ?? data?.phases ?? []).filter((p) => p.id !== itemId);
   const loading = !givenPeople && !data;
 
   const [stage, setStage] = useState<StartStage>("TODO");
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
-  const [dueDate, setDueDate] = useState("");
-  const [parentId, setParentId] = useState<string | null>(null);
+  // undefined = not touched here, so not sent: the item keeps its own.
+  const [assigneeId, setAssigneeId] = useState<string | null | undefined>(undefined);
+  const [dueDate, setDueDate] = useState<string | undefined>(undefined);
+  const [parentId, setParentId] = useState<string | null | undefined>(undefined);
   const priced = role === "ADMIN" && billingType !== "CONTRACT";
 
   const form = useForm<ApprovalPricingInput>({
     resolver: zodResolver(approvalPricingSchema),
-    defaultValues: defaultPricing ?? {
-      pricingType: "NONE",
-      hourlyRate: null,
-      estimatedHours: null,
-      fixedPrice: null,
-    },
+    defaultValues: pricingOf(current),
   });
+  // Read while rendering, so the form keeps it current: only a price changed
+  // here is sent.
+  const pricingChanged = form.formState.isDirty;
+  const loaded = detail?.item;
+  useEffect(() => {
+    // The item's own price once it loads, unless the admin already started on one.
+    if (loaded && !pricingChanged) form.reset(pricingOf(loaded));
+  }, [loaded, pricingChanged, form]);
 
-  const assignee = assigneeId ? people.find((p) => p.id === assigneeId) : undefined;
-  const phase = parentId ? phases.find((p) => p.id === parentId) : undefined;
+  const shownAssigneeId = assigneeId === undefined ? (current?.assigneeId ?? null) : assigneeId;
+  const shownDueDate = dueDate ?? current?.dueDate ?? "";
+  const shownParentId = parentId === undefined ? (current?.parentId ?? null) : parentId;
+  const assignee = shownAssigneeId ? people.find((p) => p.id === shownAssigneeId) : undefined;
+  // Someone the list doesn't hold (still loading, or no longer active) still shows by name.
+  const held = current?.assignee;
+  const assigneeName = assignee?.name ?? (held && held.id === shownAssigneeId ? held.name : null);
+  const phase = shownParentId ? phases.find((p) => p.id === shownParentId) : undefined;
 
   async function onSubmit(values: ApprovalPricingInput) {
     const choice: AcceptChoice = {
-      ...(priced ? values : { pricingType: "NONE" }),
       stage,
-      assigneeId,
-      dueDate: dueDate || null,
-      parentId,
+      // Only what was changed here; the item keeps the rest.
+      ...(priced && pricingChanged ? values : {}),
+      ...(assigneeId !== undefined ? { assigneeId } : {}),
+      ...(dueDate !== undefined ? { dueDate: dueDate || null } : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
     };
     const result = await approveTaskRequest(requestId, choice);
     if (!result.ok) return void toast.error(result.error);
@@ -254,7 +292,7 @@ export function AcceptRequestDialog({
                 <DropdownMenuTrigger asChild>
                   <button type="button" className={chip}>
                     {assignee ? <PersonAvatar person={assignee} size={20} /> : <UserRound className="size-3.5" />}
-                    <span className="truncate">{assignee?.name ?? "Assign someone"}</span>
+                    <span className="truncate">{assigneeName ?? "Assign someone"}</span>
                     <ChevronDown className="size-3 shrink-0 opacity-60" />
                   </button>
                 </DropdownMenuTrigger>
@@ -267,7 +305,7 @@ export function AcceptRequestDialog({
                       <span className="text-[10px] text-muted-foreground">{p.role === "CLIENT" ? "Client" : "Team"}</span>
                     </DropdownMenuItem>
                   ))}
-                  {assigneeId && (
+                  {shownAssigneeId && (
                     <DropdownMenuItem onSelect={() => setAssigneeId(null)} className="text-muted-foreground">
                       <X /> Nobody yet
                     </DropdownMenuItem>
@@ -279,9 +317,9 @@ export function AcceptRequestDialog({
                 <span className="sr-only">Due date</span>
                 <input
                   type="date"
-                  value={dueDate}
+                  value={shownDueDate}
                   onChange={(e) => setDueDate(e.target.value)}
-                  className={cn("bg-transparent text-xs outline-none", !dueDate && "text-muted-foreground")}
+                  className={cn("bg-transparent text-xs outline-none", !shownDueDate && "text-muted-foreground")}
                 />
               </label>
 
@@ -300,7 +338,7 @@ export function AcceptRequestDialog({
                         <span className="truncate">{p.title}</span>
                       </DropdownMenuItem>
                     ))}
-                    {parentId && (
+                    {shownParentId && (
                       <DropdownMenuItem onSelect={() => setParentId(null)} className="text-muted-foreground">
                         <X /> Top level
                       </DropdownMenuItem>
@@ -314,8 +352,8 @@ export function AcceptRequestDialog({
               <PricingFields form={form} />
             ) : role !== "ADMIN" ? (
               <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                Accepted as part of the agreed work, at no extra charge. If it should be priced, leave
-                it for an admin.
+                Accepted as part of the agreed work — pricing stays an admin&apos;s call, and any price
+                an admin already set is kept. If it should be priced, leave it for an admin.
               </p>
             ) : null}
 
