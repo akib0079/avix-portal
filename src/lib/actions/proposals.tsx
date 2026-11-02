@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getSession, requireAdmin } from "@/lib/dal/session";
 import { sendPasswordLink } from "@/lib/auth-utils";
-import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { createWithNextNumber } from "@/lib/invoice-number";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { stageWrite } from "@/lib/work-stage";
@@ -364,11 +364,11 @@ export async function createProposal(
   const passwordHash = recipient.account ? null : await newPasswordHash();
   const totals = invoiceTotals({ items: inv.items });
 
-  let created: { proposalId: string; clientId: string; clientCreated: boolean };
-  try {
-    created = await prisma.$transaction(async (tx) => {
+  // One attempt under one number, so createWithNextNumber can try again under
+  // the next one when a number typed by hand elsewhere already holds it.
+  const write = (invoiceNumber: string) =>
+    prisma.$transaction(async (tx) => {
       const client = await findOrCreateClient(tx, contact, passwordHash);
-      const invoiceNumber = customNo || (await nextInvoiceNumber(tx));
       const invoice = await tx.invoice.create({
         data: {
           invoiceNumber,
@@ -419,6 +419,11 @@ export async function createProposal(
       });
       return { proposalId: proposal.id, clientId: client.id, clientCreated: client.created };
     });
+
+  let created: { proposalId: string; clientId: string; clientCreated: boolean };
+  try {
+    // A number typed in the builder is used as it is, as the invoice form does.
+    created = customNo ? await write(customNo) : await createWithNextNumber(prisma, write);
   } catch (err) {
     if (pdf.fileName) await deleteUpload("invoices", pdf.fileName);
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
@@ -1146,13 +1151,13 @@ export async function duplicateProposal(
   const title = `${source.title} (copy)`.slice(0, 160);
   const issueDate = new Date();
 
-  let created: { id: string; clientCreated: boolean };
-  try {
-    created = await prisma.$transaction(async (tx) => {
+  // Numbered as createProposal is: one attempt per number.
+  const write = (invoiceNumber: string) =>
+    prisma.$transaction(async (tx) => {
       const client = await findOrCreateClient(tx, recipient.contact, passwordHash);
       const invoice = await tx.invoice.create({
         data: {
-          invoiceNumber: await nextInvoiceNumber(tx),
+          invoiceNumber,
           clientId: client.id,
           status: "DRAFT",
           amount: totals.total,
@@ -1208,6 +1213,10 @@ export async function duplicateProposal(
       });
       return { id: proposal.id, clientCreated: client.created };
     });
+
+  let created: { id: string; clientCreated: boolean };
+  try {
+    created = await createWithNextNumber(prisma, write);
   } catch (err) {
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
     throw err;
@@ -1443,9 +1452,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
         signatureId: string;
       };
 
-  let outcome: Outcome;
-  try {
-    outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
+  // The whole hand-off is one attempt; with a deposit to create it is made
+  // under one number, so a number typed by hand elsewhere can be stepped past
+  // by trying again (the failed attempt rolled back its claim too).
+  const handoff = (depositNumber: string | null) =>
+    prisma.$transaction(async (tx): Promise<Outcome> => {
       const claimed = await tx.proposal.updateMany({
         where: claimWhere,
         data: {
@@ -1521,11 +1532,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
             data: { status: "ASSIGNED" },
           });
         }
-      } else if (deposit) {
+      } else if (deposit && depositNumber) {
         const label = `${proposal.title} — ${deposit.percent}% deposit`;
         const invoice = await tx.invoice.create({
           data: {
-            invoiceNumber: await nextInvoiceNumber(tx),
+            invoiceNumber: depositNumber,
             clientId: client.id,
             projectId: project.id,
             amount: deposit.amount,
@@ -1587,6 +1598,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
         signatureId: signature.id,
       };
     });
+
+  let outcome: Outcome;
+  try {
+    // Attaching the draft invoice uses no number at all.
+    outcome = deposit ? await createWithNextNumber(prisma, handoff) : await handoff(null);
   } catch (err) {
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
     throw err;
