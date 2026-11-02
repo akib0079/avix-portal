@@ -457,8 +457,9 @@ export function WorkProvider({
   );
 
   // Structural writes revalidate the page, and the server's render is the
-  // truth for whatever moved with them (a phase's work, renumbered plans):
-  // once they land, ask for the current board.
+  // truth for whatever moved with them (a phase's work, renumbered plans).
+  // The action's response carries that render and the effect above takes it
+  // in, so there's no need to ask for the board again.
   const archive = useCallback(
     async (id: string) => {
       const before = itemsRef.current;
@@ -476,10 +477,9 @@ export function WorkProvider({
         return false;
       }
       toast.success("Archived — it's under “Show archived” with its history.");
-      refresh();
       return true;
     },
-    [track, refresh, open],
+    [track, open],
   );
 
   const restore = useCallback(
@@ -491,10 +491,9 @@ export function WorkProvider({
       }
       upsert(result.data.item);
       toast.success("Restored.");
-      refresh();
       return result.data.item;
     },
-    [track, upsert, refresh],
+    [track, upsert],
   );
 
   const remove = useCallback(
@@ -509,10 +508,9 @@ export function WorkProvider({
         return false;
       }
       toast.success(result.data.archived ? "Archived — its history is kept." : "Deleted.");
-      refresh();
       return true;
     },
-    [track, drop, refresh, open],
+    [track, drop, open],
   );
 
   const withdraw = useCallback(
@@ -544,7 +542,7 @@ export function WorkProvider({
     [],
   );
 
-  /** Paints an accepted request where the team put it, until the poll brings the row. */
+  /** Paints an accepted request where the team put it, until the page's fresh render brings the row. */
   const accepted = useCallback(
     (id: string, choice: AcceptChoice) => {
       const item = itemsRef.current.find((c) => c.id === id);
@@ -556,9 +554,8 @@ export function WorkProvider({
           priced: viewer.role === "ADMIN",
         }),
       );
-      refresh();
     },
-    [people, viewer.role, upsert, refresh],
+    [people, viewer.role, upsert],
   );
 
   const value = useMemo<WorkStore>(
@@ -656,7 +653,6 @@ export function WorkProvider({
           milestone={loggingItem}
           open
           onOpenChange={(o) => !o && setLogging(null)}
-          onChanged={refresh}
         />
       )}
 
@@ -711,7 +707,6 @@ export function WorkProvider({
           onDeclined={() => {
             drop([decliningItem.id]);
             if (openId === decliningItem.id) open(null);
-            refresh();
           }}
         />
       )}
