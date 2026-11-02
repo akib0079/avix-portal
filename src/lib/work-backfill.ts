@@ -120,6 +120,12 @@ WHERE r."id" = m."sourceTaskRequestId" AND r."status" = 'REJECTED'
   //    client's addition and step 5 write Requested, both with a request.
   `UPDATE "milestones" SET "archivedAt" = now() AT TIME ZONE 'UTC'
 WHERE "stage" = 'REQUESTED' AND "sourceTaskRequestId" IS NULL AND "archivedAt" IS NULL`,
+
+  // 10. The client approved work in Review on the old code, which only
+  //     stamped the approval. Nothing new leaves an approval on Review work
+  //     (sending it for review clears one), so this only finds those.
+  `UPDATE "milestones" SET "stage" = 'DONE'
+WHERE "stage" = 'REVIEW' AND "clientApprovedAt" IS NOT NULL`,
 ];
 
 type Db = {

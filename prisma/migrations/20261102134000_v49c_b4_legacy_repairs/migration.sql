@@ -11,3 +11,6 @@ WHERE r."id" = m."sourceTaskRequestId" AND r."status" = 'REJECTED'
 
 UPDATE "milestones" SET "archivedAt" = now() AT TIME ZONE 'UTC'
 WHERE "stage" = 'REQUESTED' AND "sourceTaskRequestId" IS NULL AND "archivedAt" IS NULL;
+
+UPDATE "milestones" SET "stage" = 'DONE'
+WHERE "stage" = 'REVIEW' AND "clientApprovedAt" IS NOT NULL;
