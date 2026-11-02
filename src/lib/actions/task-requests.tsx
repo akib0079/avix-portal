@@ -30,6 +30,7 @@ import {
   createClientAddition,
   displayName,
   later,
+  NO_PRICING,
   placeNew,
   pricingColumns,
   richTextExcerpt,
@@ -46,8 +47,8 @@ import {
  * note, in their history. A live item is Requested exactly while its request
  * is PENDING.
  *
- * ADMIN decides anything. STAFF are money-blind, so they may accept work only
- * at no charge, and decline.
+ * ADMIN decides anything. STAFF are money-blind: they may accept work but
+ * never price it (a price an admin already set stays), and decline.
  */
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -134,13 +135,24 @@ const requestInclude = {
   },
 } satisfies Prisma.TaskRequestInclude;
 
+/** What an accept hands back: the item, with the price it ended up with (kept or chosen). */
+const acceptedSelect = {
+  id: true,
+  title: true,
+  pricingType: true,
+  hourlyRate: true,
+  estimatedHours: true,
+  fixedPrice: true,
+} satisfies Prisma.MilestoneSelect;
+
 function isNotFound(err: unknown) {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025";
 }
 
 /**
  * Accept a request: the waiting item moves into the plan in place — its
- * stage (To do unless told otherwise), price, assignee, due date and phase —
+ * stage (To do unless told otherwise), and whatever the accepter changed of
+ * its price, assignee, due date and phase; what they left alone it keeps —
  * and the request is marked approved, in one write. A request from before v49
  * with no item gets one now.
  */
@@ -155,8 +167,8 @@ export async function approveTaskRequest(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid pricing" };
   }
   const d = parsed.data;
-  if (role !== "ADMIN" && d.pricingType !== "NONE") {
-    return { ok: false, error: "Only an admin can put a price on it — accept it as no charge, or leave it for an admin." };
+  if (role !== "ADMIN" && d.pricingType && d.pricingType !== "NONE") {
+    return { ok: false, error: "Only an admin can put a price on it — accept it without one, or leave it for an admin." };
   }
   const dueDate = parseDay(d.dueDate);
   if (d.dueDate && !dueDate) return { ok: false, error: "Pick a valid date" };
@@ -180,17 +192,20 @@ export async function approveTaskRequest(
   if (!refs.ok) return refs;
 
   const now = new Date();
-  const pricing = pricingColumns(d);
+  // Only an admin's own choice changes the price. Without one — always for
+  // staff, who are money-blind — the item keeps the price it has.
+  const pricing =
+    role === "ADMIN" && d.pricingType ? pricingColumns({ ...d, pricingType: d.pricingType }) : null;
   const placement = {
     ...stageWrite(d.stage, item, now),
     boardPosition: place.boardPosition,
     archivedAt: null,
-    ...pricing,
+    ...(pricing ?? {}),
     ...(d.assigneeId !== undefined ? { assigneeId: d.assigneeId } : {}),
     ...(dueDate !== undefined ? { dueDate } : {}),
     ...(d.parentId !== undefined ? { parentId: d.parentId } : {}),
   };
-  let accepted: { id: string; title: string };
+  let accepted: Prisma.MilestoneGetPayload<{ select: typeof acceptedSelect }>;
   try {
     const updated = await prisma.taskRequest.update({
       // Still waiting: two people deciding at once must not both win.
@@ -203,6 +218,7 @@ export async function approveTaskRequest(
           : {
               create: {
                 ...placement,
+                ...(pricing ?? NO_PRICING),
                 projectId: request.projectId,
                 title: request.title,
                 description: request.description as Prisma.InputJsonValue,
@@ -212,7 +228,7 @@ export async function approveTaskRequest(
               },
             },
       },
-      select: { milestone: { select: { id: true, title: true } } },
+      select: { milestone: { select: acceptedSelect } },
     });
     if (!updated.milestone) throw new Error("accepted request has no work item");
     accepted = updated.milestone;
@@ -221,8 +237,14 @@ export async function approveTaskRequest(
     throw err;
   }
 
+  const num = (v: Prisma.Decimal | null) => (v == null ? null : Number(v));
   const pricingLine = canSeePricing("CLIENT", request.project.billingType)
-    ? formatPricing(pricing)
+    ? formatPricing({
+        pricingType: accepted.pricingType,
+        hourlyRate: num(accepted.hourlyRate),
+        estimatedHours: num(accepted.estimatedHours),
+        fixedPrice: num(accepted.fixedPrice),
+      })
     : null;
   const actor = displayName(user);
   later(async () => {

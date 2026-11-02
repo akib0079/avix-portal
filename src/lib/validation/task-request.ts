@@ -14,7 +14,7 @@ export const taskRequestSchema = z.object({
 export type TaskRequestInput = z.infer<typeof taskRequestSchema>;
 
 type PricingValues = {
-  pricingType: "NONE" | "HOURLY" | "FIXED";
+  pricingType?: "NONE" | "HOURLY" | "FIXED";
   hourlyRate?: number | null;
   fixedPrice?: number | null;
 };
@@ -34,13 +34,15 @@ export const approvalPricingSchema = z.object(pricingFields).superRefine(checkPr
 export type ApprovalPricingInput = z.infer<typeof approvalPricingSchema>;
 
 /**
- * Accepting a client's request: its price (ADMIN only — STAFF may accept work
- * only as no charge), where it starts, and optionally who does it, by when,
- * and under which phase. Everything but the price may be left out.
+ * Accepting a client's request: where it starts, and optionally who does it,
+ * by when, under which phase and (ADMIN only) at what price. Whatever is left
+ * out, the item keeps: the person the client pinned, the date and phase they
+ * picked, a price an admin already set.
  */
 export const acceptRequestSchema = z
   .object({
     ...pricingFields,
+    pricingType: pricingFields.pricingType.optional(),
     stage: z.enum(["BACKLOG", "TODO", "IN_PROGRESS"]).default("TODO"),
     assigneeId: z.string().nullable().optional(),
     dueDate: z
