@@ -331,7 +331,7 @@ export function ProposalFormDialog({
       const locked = result.data?.invoiceLocked;
       if (locked) {
         toast.success("Proposal updated.", {
-          description: `Invoice ${locked} was already sent, so it wasn't changed. Edit it from the invoice page.`,
+          description: `Invoice ${locked.invoiceNumber} wasn't changed: ${locked.reason}. Edit it from the invoice page.`,
         });
       } else {
         toast.success("Proposal updated.");

@@ -6,6 +6,7 @@ import {
   dueProposalReminder,
   firstInvoicePromise,
   formatTotals,
+  invoiceKeptReason,
   proposalRemovalMode,
   proposalRemovalPlan,
   timeAgo,
@@ -14,7 +15,15 @@ import {
 } from "./proposal-rules";
 
 const DAY = 24 * 60 * 60 * 1000;
-const paperwork = { status: "ASSIGNED" as const, sentAt: null, amountPaid: 0, paymentCount: 0 };
+const paperwork = {
+  status: "ASSIGNED" as const,
+  sentAt: null,
+  amountPaid: 0,
+  paymentCount: 0,
+  paymentClaimedAt: null,
+  creditNoteCount: 0,
+  copiedByPlan: false,
+};
 
 test("only a draft that was never sent is deleted; everything else is archived", () => {
   assert.equal(proposalRemovalMode({ status: "DRAFT", sentAt: null }), "delete");
@@ -34,6 +43,29 @@ test("the draft invoice goes only while it is still paperwork", () => {
   assert.equal(draftInvoiceRemovable({ ...paperwork, amountPaid: 10 }), false);
   assert.equal(draftInvoiceRemovable({ ...paperwork, paymentCount: 1 }), false);
   assert.equal(draftInvoiceRemovable(null), false);
+});
+
+test("deleteInvoice's line holds: a claimed, credited or plan-copied invoice stays", () => {
+  const claimed = { ...paperwork, paymentClaimedAt: "2026-11-01T10:00:00Z" };
+  const credited = { ...paperwork, creditNoteCount: 1 };
+  const copied = { ...paperwork, copiedByPlan: true };
+  for (const invoice of [claimed, credited, copied]) {
+    assert.equal(draftInvoiceRemovable(invoice), false);
+    assert.deepEqual(proposalRemovalPlan({ status: "DRAFT", sentAt: null }, invoice), {
+      mode: "delete",
+      invoice: "keep",
+    });
+    assert.deepEqual(proposalRemovalPlan({ status: "SENT", sentAt: new Date() }, invoice), {
+      mode: "archive",
+      invoice: "keep",
+    });
+  }
+  assert.equal(invoiceKeptReason(claimed), "the client reported paying it");
+  assert.equal(invoiceKeptReason(credited), "credit notes were issued against it");
+  assert.equal(invoiceKeptReason(copied), "a recurring plan copies it");
+  assert.equal(invoiceKeptReason({ ...copied, sentAt: new Date() }), "it has already been sent");
+  assert.equal(invoiceKeptReason({ ...paperwork, amountPaid: 5 }), "money has been recorded against it");
+  assert.equal(invoiceKeptReason({ ...paperwork, status: "CANCELLED" }), "it is cancelled");
 });
 
 test("the removal plan: drafts take a safe invoice along, archives only offer it, accepted keeps it", () => {

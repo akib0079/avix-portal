@@ -3,8 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 /**
  * What deleting a proposal tidies up after it: the draft invoice and the
- * silent client account it was provisioned with. Shared by deleteProposal,
- * the builder's recipient move and deleteLead, and kept out of the "use
+ * silent client account it was provisioned with. Kept out of the "use
  * server" action files on purpose: an export there is a server action anyone
  * can call, and these take no session of their own.
  */
@@ -52,18 +51,40 @@ export async function removeSilentClient(tx: Tx, userId: string, proposalId: str
 
 /**
  * Deletes the proposal's invoice only while it is still paperwork — the
- * statement form of draftInvoiceRemovable() in proposal-rules.ts, so a send or
- * a payment that lands between the dialog and the click still wins.
+ * statement form of draftInvoiceRemovable() in proposal-rules.ts, and the
+ * line deleteInvoice draws, so a send, a payment, a credit note or the
+ * client's "I've paid" that lands between the dialog and the click still wins.
+ *
+ * A recurring plan this invoice alone started goes with it, as in
+ * deleteInvoice: left behind, it would go on billing a prospect who never
+ * accepted anything. A plan with invoices of its own still copies it, so then
+ * the invoice stays. `plans` is how many plans went.
  */
-export async function removeDraftInvoice(tx: Tx, invoiceId: string): Promise<boolean> {
-  const removed = await tx.invoice.deleteMany({
+export async function removeDraftInvoice(
+  tx: Tx,
+  invoiceId: string,
+): Promise<{ removed: boolean; plans: number }> {
+  const paperwork = {
+    status: { in: ["DRAFT", "ASSIGNED"] },
+    sentAt: null,
+    paymentClaimedAt: null,
+    amountPaid: 0,
+    payments: { none: {} },
+    creditNotes: { none: {} },
+  } satisfies Prisma.InvoiceWhereInput;
+  const plans = await tx.retainer.deleteMany({
     where: {
-      id: invoiceId,
-      status: { in: ["DRAFT", "ASSIGNED"] },
-      sentAt: null,
-      amountPaid: 0,
-      payments: { none: {} },
+      templateInvoiceId: invoiceId,
+      templateInvoice: paperwork,
+      invoices: { every: { id: invoiceId } },
     },
   });
-  return removed.count > 0;
+  const removed = await tx.invoice.deleteMany({
+    where: { id: invoiceId, ...paperwork, retainerTemplateFor: { none: {} } },
+  });
+  // A plan went but its template stayed: the invoice changed between the two.
+  if (plans.count > 0 && removed.count === 0) {
+    throw new ActionAbort("This invoice changed a moment ago. Refresh and try again.");
+  }
+  return { removed: removed.count > 0, plans: plans.count };
 }

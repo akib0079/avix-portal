@@ -33,6 +33,7 @@ import { requestMeta } from "@/lib/request-meta";
 import {
   draftInvoiceRemovable,
   firstInvoicePromise,
+  invoiceKeptReason,
   proposalRemovalPlan,
 } from "@/lib/proposal-rules";
 import { ActionAbort, removeDraftInvoice, removeSilentClient } from "@/lib/proposal-cleanup";
@@ -444,7 +445,7 @@ export async function createProposal(
 export async function updateProposal(
   id: string,
   formData: FormData,
-): Promise<ActionResult<{ invoiceLocked: string | null }>> {
+): Promise<ActionResult<{ invoiceLocked: { invoiceNumber: string; reason: string } | null }>> {
   await requireAdmin();
   const parsed = parsePayload(formData);
   if (!parsed.success) {
@@ -505,7 +506,7 @@ export async function updateProposal(
       ? null
       : existing.invoicePdfOriginalName;
 
-  let outcome: { moved: boolean; invoiceLocked: string | null };
+  let outcome: { moved: boolean; invoiceLocked: { invoiceNumber: string; reason: string } | null };
   try {
     outcome = await prisma.$transaction(async (tx) => {
       const invoice = existing.convertedInvoiceId
@@ -516,36 +517,56 @@ export async function updateProposal(
               invoiceNumber: true,
               status: true,
               sentAt: true,
+              paymentClaimedAt: true,
               amount: true,
               amountPaid: true,
               amountUsd: true,
               currency: true,
               discount: true,
               taxRate: true,
-              _count: { select: { payments: true } },
+              retainerId: true,
+              retainer: { select: { title: true } },
+              retainerTemplateFor: {
+                select: { id: true, title: true, _count: { select: { invoices: true } } },
+              },
+              _count: { select: { payments: true, creditNotes: true } },
             },
           })
         : null;
 
       // Still paperwork? Once the invoice has been sent from the invoice
-      // page (or paid against), the builder must not rewrite it.
-      const invoiceIsPaperwork =
-        invoice != null &&
-        draftInvoiceRemovable({
-          status: invoice.status,
-          sentAt: invoice.sentAt,
-          amountPaid: Number(invoice.amountPaid),
-          paymentCount: invoice._count.payments,
-        });
+      // page, paid or credited, or a running plan copies it, the builder
+      // must not rewrite it.
+      const facts = invoice && {
+        status: invoice.status,
+        sentAt: invoice.sentAt,
+        paymentClaimedAt: invoice.paymentClaimedAt,
+        amountPaid: Number(invoice.amountPaid),
+        paymentCount: invoice._count.payments,
+        creditNoteCount: invoice._count.creditNotes,
+        // deleteInvoice's rule: a plan with invoices besides this one keeps it.
+        copiedByPlan: invoice.retainerTemplateFor.some(
+          (plan) => plan._count.invoices > (invoice.retainerId === plan.id ? 1 : 0),
+        ),
+      };
+      const invoiceIsPaperwork = facts != null && draftInvoiceRemovable(facts);
 
       let clientId = existing.convertedClientId;
       let createdClientAccount = existing.createdClientAccount;
       if (recipientMoved) {
         // An invoice the old address has already received can't quietly
         // change hands.
-        if (invoice && !invoiceIsPaperwork) {
+        if (invoice && facts && !invoiceIsPaperwork) {
           throw new ActionAbort(
-            `Invoice ${invoice.invoiceNumber} has already gone to the old recipient, so the email can't change here. Start a new proposal for the new address instead.`,
+            `Invoice ${invoice.invoiceNumber} stays with the old recipient (${invoiceKeptReason(facts)}), so the email can't change here. Start a new proposal for the new address instead.`,
+          );
+        }
+        // A plan bills one client, so its invoices and its template stay
+        // with it, as updateInvoice holds them.
+        const plan = invoice?.retainer ?? invoice?.retainerTemplateFor[0];
+        if (invoice && plan) {
+          throw new ActionAbort(
+            `Invoice ${invoice.invoiceNumber} is part of the recurring plan “${plan.title}”, which bills the old recipient, so the email can't change here. Start a new proposal for the new address instead.`,
           );
         }
         const next = await findOrCreateClient(tx, contact, passwordHash);
@@ -631,7 +652,10 @@ export async function updateProposal(
       }
       return {
         moved: recipientMoved,
-        invoiceLocked: invoice && !invoiceIsPaperwork ? invoice.invoiceNumber : null,
+        invoiceLocked:
+          invoice && facts && !invoiceIsPaperwork
+            ? { invoiceNumber: invoice.invoiceNumber, reason: invoiceKeptReason(facts) }
+            : null,
       };
     });
   } catch (err) {
@@ -696,7 +720,7 @@ export async function deleteProposal(
   const plan = proposalRemovalPlan(p, invoiceFacts(links.invoice));
 
   if (plan.mode === "delete") {
-    let result: { invoiceRemoved: boolean; clientRemoved: boolean; dropFile: boolean };
+    let result: { invoiceRemoved: boolean; plansRemoved: number; clientRemoved: boolean; dropFile: boolean };
     try {
       result = await prisma.$transaction(async (tx) => {
         // Only while it is still an unsent draft: a send that landed after
@@ -707,10 +731,11 @@ export async function deleteProposal(
         if (gone.count === 0) {
           throw new ActionAbort("This proposal was just sent, so it can only be archived now.");
         }
-        const invoiceRemoved =
+        // Before the account: a plan the invoice started makes it an owner.
+        const invoice =
           plan.invoice === "remove" && p.convertedInvoiceId
             ? await removeDraftInvoice(tx, p.convertedInvoiceId)
-            : false;
+            : { removed: false, plans: 0 };
         const clientRemoved =
           p.createdClientAccount && p.convertedClientId
             ? await removeSilentClient(tx, p.convertedClientId, id)
@@ -720,7 +745,12 @@ export async function deleteProposal(
         const stillUsed = p.invoicePdfPath
           ? (await tx.invoice.count({ where: { pdfPath: p.invoicePdfPath } })) > 0
           : true;
-        return { invoiceRemoved, clientRemoved, dropFile: !stillUsed };
+        return {
+          invoiceRemoved: invoice.removed,
+          plansRemoved: invoice.plans,
+          clientRemoved,
+          dropFile: !stillUsed,
+        };
       });
     } catch (err) {
       if (err instanceof ActionAbort) return { ok: false, error: err.message };
@@ -742,6 +772,7 @@ export async function deleteProposal(
     );
     revalidateProposalViews(p.leadId);
     if (result.invoiceRemoved) revalidatePath("/admin/invoices");
+    if (result.plansRemoved > 0) revalidatePath("/admin/retainers");
     if (result.clientRemoved) revalidatePath("/admin/clients");
     return {
       ok: true,
@@ -750,10 +781,13 @@ export async function deleteProposal(
   }
 
   const removeInvoice = opts.removeInvoice === true && plan.invoice === "offer" && !!p.convertedInvoiceId;
-  let invoiceRemoved = false;
+  let removal = { removed: false, plans: 0 };
   try {
-    invoiceRemoved = await prisma.$transaction(async (tx) => {
-      const removed = removeInvoice ? await removeDraftInvoice(tx, p.convertedInvoiceId!) : false;
+    removal = await prisma.$transaction(async (tx) => {
+      const invoice = removeInvoice
+        ? await removeDraftInvoice(tx, p.convertedInvoiceId!)
+        : { removed: false, plans: 0 };
+      const removed = invoice.removed;
       // Bumping the link version withdraws every link already sent; the
       // public page recognises them and says the proposal was withdrawn. An
       // accepted proposal only leaves the board: it is the client's
@@ -778,12 +812,13 @@ export async function deleteProposal(
           ...(removed && links.invoice ? { meta: { removedInvoice: links.invoice.invoiceNumber } } : {}),
         },
       });
-      return removed;
+      return invoice;
     });
   } catch (err) {
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
     throw err;
   }
+  const invoiceRemoved = removal.removed;
 
   after(() =>
     logActivity({
@@ -800,6 +835,7 @@ export async function deleteProposal(
   );
   revalidateProposalViews(p.leadId);
   if (invoiceRemoved) revalidatePath("/admin/invoices");
+  if (removal.plans > 0) revalidatePath("/admin/retainers");
   return { ok: true, data: { mode: "archived", invoiceRemoved, clientRemoved: false } };
 }
 

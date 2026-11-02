@@ -149,6 +149,10 @@ export type ProposalInvoiceSummary = {
   sentAt: string | null;
   amountPaid: number;
   paymentCount: number;
+  paymentClaimedAt: string | null;
+  creditNoteCount: number;
+  /** A recurring plan with invoices of its own copies it (see DraftInvoiceFacts). */
+  copiedByPlan: boolean;
 };
 
 /** One proposal, opened: the detail sheet and the delete / accept dialogs. */
@@ -472,6 +476,9 @@ export async function proposalLinks(id: string) {
       invoiceSentAt: Date | null;
       invoiceAmountPaid: Prisma.Decimal | null;
       invoicePaymentCount: number | null;
+      invoicePaymentClaimedAt: Date | null;
+      invoiceCreditNoteCount: number | null;
+      invoiceCopiedByPlan: boolean | null;
       projectName: string | null;
       clientId: string | null;
       clientEmail: string | null;
@@ -489,6 +496,14 @@ export async function proposalLinks(id: string) {
       i."sentAt" AS "invoiceSentAt",
       i."amountPaid" AS "invoiceAmountPaid",
       (SELECT COUNT(*)::int FROM invoice_payments ip WHERE ip."invoiceId" = i.id) AS "invoicePaymentCount",
+      i."paymentClaimedAt" AS "invoicePaymentClaimedAt",
+      (SELECT COUNT(*)::int FROM invoices cn WHERE cn."creditNoteForId" = i.id) AS "invoiceCreditNoteCount",
+      -- The rule deleteInvoice follows: a plan with invoices besides this one keeps it.
+      EXISTS (
+        SELECT 1 FROM retainers r
+        WHERE r."templateInvoiceId" = i.id
+          AND EXISTS (SELECT 1 FROM invoices ri WHERE ri."retainerId" = r.id AND ri.id <> i.id)
+      ) AS "invoiceCopiedByPlan",
       pr."projectName" AS "projectName",
       u.id AS "clientId",
       u.email AS "clientEmail",
@@ -514,6 +529,9 @@ export async function proposalLinks(id: string) {
           sentAt: row.invoiceSentAt?.toISOString() ?? null,
           amountPaid: Number(row.invoiceAmountPaid ?? 0),
           paymentCount: row.invoicePaymentCount ?? 0,
+          paymentClaimedAt: row.invoicePaymentClaimedAt?.toISOString() ?? null,
+          creditNoteCount: row.invoiceCreditNoteCount ?? 0,
+          copiedByPlan: row.invoiceCopiedByPlan ?? false,
         }
       : null;
   const client = row.clientId
@@ -537,6 +555,9 @@ export function invoiceFacts(invoice: ProposalInvoiceSummary | null): DraftInvoi
     sentAt: invoice.sentAt,
     amountPaid: invoice.amountPaid,
     paymentCount: invoice.paymentCount,
+    paymentClaimedAt: invoice.paymentClaimedAt,
+    creditNoteCount: invoice.creditNoteCount,
+    copiedByPlan: invoice.copiedByPlan,
   };
 }
 

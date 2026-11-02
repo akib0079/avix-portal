@@ -1,12 +1,13 @@
 import type { InvoiceStatus, ProposalStatus } from "@prisma/client";
 import { formatCurrency, sumByCurrency } from "./currency";
+import { invoiceStatusLabels } from "./format";
 
 /**
  * The decisions behind the proposal flow that don't need a database: what
  * "Delete" does, when the draft invoice may go with it, what the client is
- * promised as a first invoice, when a reminder is due, and how money adds up
- * across currencies. Dependency-free, so the server, the board and the tests
- * all read the same rules.
+ * promised as a first invoice, what acceptance sets up, when a reminder is
+ * due, and how money adds up across currencies. Dependency-free, so the
+ * server, the board and the tests all read the same rules.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,13 +42,23 @@ export type DraftInvoiceFacts = {
   sentAt: DateLike;
   amountPaid: number;
   paymentCount: number;
+  /** The client reported paying it. */
+  paymentClaimedAt: DateLike;
+  /** Credit notes issued against it. */
+  creditNoteCount: number;
+  /**
+   * A recurring plan with invoices of its own copies it each period. (A plan
+   * this invoice alone started doesn't count: it goes with the invoice.)
+   */
+  copiedByPlan: boolean;
 };
 
 /**
- * The proposal's invoice may only be removed while it is still paperwork:
- * never sent, nothing paid, no payment rows. Once it has reached the client or
- * money has moved against it, it is a business record with its own delete
- * flow. deleteProposal repeats this as a conditional delete inside its
+ * The proposal's invoice may only be removed (or rewritten by the builder)
+ * while it is still paperwork: never sent, nothing paid or reported paid, no
+ * credit notes, and no running plan copying it. Past that it is a business
+ * record with its own delete flow, the same line deleteInvoice draws.
+ * removeDraftInvoice repeats this as a conditional delete inside the caller's
  * transaction, so a send or payment that lands meanwhile still wins.
  */
 export function draftInvoiceRemovable(invoice: DraftInvoiceFacts | null): boolean {
@@ -55,9 +66,22 @@ export function draftInvoiceRemovable(invoice: DraftInvoiceFacts | null): boolea
   return (
     (invoice.status === "DRAFT" || invoice.status === "ASSIGNED") &&
     ms(invoice.sentAt) == null &&
+    ms(invoice.paymentClaimedAt) == null &&
     invoice.amountPaid === 0 &&
-    invoice.paymentCount === 0
+    invoice.paymentCount === 0 &&
+    invoice.creditNoteCount === 0 &&
+    !invoice.copiedByPlan
   );
+}
+
+/** Why the invoice stays, in the words of draftInvoiceRemovable: "Invoice INV-041 stays: …". */
+export function invoiceKeptReason(invoice: DraftInvoiceFacts): string {
+  if (ms(invoice.sentAt) != null) return "it has already been sent";
+  if (invoice.amountPaid > 0 || invoice.paymentCount > 0) return "money has been recorded against it";
+  if (ms(invoice.paymentClaimedAt) != null) return "the client reported paying it";
+  if (invoice.creditNoteCount > 0) return "credit notes were issued against it";
+  if (invoice.copiedByPlan) return "a recurring plan copies it";
+  return `it is ${invoiceStatusLabels[invoice.status].toLowerCase()}`;
 }
 
 export type ProposalRemovalPlan = {
