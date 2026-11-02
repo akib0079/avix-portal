@@ -213,7 +213,8 @@ export function AcceptRequestDialog({
 
   const form = useForm<ApprovalPricingInput>({
     resolver: zodResolver(approvalPricingSchema),
-    defaultValues: pricingOf(current),
+    // Only a form that shows the price starts from it; any other stays empty, unsent.
+    defaultValues: pricingOf(priced ? current : null),
   });
   // Read while rendering, so the form keeps it current: only a price changed
   // here is sent.
@@ -221,8 +222,8 @@ export function AcceptRequestDialog({
   const loaded = detail?.item;
   useEffect(() => {
     // The item's own price once it loads, unless the admin already started on one.
-    if (loaded && !pricingChanged) form.reset(pricingOf(loaded));
-  }, [loaded, pricingChanged, form]);
+    if (priced && loaded && !pricingChanged) form.reset(pricingOf(loaded));
+  }, [priced, loaded, pricingChanged, form]);
 
   const shownAssigneeId = assigneeId === undefined ? (current?.assigneeId ?? null) : assigneeId;
   const shownDueDate = dueDate ?? current?.dueDate ?? "";
