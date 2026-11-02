@@ -875,6 +875,13 @@ function TitleField({
   onSave: (title: string) => Promise<boolean | undefined>;
 }) {
   const [draft, setDraft] = useState(value);
+  // The title the draft was taken from. Untouched, the draft follows the live
+  // title (a teammate's rename); once typed in, it's the viewer's own.
+  const [base, setBase] = useState(value);
+  if (value !== base) {
+    setBase(value);
+    if (draft === base) setDraft(value);
+  }
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -892,10 +899,12 @@ function TitleField({
     );
   }
 
+  // Only a real edit saves: a focus and blur with nothing typed must not
+  // write back a title someone else has since changed.
   function commit() {
     const title = draft.trim();
-    if (!title) return setDraft(value);
-    if (title !== value) void onSave(title.slice(0, 200));
+    if (!title || title === base.trim() || title === value) return setDraft(value);
+    void onSave(title.slice(0, 200));
   }
 
   return (
