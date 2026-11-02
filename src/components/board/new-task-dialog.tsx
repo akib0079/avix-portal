@@ -48,8 +48,9 @@ import {
   X,
 } from "lucide-react";
 
-const boardFetcher = (url: string) =>
-  fetch(url).then((r) => (r.ok ? (r.json() as Promise<BoardData>) : null));
+/** The board route's ?for= answer: just what the pickers need. */
+const pickersFetcher = (url: string) =>
+  fetch(url).then((r) => (r.ok ? (r.json() as Promise<Pick<BoardData, "people" | "phases">>) : null));
 
 /**
  * The full "new item" form: a title, the details, where it starts, which
@@ -92,7 +93,7 @@ export function NewTaskDialog({
   const { data } = useSWR(
     // Its own key: the board stores a timestamped wrapper under the plain URL.
     givenPeople ? null : `/api/projects/${projectId}/board?for=new-task`,
-    boardFetcher,
+    pickersFetcher,
     { revalidateOnFocus: false },
   );
   const people = givenPeople ?? data?.people ?? [];

@@ -152,8 +152,9 @@ function pricingOf(item: AcceptBase | null | undefined): ApprovalPricingInput {
     : { pricingType: "NONE", hourlyRate: null, estimatedHours: null, fixedPrice: null };
 }
 
-const boardFetcher = (url: string) =>
-  fetch(url).then((r) => (r.ok ? (r.json() as Promise<BoardData>) : null));
+/** The board route's ?for= answer: just what the pickers need. */
+const pickersFetcher = (url: string) =>
+  fetch(url).then((r) => (r.ok ? (r.json() as Promise<Pick<BoardData, "people" | "phases">>) : null));
 
 export function AcceptRequestDialog({
   open,
@@ -192,7 +193,7 @@ export function AcceptRequestDialog({
   const { data } = useSWR(
     // Its own key: the board stores a timestamped wrapper under the plain URL.
     open && !givenPeople ? `/api/projects/${projectId}/board?for=accept` : null,
-    boardFetcher,
+    pickersFetcher,
     { revalidateOnFocus: false },
   );
   // Outside the board the item comes with its detail, priced for this viewer
