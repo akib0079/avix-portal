@@ -1,5 +1,5 @@
 import type { PricingType, ProjectTaskStatus } from "@prisma/client";
-import type { BoardPerson, WorkItem } from "@/lib/board";
+import type { BoardPerson, WorkBilling, WorkItem } from "@/lib/board";
 import { stageToStatus } from "@/lib/work-stage";
 
 /**
@@ -7,6 +7,22 @@ import { stageToStatus } from "@/lib/work-stage";
  * the items by, between what it paints and what the server sends back. Pure
  * and dependency-free (types only), so they're tested once (work-sync.test.ts).
  */
+
+/**
+ * Whether two copies of an item's billing draw the same: the same invoices,
+ * under the same numbers, in the same status. An invoice can be sent,
+ * renumbered or cancelled without the item itself changing, so counting the
+ * entries isn't enough. Order doesn't matter (they're read unordered).
+ */
+export function sameBilling(a: readonly WorkBilling[], b: readonly WorkBilling[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (list: readonly WorkBilling[]) =>
+    list
+      .map((x) => `${x.invoiceId}:${x.invoiceNumber}:${x.status}`)
+      .sort()
+      .join("|");
+  return a.length === 0 || key(a) === key(b);
+}
 
 /**
  * What accepting a request changed (AcceptChoice in work-dialogs.tsx). Only

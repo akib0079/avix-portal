@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ProjectTaskStatus } from "@prisma/client";
 import type { BoardPerson, WorkItem } from "./board";
 import { stageToStatus } from "./work-stage";
-import { acceptedItem } from "./work-sync";
+import { acceptedItem, sameBilling } from "./work-sync";
 
 let n = 0;
 function item(over: Partial<WorkItem> = {}): WorkItem {
@@ -120,4 +120,19 @@ test("a new price replaces the old one whole; staff never paint a price", () => 
   );
   assert.equal(byStaff.pricingType, "NONE");
   assert.equal(byStaff.fixedPrice, null);
+});
+
+test("billing is the same only when the invoices, numbers and statuses all are", () => {
+  const draft = { invoiceId: "inv1", invoiceNumber: "INV-0012", status: "DRAFT" as const };
+  const other = { invoiceId: "inv2", invoiceNumber: "INV-0013", status: "PAID" as const };
+  assert.equal(sameBilling([], []), true);
+  assert.equal(sameBilling([draft, other], [other, draft]), true, "read unordered, compared unordered");
+  assert.equal(sameBilling([draft], [{ ...draft, status: "SENT" }]), false, "the draft was sent");
+  assert.equal(sameBilling([draft], [{ ...draft, invoiceNumber: "INV-0014" }]), false, "renumbered");
+  assert.equal(
+    sameBilling([draft], [{ invoiceId: "inv3", invoiceNumber: "INV-0015", status: "DRAFT" }]),
+    false,
+    "cancelled and billed again on a new invoice",
+  );
+  assert.equal(sameBilling([draft], []), false);
 });

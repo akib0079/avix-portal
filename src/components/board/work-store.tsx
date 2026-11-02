@@ -38,7 +38,7 @@ import {
 } from "@/lib/actions/project-board";
 import { stageToStatus } from "@/lib/work-stage";
 import { endOfColumn, planPhases } from "@/lib/work-list";
-import { acceptedItem } from "@/lib/work-sync";
+import { acceptedItem, sameBilling } from "@/lib/work-sync";
 import { todayKey } from "./board-bits";
 import {
   AcceptRequestDialog,
@@ -98,7 +98,7 @@ function sameItem(a: WorkItem, b: WorkItem) {
     a.openHelp.team === b.openHelp.team &&
     a.loggedHours === b.loggedHours &&
     a.childCount === b.childCount &&
-    a.billedOn.length === b.billedOn.length &&
+    sameBilling(a.billedOn, b.billedOn) &&
     a.title === b.title
   );
 }
