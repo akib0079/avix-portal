@@ -7,6 +7,7 @@ import {
   firstInvoicePromise,
   formatTotals,
   invoiceKeptReason,
+  keepLineFormatting,
   proposalRemovalMode,
   proposalRemovalPlan,
   timeAgo,
@@ -80,6 +81,43 @@ test("the removal plan: drafts take a safe invoice along, archives only offer it
   assert.deepEqual(proposalRemovalPlan(sent, paperwork), { mode: "archive", invoice: "offer" });
   assert.deepEqual(proposalRemovalPlan(sent, sentInvoice), { mode: "archive", invoice: "keep" });
   assert.deepEqual(proposalRemovalPlan(accepted, paperwork), { mode: "archive", invoice: "keep" });
+});
+
+test("a builder save keeps the formatting of the lines whose words it left alone", () => {
+  const text = { type: "text", text: "Design", marks: [{ type: "bold" }] };
+  const bold = { type: "doc", content: [{ type: "paragraph", content: [text] }] };
+  const list = { type: "doc", content: [{ type: "bulletList" }] };
+  const saved = [
+    { description: "Design", descriptionRich: bold },
+    { description: "Build\nPages and forms", descriptionRich: list },
+    { description: "Hosting", descriptionRich: null },
+  ];
+  const row = (description: string, sortOrder: number) => ({ description, qty: 1, rate: 100, sortOrder });
+
+  // A rate changed, the words didn't: everything keeps its formatting.
+  const same = [row("Design", 0), row("Build\nPages and forms", 1), row("Hosting", 2)];
+  assert.deepEqual(keepLineFormatting(saved, same), [
+    { ...row("Design", 0), descriptionRich: bold },
+    { ...row("Build\nPages and forms", 1), descriptionRich: list },
+    row("Hosting", 2),
+  ]);
+  // An edited line drops its stale formatting; a moved one keeps its own.
+  assert.deepEqual(keepLineFormatting(saved, [row("Build", 0), row("Design", 1)]), [
+    row("Build", 0),
+    { ...row("Design", 1), descriptionRich: bold },
+  ]);
+  // Two lines with the same words keep theirs in order, and a new third gets none.
+  const twice = [
+    { description: "Retainer", descriptionRich: null },
+    { description: "Retainer", descriptionRich: list },
+  ];
+  const three = [row("Retainer", 0), row("Retainer", 1), row("Retainer", 2)];
+  assert.deepEqual(keepLineFormatting(twice, three), [
+    row("Retainer", 0),
+    { ...row("Retainer", 1), descriptionRich: list },
+    row("Retainer", 2),
+  ]);
+  assert.deepEqual(keepLineFormatting([], [row("New", 0)]), [row("New", 0)]);
 });
 
 test("totals are kept per currency and never added across them", () => {

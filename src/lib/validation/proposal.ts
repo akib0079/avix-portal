@@ -27,7 +27,9 @@ export const proposalItemSchema = z.object({
 
 /** Step-2 invoice line (qty × rate, like the standalone invoice entry). */
 export const proposalInvoiceItemSchema = z.object({
-  description: z.string().trim().min(1, "Describe this line item").max(200),
+  // The invoice editor's cap (invoiceItemSchema): a line formatted there is
+  // a small document, and the builder must be able to save it back.
+  description: z.string().trim().min(1, "Describe this line item").max(2000),
   qty: z.number().min(0).max(100000),
   rate: z.number().min(0).max(9999999),
 });

@@ -34,6 +34,7 @@ import {
   draftInvoiceRemovable,
   firstInvoicePromise,
   invoiceKeptReason,
+  keepLineFormatting,
   proposalRemovalPlan,
 } from "@/lib/proposal-rules";
 import { ActionAbort, removeDraftInvoice, removeSilentClient } from "@/lib/proposal-cleanup";
@@ -534,6 +535,10 @@ export async function updateProposal(
                 select: { id: true, title: true, _count: { select: { invoices: true } } },
               },
               _count: { select: { payments: true, creditNotes: true } },
+              items: {
+                orderBy: { sortOrder: "asc" },
+                select: { description: true, descriptionRich: true },
+              },
             },
           })
         : null;
@@ -646,7 +651,17 @@ export async function updateProposal(
               ? { pdfPath: nextPdfPath, pdfOriginalName: nextPdfName }
               : {}),
             pdfExternalUrl: data.invoicePdfExternalUrl || null,
-            items: { create: invoiceItemRows(inv.items) },
+            // Formatting added on the invoice page survives on the lines
+            // whose words the builder left alone.
+            items: {
+              create: keepLineFormatting(
+                invoice.items.map((i) => ({
+                  description: i.description,
+                  descriptionRich: i.descriptionRich as Prisma.InputJsonValue | null,
+                })),
+                invoiceItemRows(inv.items),
+              ),
+            },
           },
         });
       }

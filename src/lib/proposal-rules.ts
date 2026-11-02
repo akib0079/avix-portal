@@ -112,6 +112,31 @@ export function proposalRemovalPlan(
   return { mode, invoice: removable ? "offer" : "keep" };
 }
 
+// ---------- The builder ----------
+
+/**
+ * The builder edits the invoice's lines as plain text, while the invoice page
+ * can also format them (descriptionRich). On a builder save, a line whose
+ * words were left alone keeps its formatting, matched in order so two lines
+ * with the same words keep their own; a line whose words changed drops it,
+ * because the formatted version would still print the old wording.
+ */
+export function keepLineFormatting<Row extends { description: string }, Rich>(
+  saved: { description: string; descriptionRich: Rich | null }[],
+  rows: Row[],
+): (Row | (Row & { descriptionRich: NonNullable<Rich> }))[] {
+  const byWords = new Map<string, (Rich | null)[]>();
+  for (const line of saved) {
+    const queue = byWords.get(line.description);
+    if (queue) queue.push(line.descriptionRich);
+    else byWords.set(line.description, [line.descriptionRich]);
+  }
+  return rows.map((row) => {
+    const rich = byWords.get(row.description)?.shift();
+    return rich == null ? row : { ...row, descriptionRich: rich };
+  });
+}
+
 // ---------- Money ----------
 
 /**
