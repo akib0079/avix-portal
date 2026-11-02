@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   invoiceSchema,
@@ -229,26 +229,34 @@ export function InvoiceForm({
     if (derived) form.setValue("dueDate", derived);
   }
 
+  // The lines are checked in every mode but only Generate PDF shows them, so
+  // a problem with one opens it there instead of the save doing nothing.
+  function revealLines(errors: FieldErrors<InvoiceInput>) {
+    if (!errors.items || docMode === "generate") return;
+    setDocMode("generate");
+    toast.error("Check the line items: they make the invoice's total.");
+  }
+
   async function onSubmit(values: InvoiceInput) {
-    // Only the chosen document mode's data is submitted, so switching modes
-    // clears the others rather than leaving a stale link/upload behind.
+    // Only the chosen document mode's link or file is submitted, so switching
+    // modes clears the other rather than leaving a stale link/upload behind.
     // serializeInvoiceForm writes every field the schema knows; the server
     // reads them back with the same table (lib/invoice-form-data).
     const formData = serializeInvoiceForm({
       ...values,
       pdfExternalUrl: docMode === "link" ? values.pdfExternalUrl : "",
+      // The lines go in every mode: the mode only decides which document the
+      // client gets. Left out of an Upload or Link save, every line was
+      // deleted, with the work it billed, and the total was taxed again.
       // descriptionRich is the source of truth; the plain text is derived here
       // rather than trusted from form state, so what is stored can never drift
       // from what was typed even if a field failed to register.
-      items:
-        docMode === "generate"
-          ? values.items?.map((item) => ({
-              ...item,
-              description: item.descriptionRich
-                ? richTextToLines(item.descriptionRich)
-                : item.description,
-            }))
-          : undefined,
+      items: values.items?.map((item) => ({
+        ...item,
+        description: item.descriptionRich
+          ? richTextToLines(item.descriptionRich)
+          : item.description,
+      })),
     });
     const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
@@ -292,7 +300,7 @@ export function InvoiceForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+      <form onSubmit={form.handleSubmit(onSubmit, revealLines)} className="space-y-5">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -572,6 +580,13 @@ export function InvoiceForm({
               </button>
             ))}
           </div>
+
+          {docMode !== "generate" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              The line items still make the total ({money(totals.total)}) and stay on the
+              invoice. Edit them under Generate PDF.
+            </p>
+          )}
 
           {docMode === "generate" && (
             <div className="mt-4 space-y-4">

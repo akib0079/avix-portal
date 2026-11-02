@@ -228,9 +228,16 @@ export async function updateInvoice(
         dueDate: true,
         retainer: { select: { title: true } },
         retainerTemplateFor: { select: { title: true } },
-        // Which lines bill tracked work, so the edit keeps them (lib/invoice-items).
+        // Which lines bill tracked work, so the edit keeps them (lib/invoice-items),
+        // and their amounts, for a save that posts no lines.
         items: {
-          select: { id: true, milestoneId: true, _count: { select: { timeEntries: true } } },
+          select: {
+            id: true,
+            milestoneId: true,
+            qty: true,
+            rate: true,
+            _count: { select: { timeEntries: true } },
+          },
         },
       },
     }),
@@ -254,7 +261,25 @@ export async function updateInvoice(
       };
     }
   }
-  const columns = formColumns(data, refs);
+  // A save that posts no lines (an Upload or Link save from the form before
+  // it sent them) leaves the saved lines as they are, and they still price
+  // the invoice. Read as "no lines", it deleted every one, freeing the work
+  // they bill, and took the amount, already the total, as the subtotal, so
+  // the discount and tax were applied a second time.
+  const keepLines = data.items === undefined && invoice.items.length > 0;
+  const columns = formColumns(
+    keepLines
+      ? {
+          ...data,
+          items: invoice.items.map((i) => ({
+            description: "",
+            qty: Number(i.qty),
+            rate: Number(i.rate),
+          })),
+        }
+      : data,
+    refs,
+  );
   const next = formStatus(invoice, data.status, columns.amount);
   if ("error" in next) return { ok: false, error: next.error };
 
@@ -270,21 +295,25 @@ export async function updateInvoice(
   const linked = new Set(
     invoice.items.filter((i) => i.milestoneId || i._count.timeEntries > 0).map((i) => i.id),
   );
-  const lines = itemWrites(data.items ?? [], linked);
+  const lines = keepLines ? null : itemWrites(data.items ?? [], linked);
   const rows = itemRows(data.items);
 
   // Batched rather than interactive: none of these writes needs another's
   // result. amountPaid moves in place, as it does for any other payment.
   await prisma.$transaction([
-    prisma.invoiceItem.deleteMany({
-      where: {
-        invoiceId: id,
-        ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
-      },
-    }),
-    ...lines.update.map((line) =>
-      prisma.invoiceItem.update({ where: { id: line.id }, data: rows[line.index] }),
-    ),
+    ...(lines
+      ? [
+          prisma.invoiceItem.deleteMany({
+            where: {
+              invoiceId: id,
+              ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
+            },
+          }),
+          ...lines.update.map((line) =>
+            prisma.invoiceItem.update({ where: { id: line.id }, data: rows[line.index] }),
+          ),
+        ]
+      : []),
     prisma.invoice.update({
       where: { id },
       data: {
@@ -298,7 +327,7 @@ export async function updateInvoice(
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
           : {}),
-        items: { create: lines.create.map((line) => rows[line.index]) },
+        ...(lines ? { items: { create: lines.create.map((line) => rows[line.index]) } } : {}),
       },
     }),
     ...(next.markPaid > 0
