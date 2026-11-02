@@ -1,14 +1,18 @@
 /**
  * v49 made Milestone the one work item: the v48 board cards (project_tasks),
  * their comments and any pending client requests move into milestones. These
- * statements ship as the v49b migration, and run once more when the new code
- * first boots, to catch rows the old code wrote between `migrate deploy` and
- * the new build taking traffic (Hostinger builds take minutes, with the old
- * app still serving). Every statement is idempotent.
+ * statements ship as the v49b migration, and run again every time the new
+ * code boots, to catch rows an older build wrote since the last pass: between
+ * `migrate deploy` and the new build taking traffic (Hostinger builds take
+ * minutes, with the old app still serving), or while a rollback had it
+ * serving again. Every statement only matches rows still in the shape the old
+ * code writes, so it is safe to repeat.
  *
  * Keep in step with
  * prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql —
- * work-backfill.test.ts fails if the two drift.
+ * work-backfill.test.ts fails if the two drift. Only the boot pass bounds
+ * steps 3 and 4 to rows created since the last pass ($1): cards and comments
+ * the new code has deleted since must not come back.
  */
 export const WORK_BACKFILL_SQL: readonly string[] = [
   // 1. Place the existing milestones on the board. boardPosition = 0 marks a
@@ -38,7 +42,8 @@ WHERE r."id" = m."sourceTaskRequestId" AND m."createdById" IS NULL`,
 
   // 3. Board cards become milestones with the same ids, so ?task=<id> links in
   //    old notifications and emails still resolve. A card's milestone becomes
-  //    its phase. New rows go to the end of the project's plan.
+  //    its phase. New rows go to the end of the project's plan. On boot, only
+  //    cards made since the last pass: a copy the new code deleted stays gone.
   `INSERT INTO "milestones" ("id", "title", "projectId", "status", "stage", "position",
   "boardPosition", "description", "pricingType", "priority", "parentId", "assigneeId",
   "dueDate", "createdById", "createdByRole", "completedAt", "createdAt", "updatedAt")
@@ -55,16 +60,17 @@ LEFT JOIN (SELECT "projectId", MAX("position") AS "maxPos" FROM "milestones" GRO
   ON mx."projectId" = t."projectId"
 LEFT JOIN "milestones" pm
   ON pm."id" = t."milestoneId" AND pm."projectId" = t."projectId" AND pm."parentId" IS NULL
-WHERE NOT EXISTS (SELECT 1 FROM "milestones" m WHERE m."id" = t."id")
+WHERE NOT EXISTS (SELECT 1 FROM "milestones" m WHERE m."id" = t."id") AND t."createdAt" > $1
 ON CONFLICT DO NOTHING`,
 
-  // 4. Card comments follow their card.
+  // 4. Card comments follow their card (on boot, those made since the last pass).
   `INSERT INTO "milestone_comments" ("id", "milestoneId", "authorId", "authorRole", "kind",
   "body", "mentions", "attachments", "resolvedAt", "resolvedById", "createdAt")
 SELECT c."id", c."taskId", c."authorId", c."authorRole", c."kind", c."body", c."mentions",
   c."attachments", c."resolvedAt", c."resolvedById", c."createdAt"
 FROM "project_task_comments" c
 JOIN "milestones" m ON m."id" = c."taskId"
+WHERE c."createdAt" > $1
 ON CONFLICT DO NOTHING`,
 
   // 5. Requests still waiting for a decision appear on the board as Requested
@@ -99,9 +105,10 @@ WHERE "currency" = 'USD' AND "amountUsd" IS NULL AND "creditNoteForId" IS NULL`,
 ];
 
 type Db = {
-  $executeRawUnsafe(query: string): Promise<number>;
+  $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
   appSetting: {
     findUnique(args: { where: { key: string } }): Promise<{ value: string } | null>;
+    createMany(args: { data: { key: string; value: string }[]; skipDuplicates: boolean }): Promise<unknown>;
     upsert(args: {
       where: { key: string };
       create: { key: string; value: string };
@@ -110,23 +117,53 @@ type Db = {
   };
 };
 
-const DONE_KEY = "workBackfill:v49";
+/** When the last boot pass started. */
+const LAST_PASS_KEY = "workBackfill:v49";
 
-/** Runs the statements in order and reports how many rows each touched. */
-export async function backfillWorkItems(db: Pick<Db, "$executeRawUnsafe">): Promise<number[]> {
+/**
+ * When the first boot pass started, written once. Invoices from before it
+ * were written by the old code, which linked no line to the work it billed:
+ * the line-linking steps and Bill work's allowance for older invoices
+ * (dal/billable.ts) only look at those. The SQL names it as text.
+ */
+export const FIRST_PASS_KEY = "workBackfill:v49:firstBoot";
+
+/**
+ * Runs the statements in order and reports how many rows each touched. `since`
+ * bounds the steps that copy rows across ($1); the migrations run them unbounded.
+ */
+export async function backfillWorkItems(
+  db: Pick<Db, "$executeRawUnsafe">,
+  since: Date,
+): Promise<number[]> {
   const counts: number[] = [];
-  for (const sql of WORK_BACKFILL_SQL) counts.push(await db.$executeRawUnsafe(sql));
+  for (const sql of WORK_BACKFILL_SQL) {
+    counts.push(await (sql.includes("$1") ? db.$executeRawUnsafe(sql, since) : db.$executeRawUnsafe(sql)));
+  }
   return counts;
 }
 
 /**
- * The post-deploy pass: once per database, on the first boot of the v49 code.
- * Concurrent boots may both run it; every statement tolerates that.
+ * The boot pass: everything an older build wrote since the last pass started.
+ * It records its own start rather than its end, so rows written while it runs
+ * are picked up next time. Concurrent boots may both run it; every statement
+ * tolerates that.
  */
-export async function backfillWorkItemsOnce(db: Db): Promise<void> {
-  if (await db.appSetting.findUnique({ where: { key: DONE_KEY } })) return;
-  const counts = await backfillWorkItems(db);
-  const value = new Date().toISOString();
-  await db.appSetting.upsert({ where: { key: DONE_KEY }, create: { key: DONE_KEY, value }, update: { value } });
+export async function backfillWorkItemsOnBoot(db: Db): Promise<number[]> {
+  const startedAt = new Date().toISOString();
+  const last = await db.appSetting.findUnique({ where: { key: LAST_PASS_KEY } });
+  // A database the first v49 build already ran its one pass on keeps that
+  // pass's time as the first.
+  await db.appSetting.createMany({
+    data: [{ key: FIRST_PASS_KEY, value: last?.value ?? startedAt }],
+    skipDuplicates: true,
+  });
+  const counts = await backfillWorkItems(db, new Date(last?.value ?? 0));
+  await db.appSetting.upsert({
+    where: { key: LAST_PASS_KEY },
+    create: { key: LAST_PASS_KEY, value: startedAt },
+    update: { value: startedAt },
+  });
   if (counts.some((n, i) => n > 0 && i !== 0)) console.log(`[backfill] work items v49: ${counts.join(", ")}`);
+  return counts;
 }
