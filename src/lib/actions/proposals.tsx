@@ -35,6 +35,7 @@ import {
   firstInvoicePromise,
   proposalRemovalPlan,
 } from "@/lib/proposal-rules";
+import { ActionAbort, removeDraftInvoice, removeSilentClient } from "@/lib/proposal-cleanup";
 import { readProposalLink } from "@/lib/marketing-token";
 import { emailProposal, emailSignedProposal, proposalUrl } from "@/lib/proposal-mail";
 import { appUrl } from "@/lib/app-url";
@@ -81,12 +82,6 @@ const LINK_EXPIRED =
   "This proposal has expired. Reply to our email and we'll send you a fresh link.";
 const TEAM_EMAIL =
   "This email belongs to a team account. Use the client's own email — it becomes their login.";
-
-/**
- * Thrown inside a transaction to roll it back with a message for the user,
- * e.g. when a row changed between the check and the write.
- */
-class ActionAbort extends Error {}
 
 /** Lead source → the project's source enum (only Fiverr/Upwork map 1:1). */
 function mapSource(source: LeadSource | null): ProjectSource {
@@ -212,57 +207,6 @@ async function findOrCreateClient(
     },
   });
   return { id: user.id, email: user.email, emailVerified: false, created: true };
-}
-
-/**
- * Removes the account a proposal created for its recipient while it is still
- * only that: never verified (the invite was never completed), never signed
- * in, and owning nothing. Callers check createdClientAccount first; this
- * checks everything else in the statement that deletes, so anything the
- * account gained in the meantime keeps it.
- */
-async function removeSilentClient(tx: Tx, userId: string, proposalId: string): Promise<boolean> {
-  const otherProposals = await tx.proposal.count({
-    where: { convertedClientId: userId, id: { not: proposalId } },
-  });
-  if (otherProposals > 0) return false;
-  const removed = await tx.user.deleteMany({
-    where: {
-      id: userId,
-      role: "CLIENT",
-      emailVerified: false,
-      sessions: { none: {} },
-      invoices: { none: {} },
-      projects: { none: {} },
-      retainers: { none: {} },
-      meetings: { none: {} },
-      messages: { none: {} },
-      clientMessages: { none: {} },
-      taskRequests: { none: {} },
-      imageUploads: { none: {} },
-      tasksAbout: { none: {} },
-      campaignRecipients: { none: {} },
-    },
-  });
-  return removed.count > 0;
-}
-
-/**
- * Deletes the proposal's invoice only while it is still paperwork — the
- * statement form of draftInvoiceRemovable() in proposal-rules.ts, so a send or
- * a payment that lands between the dialog and the click still wins.
- */
-async function removeDraftInvoice(tx: Tx, invoiceId: string): Promise<boolean> {
-  const removed = await tx.invoice.deleteMany({
-    where: {
-      id: invoiceId,
-      status: { in: ["DRAFT", "ASSIGNED"] },
-      sentAt: null,
-      amountPaid: 0,
-      payments: { none: {} },
-    },
-  });
-  return removed.count > 0;
 }
 
 function invoiceItemRows(items: { description: string; qty: number; rate: number }[]) {
