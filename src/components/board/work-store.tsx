@@ -14,6 +14,7 @@ import {
   type SetStateAction,
 } from "react";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import type { ProjectBillingType, ProjectTaskStatus } from "@prisma/client";
 import { toast } from "sonner";
@@ -21,6 +22,7 @@ import {
   COLUMN_BY_ID,
   canMoveWorkItem,
   canSeePricing,
+  resolveWorkLink,
   type BoardData,
   type BoardPerson,
   type BoardPhase,
@@ -219,7 +221,7 @@ export function WorkProvider({
   initial: BoardData;
   /** When the server built `initial` — a page from the router cache may be old. */
   renderedAt: number;
-  /** ?item= (or a v48 ?task=) from the URL — a notification's deep link to one item. */
+  /** ?item= (or a v48 ?task=) the page was opened with — a notification's deep link to one item. */
   initialItemId?: string | null;
   children: ReactNode;
 }) {
@@ -235,12 +237,16 @@ export function WorkProvider({
   const [creating, setCreating] = useState<{ stage?: ProjectTaskStatus; parentId?: string | null } | null>(
     null,
   );
-  // A notification link to another item on this same page arrives as a new
-  // ?item= without remounting; open it. Adjusted during render.
-  const [seenItemParam, setSeenItemParam] = useState(initialItemId);
-  if (initialItemId !== seenItemParam) {
-    setSeenItemParam(initialItemId);
-    if (initialItemId) setOpenId(initialItemId);
+  // A link to an item on this same page (a notification, "Review 1 item")
+  // arrives as a new ?item= without remounting; open it. Read from the URL,
+  // not the server's prop: closing the drawer only rewrites the address bar,
+  // so the prop still names the item and the same link clicked again would
+  // change nothing. Adjusted during render.
+  const urlItem = resolveWorkLink(useSearchParams()).itemId;
+  const [seenUrlItem, setSeenUrlItem] = useState(urlItem);
+  if (urlItem !== seenUrlItem) {
+    setSeenUrlItem(urlItem);
+    if (urlItem) setOpenId(urlItem);
   }
 
   // Refs the poll consults so it never clobbers a drag or an unsaved write.
