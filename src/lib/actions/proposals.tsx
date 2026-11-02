@@ -506,7 +506,11 @@ export async function updateProposal(
       ? null
       : existing.invoicePdfOriginalName;
 
-  let outcome: { moved: boolean; invoiceLocked: { invoiceNumber: string; reason: string } | null };
+  let outcome: {
+    moved: boolean;
+    invoiceLocked: { invoiceNumber: string; reason: string } | null;
+    dropOldFile: boolean;
+  };
   try {
     outcome = await prisma.$transaction(async (tx) => {
       const invoice = existing.convertedInvoiceId
@@ -656,6 +660,9 @@ export async function updateProposal(
           invoice && facts && !invoiceIsPaperwork
             ? { invoiceNumber: invoice.invoiceNumber, reason: invoiceKeptReason(facts) }
             : null,
+        // An invoice left alone still points at the old file and serves it
+        // to the client; only a rewritten one has let go of it.
+        dropOldFile: !invoice || invoiceIsPaperwork,
       };
     });
   } catch (err) {
@@ -665,7 +672,7 @@ export async function updateProposal(
   }
 
   // Drop the superseded file only after the row is safely updated.
-  if ((replacing || clearing) && existing.invoicePdfPath) {
+  if ((replacing || clearing) && existing.invoicePdfPath && outcome.dropOldFile) {
     await deleteUpload("invoices", existing.invoicePdfPath);
   }
 
