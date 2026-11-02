@@ -175,6 +175,33 @@ export function firstInvoicePromise(
   return { kind: "deposit", percent: proposal.depositPercent, amount, currency: proposal.currency };
 }
 
+/** A YYYY-MM-DD day as whole days since the epoch, in UTC so no zone shifts it. */
+function dayNumber(day: string): number {
+  return Math.round(Date.parse(`${day}T00:00:00Z`) / DAY_MS);
+}
+
+/**
+ * The dates the proposal's invoice is issued with once the client accepts.
+ * The builder dated it when the proposal was made, often weeks earlier; kept,
+ * it would land already overdue, and the chaser's final reminder would follow
+ * days after it was sent. An issue date before the acceptance day moves to
+ * that day and the due date follows: the invoice's net terms when it has
+ * them, otherwise the gap it had (none without a due date). A later issue
+ * date was chosen on purpose and stays. Null when nothing moves.
+ */
+export function acceptedInvoiceDates(
+  invoice: { issueDate: string; dueDate: string | null; paymentTermsDays: number | null },
+  today: string,
+): { issueDate: string; dueDate: string | null } | null {
+  if (invoice.issueDate >= today) return null;
+  const days =
+    invoice.paymentTermsDays ??
+    (invoice.dueDate ? Math.max(0, dayNumber(invoice.dueDate) - dayNumber(invoice.issueDate)) : null);
+  if (days == null) return { issueDate: today, dueDate: null };
+  const due = new Date((dayNumber(today) + days) * DAY_MS).toISOString().slice(0, 10);
+  return { issueDate: today, dueDate: due };
+}
+
 /**
  * What the project a signed proposal creates is priced at. Project prices
  * are dollars (Bill work, the portal and the project form all read them so)

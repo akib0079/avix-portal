@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  acceptedInvoiceDates,
   depositAmount,
   draftInvoiceRemovable,
   dueProposalReminder,
@@ -162,6 +163,36 @@ test("the client is promised the invoice that is attached, else the deposit acce
     { kind: "deposit", percent: 50, amount: 1500, currency: "GBP" },
   );
   assert.equal(firstInvoicePromise({ ...proposal, depositPercent: 0 }, null), null);
+});
+
+test("an accepted proposal's invoice is dated from the acceptance, never earlier", () => {
+  const drafted = { issueDate: "2026-10-01", dueDate: "2026-10-15", paymentTermsDays: null };
+  // Signed weeks later: the same 14-day gap, from the day it was agreed.
+  assert.deepEqual(acceptedInvoiceDates(drafted, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: "2026-12-04",
+  });
+  // Net terms win over the old gap; no due date stays none; a negative gap is none.
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, paymentTermsDays: 30 }, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: "2026-12-20",
+  });
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, dueDate: null }, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: null,
+  });
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, dueDate: "2026-09-20" }, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: "2026-11-20",
+  });
+  // Across a month end and a DST change, in whole days.
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, paymentTermsDays: 7 }, "2027-03-27"), {
+    issueDate: "2027-03-27",
+    dueDate: "2027-04-03",
+  });
+  // Dated today or later on purpose: left alone.
+  assert.equal(acceptedInvoiceDates(drafted, "2026-10-01"), null);
+  assert.equal(acceptedInvoiceDates({ ...drafted, issueDate: "2026-12-01" }, "2026-11-20"), null);
 });
 
 test("only a dollar proposal prices its project; another currency leaves it to the admin", () => {

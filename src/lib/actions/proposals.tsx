@@ -26,11 +26,14 @@ import {
   type ProposalLinks,
 } from "@/lib/dal/proposals";
 import { getProposalDefaultTerms, listActivePaymentAccounts } from "@/lib/dal/settings";
+import { getBookingConfig } from "@/lib/dal/availability";
+import { dayIn, dayToDate } from "@/lib/recurring";
 import { formatCurrency } from "@/lib/currency";
 import { usdToStore } from "@/lib/invoice-usd";
 import { dueDateFromTerms, invoiceTotals } from "@/lib/invoice-totals";
 import { requestMeta } from "@/lib/request-meta";
 import {
+  acceptedInvoiceDates,
   draftInvoiceRemovable,
   firstInvoicePromise,
   handoffContractPrice,
@@ -1249,20 +1252,22 @@ const HANDOFF_INCLUDE = {
 /** The proposal as the hand-off read it, just before claiming it. */
 type HandoffProposal = Prisma.ProposalGetPayload<{ include: typeof HANDOFF_INCLUDE }>;
 
-type Loaded = { proposal: HandoffProposal; links: ProposalLinks };
+type Loaded = { proposal: HandoffProposal; links: ProposalLinks; timeZone: string };
 
 /**
  * What a hand-off works from, in one wave: the proposal with its scope and
- * lead, and the references it keeps without foreign keys (proposalLinks). The
- * sign action reads it once and builds its snapshot from the same rows the
- * hand-off then uses, so nothing is read twice.
+ * lead, the references it keeps without foreign keys (proposalLinks), and the
+ * agency's zone, whose today the first invoice is dated from. The sign action
+ * reads it once and builds its snapshot from the same rows the hand-off then
+ * uses, so nothing is read twice.
  */
 async function loadHandoff(id: string): Promise<Loaded | null> {
-  const [proposal, links] = await Promise.all([
+  const [proposal, links, booking] = await Promise.all([
     prisma.proposal.findUnique({ where: { id }, include: HANDOFF_INCLUDE }),
     proposalLinks(id),
+    getBookingConfig(),
   ]);
-  return proposal && links ? { proposal, links } : null;
+  return proposal && links ? { proposal, links, timeZone: booking.agencyTimezone } : null;
 }
 
 /**
@@ -1387,7 +1392,10 @@ function handoffMilestones(proposal: HandoffProposal, now: Date) {
  * the response. Callers must have already authorised the action (link or
  * admin session).
  */
-async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): Promise<HandoffResult> {
+async function runHandoff(
+  { proposal, links, timeZone }: Loaded,
+  acceptance: Acceptance,
+): Promise<HandoffResult> {
   const id = proposal.id;
   const now = new Date();
   if (proposal.status === "ACCEPTED") return ALREADY_ACCEPTED;
@@ -1425,6 +1433,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
   );
   const attach = promise?.kind === "invoice" ? links.invoice : null;
   const deposit = promise?.kind === "deposit" ? promise : null;
+  // The attached invoice is owed from today, not from when it was drafted.
+  const dates = attach ? acceptedInvoiceDates(attach, dayIn(now, timeZone)) : null;
+  const redated = dates
+    ? { issueDate: dayToDate(dates.issueDate), dueDate: dates.dueDate ? dayToDate(dates.dueDate) : null }
+    : {};
 
   const claimWhere: Prisma.ProposalWhereInput = acceptance.byAdmin
     ? {
@@ -1529,11 +1542,24 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
       if (attach) {
         await tx.invoice.updateMany({ where: { id: attach.id }, data: { projectId: project.id } });
         // Agreed now, so owed now: the draft becomes a normal invoice the
-        // client sees and the admin can send.
+        // client sees and the admin can send, dated from today.
         if (attach.status === "DRAFT") {
           await tx.invoice.updateMany({
             where: { id: attach.id, status: "DRAFT" },
-            data: { status: "ASSIGNED" },
+            data: { status: "ASSIGNED", ...redated },
+          });
+        } else if (dates && draftInvoiceRemovable(invoiceFacts(attach))) {
+          // An older proposal's invoice was ASSIGNED from the start. Still
+          // unsent and unpaid, it moves to today as well.
+          await tx.invoice.updateMany({
+            where: {
+              id: attach.id,
+              status: "ASSIGNED",
+              sentAt: null,
+              paymentClaimedAt: null,
+              amountPaid: 0,
+            },
+            data: redated,
           });
         }
       } else if (deposit && depositNumber) {

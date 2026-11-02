@@ -153,6 +153,10 @@ export type ProposalInvoiceSummary = {
   creditNoteCount: number;
   /** A recurring plan with invoices of its own copies it (see DraftInvoiceFacts). */
   copiedByPlan: boolean;
+  /** YYYY-MM-DD, as the builder shows them; acceptance may move them (acceptedInvoiceDates). */
+  issueDate: string;
+  dueDate: string | null;
+  paymentTermsDays: number | null;
 };
 
 /** One proposal, opened: the detail sheet and the delete / accept dialogs. */
@@ -479,6 +483,9 @@ export async function proposalLinks(id: string) {
       invoicePaymentClaimedAt: Date | null;
       invoiceCreditNoteCount: number | null;
       invoiceCopiedByPlan: boolean | null;
+      invoiceIssueDate: Date | null;
+      invoiceDueDate: Date | null;
+      invoicePaymentTermsDays: number | null;
       projectName: string | null;
       clientId: string | null;
       clientEmail: string | null;
@@ -504,6 +511,9 @@ export async function proposalLinks(id: string) {
         WHERE r."templateInvoiceId" = i.id
           AND EXISTS (SELECT 1 FROM invoices ri WHERE ri."retainerId" = r.id AND ri.id <> i.id)
       ) AS "invoiceCopiedByPlan",
+      i."issueDate" AS "invoiceIssueDate",
+      i."dueDate" AS "invoiceDueDate",
+      i."paymentTermsDays" AS "invoicePaymentTermsDays",
       pr."projectName" AS "projectName",
       u.id AS "clientId",
       u.email AS "clientEmail",
@@ -519,7 +529,7 @@ export async function proposalLinks(id: string) {
   if (!row) return null;
 
   const invoice: ProposalInvoiceSummary | null =
-    row.invoiceId && row.invoiceNumber && row.invoiceStatus
+    row.invoiceId && row.invoiceNumber && row.invoiceStatus && row.invoiceIssueDate
       ? {
           id: row.invoiceId,
           invoiceNumber: row.invoiceNumber,
@@ -532,6 +542,9 @@ export async function proposalLinks(id: string) {
           paymentClaimedAt: row.invoicePaymentClaimedAt?.toISOString() ?? null,
           creditNoteCount: row.invoiceCreditNoteCount ?? 0,
           copiedByPlan: row.invoiceCopiedByPlan ?? false,
+          issueDate: row.invoiceIssueDate.toISOString().slice(0, 10),
+          dueDate: row.invoiceDueDate?.toISOString().slice(0, 10) ?? null,
+          paymentTermsDays: row.invoicePaymentTermsDays,
         }
       : null;
   const client = row.clientId
