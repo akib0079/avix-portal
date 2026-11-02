@@ -101,10 +101,11 @@ export function TaskDrawer({ itemId, onClose }: { itemId: string; onClose: () =>
   const work = useWork();
   const { viewer, people, phases, today, track } = work;
   const live = work.items.find((c) => c.id === itemId) ?? null;
-  const { data, mutate, isLoading } = useWorkItemDetail(itemId, {
-    refreshInterval: 12_000,
-    revalidateOnFocus: true,
-  });
+  // The store reloads this whenever the board's version moves (a comment, an
+  // edit, logged hours). The slow interval only catches what the version
+  // can't see: a time entry's note or date, an item archived or on another
+  // project.
+  const { data, mutate, isLoading } = useWorkItemDetail(itemId, { refreshInterval: 60_000 });
   // The live copy paints at once; an archived item (opened from the archive
   // or an old link) isn't on the board, so it comes with the detail.
   const card = live ?? data?.item ?? null;

@@ -15,7 +15,7 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { mutate as mutateKey } from "swr";
 import type { ProjectBillingType, ProjectTaskStatus } from "@prisma/client";
 import { toast } from "sonner";
 import {
@@ -42,6 +42,7 @@ import { stageToStatus } from "@/lib/work-stage";
 import { endOfColumn, planPhases } from "@/lib/work-list";
 import { acceptedItem, sameBilling } from "@/lib/work-sync";
 import { useToday } from "./board-bits";
+import { workItemDetailKey } from "./use-work-item-detail";
 import {
   AcceptRequestDialog,
   DeclineRequestDialog,
@@ -86,6 +87,14 @@ async function timedFetch(url: string, version: string): Promise<Timed> {
   if (res.status === 204) return { startedAt, data: null };
   if (!res.ok) return null;
   return { startedAt, data: (await res.json()) as BoardData };
+}
+
+/**
+ * Reload an open drawer's item — its thread, hours and description — when the
+ * board's version has moved. The drawer doesn't poll it on its own.
+ */
+function reloadDetail(itemId: string | null) {
+  if (itemId) void mutateKey(workItemDetailKey(itemId));
 }
 
 function sameItem(a: WorkItem, b: WorkItem) {
@@ -262,6 +271,12 @@ export function WorkProvider({
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+  // Read by the writes below, so they stay the same functions while the
+  // drawer opens and closes (the rows are memoised on them), and by the poll.
+  const openIdRef = useRef(openId);
+  useEffect(() => {
+    openIdRef.current = openId;
+  }, [openId]);
 
   // The poll sends the version it holds; an unchanged board answers 204 with
   // no body, so a quiet board costs the server one small query. A hidden tab
@@ -282,6 +297,7 @@ export function WorkProvider({
         const data = res?.data;
         if (!res || !data) return;
         if (dragging.current || pending.current > 0 || sendBackOpen.current || res.startedAt < lastLocal.current) return;
+        if (data.version !== versionRef.current) reloadDetail(openIdRef.current);
         versionRef.current = data.version;
         setItems((prev) => reconcile(prev, data.items));
         setPeople((prev) => (samePeople(prev, data.people) ? prev : data.people));
@@ -306,6 +322,7 @@ export function WorkProvider({
       void mutate();
       return;
     }
+    if (initial.version !== versionRef.current) reloadDetail(openIdRef.current);
     versionRef.current = initial.version;
     queueMicrotask(() => {
       setItems((prev) => reconcile(prev, initial.items));
@@ -355,13 +372,6 @@ export function WorkProvider({
     window.addEventListener("avix:board-card", onItem);
     return () => window.removeEventListener("avix:board-card", onItem);
   }, [projectId, upsert]);
-
-  // Read by the writes below, so they stay the same functions while the
-  // drawer opens and closes (the rows are memoised on them).
-  const openIdRef = useRef(openId);
-  useEffect(() => {
-    openIdRef.current = openId;
-  }, [openId]);
 
   // The open item lives in the URL too, so it can be shared and survives a
   // reload. replaceState: opening an item is not a navigation.
