@@ -100,6 +100,10 @@ export function InvoiceForm({
   const start: Partial<InvoiceInput> | undefined = invoice ?? initial;
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  // What the status select held when it last matched the server, so a save
+  // can say whether the owner moved it (lib/actions/invoices updateInvoice).
+  // The page's invoice can't say it: a claim made elsewhere doesn't reach it.
+  const statusWas = useRef<string>(invoice?.status ?? "");
 
   // How this invoice's document is produced. Existing invoices reopen in the
   // mode that matches whatever they already have.
@@ -283,8 +287,10 @@ export function InvoiceForm({
     // pages, so the fresh page arrives with the action's own response, and a
     // refresh on top rendered the whole page a second time.
     if (isEdit) {
+      formData.append("statusWas", statusWas.current);
       const result = await track(updateInvoice(invoice.id, formData), label);
       if (!result.ok) return void toast.error(result.error);
+      statusWas.current = values.status;
       toast.success("Invoice updated.");
     } else {
       const result = await track(createInvoice(formData), label);

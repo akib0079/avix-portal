@@ -284,7 +284,16 @@ export async function updateInvoice(
       : data,
     refs,
   );
-  const next = formStatus(invoice, data.status, columns.amount);
+  // The status select speaks for the owner only once they move it. Left
+  // alone it still holds the status the form loaded, and saving that undid
+  // whatever happened since: a payment the client reported was cleared as if
+  // rejected, a cleared claim was put back in review. An untouched select
+  // keeps the invoice where it stands, settled against the new total. A form
+  // that doesn't say what it loaded (an older bundle) is taken at its word.
+  const touched = formData.get("statusWas") !== data.status;
+  const next = touched
+    ? formStatus(invoice, data.status, columns.amount)
+    : { status: settledStatus(invoice, { total: columns.amount }), markPaid: 0, clearClaim: false };
   if ("error" in next) return { ok: false, error: next.error };
 
   const pdf = await handlePdf(formData);
