@@ -153,6 +153,26 @@ WHERE m."id" = t."id" AND t."updatedAt" > m."updatedAt"`,
   `UPDATE "milestone_comments" mc SET "resolvedAt" = c."resolvedAt", "resolvedById" = c."resolvedById"
 FROM "project_task_comments" c
 WHERE mc."id" = c."id" AND mc."resolvedAt" IS NULL AND c."resolvedAt" IS NOT NULL`,
+
+  // 13. The old board put a card at 0 or below when it was added or dragged
+  //     to the top of a column, and step 3 turned all of those into 1024, so
+  //     they lost their order and their place on top. Copies still where
+  //     step 3 (or 11) put them, untouched since, go back on top in the old
+  //     order, below 1024 and below whatever else heads the column. They end
+  //     up under 1024, so this never moves the same row twice.
+  `UPDATE "milestones" m SET "boardPosition" = x."pos"
+FROM (SELECT t."id",
+    LEAST(COALESCE(top."minBoard", 1024), 1024)
+      * ROW_NUMBER() OVER (PARTITION BY t."projectId", t."status" ORDER BY t."position", t."createdAt", t."id")
+      / (COUNT(*) OVER (PARTITION BY t."projectId", t."status") + 1) AS "pos"
+  FROM "project_tasks" t
+  JOIN "milestones" c ON c."id" = t."id" AND c."stage" = t."status" AND c."boardPosition" = 1024
+    AND c."updatedAt" = t."updatedAt" AND c."archivedAt" IS NULL
+  LEFT JOIN (SELECT "projectId", "stage", MIN("boardPosition") AS "minBoard" FROM "milestones"
+    WHERE "archivedAt" IS NULL AND "boardPosition" > 0 GROUP BY 1, 2) top
+    ON top."projectId" = t."projectId" AND top."stage" = t."status"
+  WHERE t."position" <= 0) x
+WHERE m."id" = x."id"`,
 ];
 
 type Db = {
