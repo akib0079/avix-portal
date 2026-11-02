@@ -61,6 +61,31 @@ export function itemRows(
   }));
 }
 
+/**
+ * Rewrites saved lines of one invoice in place (text, formatting, amounts,
+ * position), however many, in one statement: an UPDATE per line cost a
+ * round trip each, which on a long Bill work invoice took seconds.
+ */
+export function updateLines(
+  db: Prisma.TransactionClient,
+  invoiceId: string,
+  lines: ({ id: string } & ReturnType<typeof itemRows>[number])[],
+) {
+  // One JSON parameter. A line with no formatting comes out NULL, and reads back null.
+  return db.$executeRaw`
+    UPDATE "invoice_items" AS i
+    SET "description" = v."description",
+        "descriptionRich" = v."descriptionRich",
+        "qty" = v."qty",
+        "rate" = v."rate",
+        "sortOrder" = v."sortOrder"
+    FROM jsonb_to_recordset(${JSON.stringify(lines)}::jsonb) AS v(
+      "id" text, "description" text, "descriptionRich" jsonb,
+      "qty" numeric, "rate" numeric, "sortOrder" int
+    )
+    WHERE i."id" = v."id" AND i."invoiceId" = ${invoiceId}`;
+}
+
 /** What a save resolved from the form before writing anything. */
 export type Refs = {
   customNumber: string | null;

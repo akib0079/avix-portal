@@ -23,6 +23,7 @@ import {
   resolveRefs,
   settleIfRaced,
   settledStatus,
+  updateLines,
 } from "@/lib/invoice-write";
 import {
   contractInvoiceSelect,
@@ -38,7 +39,7 @@ import { logActivity } from "@/lib/dal/activity";
 import { sendInvoiceCore } from "@/lib/invoice-send";
 import { formatCurrency } from "@/lib/currency";
 import { getBookingConfig } from "@/lib/dal/availability";
-import { itemWrites } from "@/lib/invoice-items";
+import { itemWrites, lineChanged } from "@/lib/invoice-items";
 import { repeatSchema, type RepeatInput } from "@/lib/validation/retainer";
 import {
   dayIn,
@@ -229,13 +230,16 @@ export async function updateInvoice(
         retainer: { select: { title: true } },
         retainerTemplateFor: { select: { title: true } },
         // Which lines bill tracked work, so the edit keeps them (lib/invoice-items),
-        // and their amounts, for a save that posts no lines.
+        // and what they say, so only the kept lines that changed are written.
         items: {
           select: {
             id: true,
             milestoneId: true,
+            description: true,
+            descriptionRich: true,
             qty: true,
             rate: true,
+            sortOrder: true,
             _count: { select: { timeEntries: true } },
           },
         },
@@ -291,12 +295,18 @@ export async function updateInvoice(
   const dueMoved = (columns.dueDate?.getTime() ?? null) !== (invoice.dueDate?.getTime() ?? null);
 
   // Lines that bill tracked work are kept in place, with their links; the
-  // rest are replaced. A linked line the edit dropped frees its work.
+  // rest are replaced. A linked line the edit dropped frees its work. Of the
+  // kept lines, only the ones the edit changed are written, in one statement.
   const linked = new Set(
     invoice.items.filter((i) => i.milestoneId || i._count.timeEntries > 0).map((i) => i.id),
   );
   const lines = keepLines ? null : itemWrites(data.items ?? [], linked);
   const rows = itemRows(data.items);
+  const saved = new Map(invoice.items.map((i) => [i.id, i]));
+  const changed = (lines?.update ?? []).flatMap(({ id: lineId, index }) => {
+    const was = saved.get(lineId);
+    return was && lineChanged(was, rows[index]) ? [{ id: lineId, ...rows[index] }] : [];
+  });
 
   // Batched rather than interactive: none of these writes needs another's
   // result. amountPaid moves in place, as it does for any other payment.
@@ -309,11 +319,9 @@ export async function updateInvoice(
               ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
             },
           }),
-          ...lines.update.map((line) =>
-            prisma.invoiceItem.update({ where: { id: line.id }, data: rows[line.index] }),
-          ),
         ]
       : []),
+    ...(changed.length > 0 ? [updateLines(prisma, id, changed)] : []),
     prisma.invoice.update({
       where: { id },
       data: {
