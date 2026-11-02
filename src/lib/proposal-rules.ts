@@ -176,6 +176,17 @@ export function firstInvoicePromise(
 }
 
 /**
+ * What the project a signed proposal creates is priced at. Project prices
+ * are dollars (Bill work, the portal and the project form all read them so)
+ * and nothing here converts currencies, so an agreement in another currency
+ * starts with no price: the admin enters its USD value once they know it,
+ * and the proposal keeps the agreed total in its own currency.
+ */
+export function handoffContractPrice(proposal: { total: number; currency: string }): number | null {
+  return proposal.currency === "USD" ? proposal.total : null;
+}
+
+/**
  * Proposal totals per currency, largest first, zero totals dropped. A lane of
  * GBP and USD proposals has two totals: adding them gives a number that is
  * true of nothing.

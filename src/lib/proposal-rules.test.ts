@@ -6,6 +6,7 @@ import {
   dueProposalReminder,
   firstInvoicePromise,
   formatTotals,
+  handoffContractPrice,
   invoiceKeptReason,
   keepLineFormatting,
   proposalRemovalMode,
@@ -161,6 +162,12 @@ test("the client is promised the invoice that is attached, else the deposit acce
     { kind: "deposit", percent: 50, amount: 1500, currency: "GBP" },
   );
   assert.equal(firstInvoicePromise({ ...proposal, depositPercent: 0 }, null), null);
+});
+
+test("only a dollar proposal prices its project; another currency leaves it to the admin", () => {
+  assert.equal(handoffContractPrice({ total: 10_000, currency: "USD" }), 10_000);
+  assert.equal(handoffContractPrice({ total: 10_000, currency: "GBP" }), null);
+  assert.equal(handoffContractPrice({ total: 0, currency: "USD" }), 0);
 });
 
 test("reminders: one per window, never on the heels of the send, one email when late", () => {

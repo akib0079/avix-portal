@@ -33,6 +33,7 @@ import { requestMeta } from "@/lib/request-meta";
 import {
   draftInvoiceRemovable,
   firstInvoicePromise,
+  handoffContractPrice,
   invoiceKeptReason,
   keepLineFormatting,
   proposalRemovalPlan,
@@ -1367,9 +1368,10 @@ function handoffMilestones(proposal: HandoffProposal, now: Date) {
 /**
  * The one hand-off, behind the client's signature AND the admin's "mark
  * accepted". It records the signature evidence, creates a CONTRACT project
- * priced at the proposal total with the scope as its milestones, attaches the
- * first invoice (or creates the deposit invoice the client was promised),
- * marks a backing lead WON and records who accepted.
+ * priced at the proposal total (a dollar total only, see handoffContractPrice)
+ * with the scope as its milestones, attaches the first invoice (or creates
+ * the deposit invoice the client was promised), marks a backing lead WON and
+ * records who accepted.
  *
  * The FIRST statement of its transaction claims the proposal: a conditional
  * update to ACCEPTED that only one caller can win. Two tabs, a double click,
@@ -1393,6 +1395,7 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
   if (blocker) return { ok: false, error: blocker };
 
   const total = sumAmounts(proposal.items);
+  const price = handoffContractPrice({ total, currency: proposal.currency });
   const contact = proposalContact(proposal);
 
   // Proposals made before provisioning moved to creation time have no
@@ -1514,7 +1517,8 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
           priority: "MEDIUM",
           status: "PLANNING",
           billingType: "CONTRACT",
-          contractPrice: total,
+          // Dollars only: another currency's total would be read as dollars.
+          contractPrice: price,
           milestones: { create: handoffMilestones(proposal, now) },
         },
         select: { id: true },
@@ -1666,6 +1670,7 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
           title: `${who} signed "${proposal.title}"`,
           body:
             `${formatCurrency(total, proposal.currency)} · project created` +
+            (price == null ? ` (set its contract price in USD: the proposal is in ${proposal.currency})` : "") +
             (invoiceNumber ? `, invoice ${invoiceNumber} ready to send` : "") +
             (pdf ? ". The signed PDF is attached." : ""),
           link: proposalHref(id),
