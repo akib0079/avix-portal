@@ -340,6 +340,67 @@ export async function settleIfRaced(
   }
 }
 
+/** A cancelled invoice's work, billed again on these live invoices. */
+class Rebilled extends Error {
+  constructor(readonly invoiceNumbers: string[]) {
+    super("Rebilled");
+  }
+}
+
+/**
+ * Brings a cancelled invoice back with `write`, unless its work was billed
+ * again meanwhile. Cancelling frees the work an invoice bills, so Bill work
+ * can put the same fixed piece of work on a new invoice and move the hours
+ * onto it; restoring the old one as well bills that work twice.
+ *
+ * `write` runs under the Bill work lock of every project whose work the
+ * invoice's lines bill, so no bill lands in between, and it is rolled back if
+ * another live invoice now bills one of those lines' work: a fixed line's, or
+ * an hourly line's whose hours have moved. An hourly line that still has its
+ * hours is left alone, since later hours of the same work are rightly on
+ * other invoices. Returns those invoices' numbers; none when it was restored.
+ */
+export async function restoreCancelled(
+  invoiceId: string,
+  write: (tx: Prisma.TransactionClient) => Promise<unknown>,
+): Promise<string[]> {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
+          SELECT pg_advisory_xact_lock(hashtext('bill-work:' || w."projectId"))
+          FROM (
+            SELECT DISTINCT m."projectId" FROM "invoice_items" AS ii
+            JOIN "milestones" AS m ON m."id" = ii."milestoneId"
+            WHERE ii."invoiceId" = ${invoiceId}
+            ORDER BY 1
+          ) AS w`;
+        await write(tx);
+        // Read after the write, so lines the same edit removed don't count.
+        const taken = await tx.invoice.findMany({
+          where: {
+            id: { not: invoiceId },
+            status: { not: "CANCELLED" },
+            items: {
+              some: {
+                milestone: { invoiceItems: { some: { invoiceId, timeEntries: { none: {} } } } },
+              },
+            },
+          },
+          orderBy: { invoiceNumber: "asc" },
+          select: { invoiceNumber: true },
+        });
+        if (taken.length > 0) throw new Rebilled(taken.map((t) => t.invoiceNumber));
+      },
+      { maxWait: 10_000, timeout: 20_000 },
+    );
+    return [];
+  } catch (err) {
+    if (err instanceof Rebilled) return err.invoiceNumbers;
+    throw err;
+  }
+}
+
 export type PreparedInvoice = {
   data: InvoiceInput;
   refs: Refs;

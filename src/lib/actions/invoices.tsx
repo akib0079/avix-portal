@@ -21,6 +21,7 @@ import {
   parseDate,
   prepareInvoice,
   resolveRefs,
+  restoreCancelled,
   settleIfRaced,
   settledStatus,
   updateLines,
@@ -50,7 +51,7 @@ import {
 } from "@/lib/recurring";
 import { runPlanIfDue } from "@/lib/recurring-run";
 import type { PlanSeed } from "@/lib/invoice-write";
-import type { InvoiceStatus } from "@prisma/client";
+import type { InvoiceStatus, Prisma } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -86,6 +87,14 @@ function statusConflict(requested: InvoiceStatus, settled: InvoiceStatus): strin
     return "Part of this invoice is paid, so it stays Part paid until the rest comes in or a payment is removed.";
   }
   return "That status doesn't match the payments recorded on this invoice.";
+}
+
+/** Why a cancelled invoice can't come back: its work is billed on these now. */
+function rebilledError(invoiceNumbers: string[]): string {
+  const last = invoiceNumbers[invoiceNumbers.length - 1];
+  const list =
+    invoiceNumbers.length > 1 ? `${invoiceNumbers.slice(0, -1).join(", ")} and ${last}` : last;
+  return `This invoice's work was billed again on ${list} while it was cancelled, so bringing it back would bill that work twice. Cancel ${invoiceNumbers.length > 1 ? "those invoices" : list} first.`;
 }
 
 function invoiceLink(id: string) {
@@ -318,11 +327,12 @@ export async function updateInvoice(
   });
 
   // Batched rather than interactive: none of these writes needs another's
-  // result. amountPaid moves in place, as it does for any other payment.
-  await prisma.$transaction([
+  // result (only a restore from Cancelled runs them in a transaction of its
+  // own). amountPaid moves in place, as it does for any other payment.
+  const writes = (db: Prisma.TransactionClient) => [
     ...(lines
       ? [
-          prisma.invoiceItem.deleteMany({
+          db.invoiceItem.deleteMany({
             where: {
               invoiceId: id,
               ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
@@ -330,8 +340,8 @@ export async function updateInvoice(
           }),
         ]
       : []),
-    ...(changed.length > 0 ? [updateLines(prisma, id, changed)] : []),
-    prisma.invoice.update({
+    ...(changed.length > 0 ? [updateLines(db, id, changed)] : []),
+    db.invoice.update({
       where: { id },
       data: {
         // A blank number field keeps the current number.
@@ -349,7 +359,7 @@ export async function updateInvoice(
     }),
     ...(next.markPaid > 0
       ? [
-          prisma.invoicePayment.create({
+          db.invoicePayment.create({
             data: { invoiceId: id, amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID },
           }),
         ]
@@ -359,7 +369,7 @@ export async function updateInvoice(
     // plan's own, unless the currency changed under it.
     ...(invoice.retainerTemplateFor.length > 0
       ? [
-          prisma.retainer.updateMany({
+          db.retainer.updateMany({
             where: { templateInvoiceId: id },
             data: {
               amount: columns.amount,
@@ -374,7 +384,25 @@ export async function updateInvoice(
           }),
         ]
       : []),
-  ]);
+  ];
+
+  const restoring =
+    invoice.status === "CANCELLED" &&
+    next.status !== "CANCELLED" &&
+    invoice.items.some((i) => i.milestoneId);
+  if (restoring) {
+    // Brought back from Cancelled: refused if its work was billed again since.
+    const taken = await restoreCancelled(id, async (tx) => {
+      for (const write of writes(tx)) await write;
+    });
+    if (taken.length > 0) {
+      const stored = pdf.fileName;
+      if (stored) after(() => deleteUpload("invoices", stored));
+      return { ok: false, error: rebilledError(taken) };
+    }
+  } else {
+    await prisma.$transaction(writes(prisma));
+  }
 
   await resettleCredited(invoice.creditNoteForId);
 
@@ -406,7 +434,15 @@ export async function setInvoiceStatus(
   status: InvoiceStatus,
 ): Promise<ActionResult> {
   await requireAdmin();
-  const invoice = await prisma.invoice.findUnique({ where: { id }, select: moneySelect });
+  const invoice = await prisma.invoice.findUnique({
+    where: { id },
+    select: {
+      ...moneySelect,
+      // Whether it bills tracked work, which a cancelled invoice can't bring
+      // back once that work is billed again (restoreCancelled).
+      items: { where: { milestoneId: { not: null } }, select: { id: true }, take: 1 },
+    },
+  });
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if (status === invoice.status) return { ok: true };
 
@@ -414,7 +450,27 @@ export async function setInvoiceStatus(
   if ("error" in next) return { ok: false, error: next.error };
   if (next.status !== status) return { ok: false, error: statusConflict(status, next.status) };
 
-  if (next.markPaid > 0) {
+  if (invoice.status === "CANCELLED" && invoice.items.length > 0) {
+    // Mark paid's payment goes in with the status, as addPayment writes it.
+    const taken = await restoreCancelled(id, async (tx) => {
+      if (next.markPaid > 0) {
+        await tx.invoicePayment.create({
+          data: { invoiceId: id, amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID },
+          select: { id: true },
+        });
+      }
+      await tx.invoice.update({
+        where: { id },
+        data: {
+          status,
+          ...(next.markPaid > 0 ? { amountPaid: { increment: next.markPaid } } : {}),
+          ...(next.clearClaim ? { paymentClaimedAt: null } : {}),
+        },
+        select: { id: true },
+      });
+    });
+    if (taken.length > 0) return { ok: false, error: rebilledError(taken) };
+  } else if (next.markPaid > 0) {
     await addPayment(
       invoice,
       { amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID, note: null },
