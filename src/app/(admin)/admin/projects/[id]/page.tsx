@@ -24,6 +24,7 @@ import { WorkTab } from "@/components/board/work-tab";
 import { WORK_TAB, resolveWorkLink } from "@/lib/board";
 import { isPlanItem } from "@/lib/work-scope";
 import { serverNow } from "@/lib/server-now";
+import { creditedTotal } from "@/lib/invoice-totals";
 
 export const metadata = { title: "Project" };
 
@@ -159,6 +160,10 @@ export default async function ProjectDetailPage({
                   amount: Number(i.amount),
                   amountPaid: Number(i.amountPaid),
                   status: i.status,
+                  currency: i.currency,
+                  amountUsd: i.amountUsd == null ? null : Number(i.amountUsd),
+                  creditNoteForId: i.creditNoteForId,
+                  credited: creditedTotal(i.creditNotes),
                 }))}
                 retainers={workspace.retainers}
               />

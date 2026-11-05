@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { MilestoneView } from "@/components/milestones/milestone-types";
 import { InvoiceStatusBadge } from "@/components/status-badges";
+import { SoftPill } from "@/components/ui/status-pill";
+import { HUE } from "@/lib/status-colors";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -21,15 +23,12 @@ import {
 import { toneChip, toneText } from "@/lib/tone";
 import { formatCurrency } from "@/lib/currency";
 import { cadenceLabel, cadenceSuffix } from "@/lib/recurring";
+import { projectMoneyTotals, type ProjectInvoice } from "@/lib/project-money";
 
-type InvoiceRow = {
+type InvoiceRow = ProjectInvoice & {
   id: string;
   invoiceNumber: string;
   issueDate: Date | string;
-  amount: number;
-  /** Money actually received — partial payments count toward "collected". */
-  amountPaid: number;
-  status: string;
 };
 
 type RetainerRow = {
@@ -132,14 +131,9 @@ export function ProjectMoney({
   const unpriced = billingType === "CONTRACT" && contractPrice == null;
   const unvalued = billingType === "CONTRACT" ? billable.missingUsd : 0;
 
-  // Cancelled documents and credit notes never count as receivables.
-  const liveInvoices = invoices.filter((i) => i.status !== "CANCELLED");
-  const invoiced = liveInvoices.reduce((sum, i) => sum + i.amount, 0);
-  const paid = liveInvoices.reduce((sum, i) => sum + i.amountPaid, 0);
-  // Nor are drafts: nothing on one is owed until it has been sent.
-  const outstanding = liveInvoices
-    .filter((i) => i.status !== "DRAFT")
-    .reduce((sum, i) => sum + i.amount - i.amountPaid, 0);
+  // Cancelled documents and credit notes never count as receivables, and
+  // every invoice counts at its USD value (lib/project-money).
+  const { invoiced, paid, outstanding, count, missingUsd } = projectMoneyTotals(invoices);
   // Work no invoice line bills yet, from the links between them, rather than
   // the work's value minus every invoice on the project.
   const unbilled = billable.unbilled;
@@ -202,7 +196,10 @@ export function ProjectMoney({
         <Stat
           label="Invoiced"
           value={usd.format(invoiced)}
-          hint={`${liveInvoices.length} invoice${liveInvoices.length === 1 ? "" : "s"}`}
+          hint={
+            `${count} invoice${count === 1 ? "" : "s"}` +
+            (missingUsd > 0 ? ` · ${missingUsd} with no USD value, not counted` : "")
+          }
           icon={ReceiptText}
         />
         <Stat
@@ -297,11 +294,19 @@ export function ProjectMoney({
                     <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
                       {formatDate(invoice.issueDate)}
                     </TableCell>
-                    <TableCell className="text-sm">{usd.format(invoice.amount)}</TableCell>
+                    <TableCell className="text-sm">
+                      {/* A credit note is money back, so it reads as one. */}
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" && "−"}
+                      {formatCurrency(invoice.amount, invoice.currency)}
+                    </TableCell>
                     <TableCell>
-                      <InvoiceStatusBadge
-                        status={invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]}
-                      />
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
+                        <SoftPill color={HUE.violet}>Credit note</SoftPill>
+                      ) : (
+                        <InvoiceStatusBadge
+                          status={invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
