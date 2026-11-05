@@ -29,6 +29,11 @@ test("only the steps that copy cards and comments are bounded to the last pass",
   assert.deepEqual(bounded, [3, 4]);
 });
 
+test("the steps that link old invoice lines to work stop at the first boot pass", () => {
+  const cut = WORK_BACKFILL_SQL.flatMap((sql, i) => (sql.includes(`'${FIRST_PASS_KEY}'`) ? [i + 1] : []));
+  assert.deepEqual(cut, [16, 17]);
+});
+
 function fakeDb(last: string | null) {
   const calls = {
     executed: [] as { sql: string; values: unknown[] }[],

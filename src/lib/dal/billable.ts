@@ -3,7 +3,8 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import { usdValue } from "@/lib/invoice-usd";
-import { billableLines, contractInvoiced } from "@/lib/billable-lines";
+import { billableLines, contractInvoiced, legacyInvoicedUsd } from "@/lib/billable-lines";
+import { FIRST_PASS_KEY } from "@/lib/work-backfill";
 import type { BillableLine } from "@/lib/billable-lines";
 
 export type { BillableLine } from "@/lib/billable-lines";
@@ -17,8 +18,16 @@ export type BillableWork = {
   lines: BillableLine[];
   /** Σ qty × rate of the lines above. */
   total: number;
-  /** Value of work done that nothing bills yet (the lines above), in USD. */
+  /**
+   * Value of work done that nothing bills yet (the lines above), in USD, less
+   * what older invoices may already bill (legacyUsd).
+   */
   unbilled: number;
+  /**
+   * Milestone projects: USD invoiced by the old code on invoices that don't
+   * say which work they bill. Some of the lines above may be on them.
+   */
+  legacyUsd: number;
   /** Contract projects: invoices with no USD value, left out of what has been invoiced. */
   missingUsd: number;
 };
@@ -58,7 +67,8 @@ export const unbilledHours = {
 
 /**
  * One wave: the project with its live work (and whether each fixed piece is
- * on a live invoice line), plus the hours no live invoice bills yet.
+ * on a live invoice line), plus the hours no live invoice bills yet, and when
+ * the first v49 boot pass ran (older invoices weren't linked to their work).
  * `withEntries` loads the unbilled entries themselves, for the invoice that
  * is about to link them; otherwise their sums are enough.
  */
@@ -66,7 +76,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
   const hourly = {
     milestone: { projectId, archivedAt: null, pricingType: "HOURLY" },
   } satisfies Prisma.TimeEntryWhereInput;
-  const [project, open] = await Promise.all([
+  const [project, open, cutover] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
       select: {
@@ -93,9 +103,18 @@ async function loadWork(projectId: string, withEntries: boolean) {
           },
         },
         // A contract bills what is left of its price after what's invoiced.
+        // An old invoice with no line linked to work makes Bill work warn.
         invoices: {
           where: { status: { not: "CANCELLED" } },
-          select: contractInvoiceSelect,
+          select: {
+            ...contractInvoiceSelect,
+            createdAt: true,
+            items: {
+              where: { OR: [{ milestoneId: { not: null } }, { timeEntries: { some: {} } }] },
+              select: { id: true },
+              take: 1,
+            },
+          },
         },
       },
     }),
@@ -113,6 +132,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
           .then((rows) =>
             rows.map((row) => ({ id: null, milestoneId: row.milestoneId, hours: row._sum.hours })),
           ),
+    prisma.appSetting.findUnique({ where: { key: FIRST_PASS_KEY }, select: { value: true } }),
   ]);
   if (!project) return null;
 
@@ -143,6 +163,19 @@ async function loadWork(projectId: string, withEntries: boolean) {
     unbilledHours: unbilled,
   });
 
+  // Before the first pass every invoice is the old code's.
+  const legacyUsd =
+    project.billingType === "MILESTONE"
+      ? legacyInvoicedUsd(
+          project.invoices.map((i) => ({
+            ...toContractInvoice(i),
+            createdAt: i.createdAt,
+            linked: i.items.length > 0,
+          })),
+          cutover ? new Date(cutover.value) : new Date(),
+        )
+      : 0;
+
   const work: BillableWork = {
     projectId: project.id,
     projectName: project.projectName,
@@ -150,7 +183,8 @@ async function loadWork(projectId: string, withEntries: boolean) {
     currency: "USD",
     lines,
     total,
-    unbilled: total,
+    unbilled: Math.max(Math.round((total - legacyUsd) * 100) / 100, 0),
+    legacyUsd,
     missingUsd: project.billingType === "CONTRACT" ? invoiced.missing : 0,
   };
   return { work, entries, contractInvoicedUsd };

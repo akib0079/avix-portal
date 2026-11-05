@@ -66,3 +66,30 @@ FROM (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
   WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
   GROUP BY p."id") c
 WHERE i."id" = c."id" AND i."amountPaid" + c."credited" < i."amount";
+
+UPDATE "invoice_items" ii SET "milestoneId" = m."id"
+FROM "invoices" i, "milestones" m
+WHERE ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
+  AND i."status" <> 'CANCELLED' AND i."creditNoteForId" IS NULL
+  AND i."createdAt" < COALESCE((SELECT COALESCE(
+    (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49:firstBoot'),
+    (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49'))::timestamptz AT TIME ZONE 'UTC'),
+    now() AT TIME ZONE 'UTC')
+  AND m."projectId" = i."projectId" AND m."pricingType" = 'FIXED' AND ii."description" = m."title";
+
+UPDATE "time_entries" te SET "invoiceItemId" = x."itemId"
+FROM (SELECT DISTINCT ON (e."id") e."id" AS "entryId", ii."id" AS "itemId"
+  FROM "time_entries" e
+  JOIN "milestones" m ON m."id" = e."milestoneId" AND m."pricingType" = 'HOURLY'
+  JOIN "invoices" i ON i."projectId" = m."projectId" AND i."status" <> 'CANCELLED'
+    AND i."creditNoteForId" IS NULL AND i."createdAt" >= e."createdAt"
+    AND i."createdAt" < COALESCE((SELECT COALESCE(
+      (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49:firstBoot'),
+      (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49'))::timestamptz AT TIME ZONE 'UTC'),
+      now() AT TIME ZONE 'UTC')
+  JOIN "invoice_items" ii ON ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
+    AND left(ii."description", length(m."title") + 3) = m."title" || ' — '
+    AND right(ii."description", 1) = 'h'
+  WHERE e."invoiceItemId" IS NULL
+  ORDER BY e."id", i."createdAt", ii."sortOrder") x
+WHERE te."id" = x."entryId" AND te."invoiceItemId" IS NULL;

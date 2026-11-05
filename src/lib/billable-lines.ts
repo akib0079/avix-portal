@@ -80,6 +80,34 @@ export function contractInvoiced(
   return { usd: round(usd), missing };
 }
 
+/**
+ * What the old code invoiced on a milestone project without saying what for,
+ * in USD: live invoices from before the first v49 boot pass (`cutover`) with
+ * no line linked to work. The backfill links the lines the old Bill work
+ * wrote; the rest (hand-typed lines, work renamed since) may bill work that
+ * is offered again here, so Bill work warns about this much. Nothing newer
+ * counts: the new code links every line it bills.
+ */
+export function legacyInvoicedUsd(
+  invoices: {
+    usd: number | null;
+    creditNote: boolean;
+    status: string;
+    createdAt: Date;
+    /** A line on it is linked to a milestone or to hours. */
+    linked: boolean;
+  }[],
+  cutover: Date,
+): number {
+  let usd = 0;
+  for (const invoice of invoices) {
+    if (invoice.status === "CANCELLED" || invoice.creditNote || invoice.linked) continue;
+    if (invoice.createdAt >= cutover) continue;
+    usd += invoice.usd ?? 0;
+  }
+  return round(usd);
+}
+
 function hoursLabel(hours: number): string {
   return `${Number.isInteger(hours) ? hours : round(hours)}h`;
 }

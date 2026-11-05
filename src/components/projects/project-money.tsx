@@ -13,7 +13,11 @@ import {
 import { usd, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Clock, BadgeDollarSign, ReceiptText, Repeat } from "lucide-react";
-import { BillWorkButton, type BillableLineView } from "@/components/invoices/bill-work-button";
+import {
+  BillWorkButton,
+  LegacyNote,
+  type BillableLineView,
+} from "@/components/invoices/bill-work-button";
 import { toneChip, toneText } from "@/lib/tone";
 import { formatCurrency } from "@/lib/currency";
 import { cadenceLabel, cadenceSuffix } from "@/lib/recurring";
@@ -98,7 +102,7 @@ export function ProjectMoney({
   invoices: InvoiceRow[];
   retainers: RetainerRow[];
   /** Work that could be billed right now, from getBillableWork. */
-  billable: { lines: BillableLineView[]; total: number; unbilled: number };
+  billable: { lines: BillableLineView[]; total: number; unbilled: number; legacyUsd: number };
 }) {
   const totalLogged = milestones.reduce((sum, m) => sum + m.loggedHours, 0);
   const hourly = milestones.filter((m) => m.pricingType === "HOURLY");
@@ -135,18 +139,20 @@ export function ProjectMoney({
             <p className="text-sm font-medium">
               {billable.unbilled > 0
                 ? `${usd.format(billable.unbilled)} of completed work isn't invoiced yet`
-                : "All completed work has been invoiced"}
+                : "Older invoices may already bill this work"}
             </p>
             <p className="text-xs text-muted-foreground">
               {billable.lines.length} line
               {billable.lines.length === 1 ? "" : "s"} no invoice bills yet — completed
               fixed-price work and logged hours.
             </p>
+            {billable.legacyUsd > 0 && <LegacyNote legacyUsd={billable.legacyUsd} />}
           </div>
           <BillWorkButton
             projectId={projectId}
             lines={billable.lines}
             unbilled={billable.unbilled}
+            legacyUsd={billable.legacyUsd}
           />
         </div>
       )}

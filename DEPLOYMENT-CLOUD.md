@@ -104,6 +104,13 @@ If migrations don't run during build on your plan (build environment without
 env vars), change the Start command to
 `npx prisma migrate deploy && npm run start` instead.
 
+**Rolling back to a build from before v49.** Migrations never run backwards,
+so an older build serves the newer data. On every boot the newer build folds
+in what an older one wrote since its last boot, but an older build's invoice
+editor rewrites an invoice's lines without the links to the work they bill.
+While an older build is serving, don't edit invoices made with Bill work:
+their work would read as unbilled again and be offered for billing twice.
+
 ## 3. Generating the upload ZIP (only if not using GitHub)
 
 From the project folder on the Mac:

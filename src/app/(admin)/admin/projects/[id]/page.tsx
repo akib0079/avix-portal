@@ -144,6 +144,7 @@ export default async function ProjectDetailPage({
                   lines: billable?.lines ?? [],
                   total: billable?.total ?? 0,
                   unbilled: billable?.unbilled ?? 0,
+                  legacyUsd: billable?.legacyUsd ?? 0,
                 }}
                 milestones={milestones}
                 billingType={project.billingType}
