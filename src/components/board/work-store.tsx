@@ -265,6 +265,9 @@ export function WorkProvider({
   // A client's send-back is waiting on its reason: the card is painted moved
   // and the board before it is held to go back to, so nothing may land.
   const sendBackOpen = useRef(false);
+  // A fresh render skipped while a write was in flight: once the writes
+  // settle, ask for the board instead of waiting for the next poll.
+  const missedRender = useRef(false);
   const itemsRef = useRef(items);
   const versionRef = useRef(initial.version);
   const seenInitial = useRef(initial);
@@ -298,6 +301,7 @@ export function WorkProvider({
         if (!res || !data) return;
         if (dragging.current || pending.current > 0 || sendBackOpen.current || res.startedAt < lastLocal.current) return;
         if (data.version !== versionRef.current) reloadDetail(openIdRef.current);
+        missedRender.current = false;
         versionRef.current = data.version;
         setItems((prev) => reconcile(prev, data.items));
         setPeople((prev) => (samePeople(prev, data.people) ? prev : data.people));
@@ -317,7 +321,10 @@ export function WorkProvider({
   useEffect(() => {
     if (initial === seenInitial.current) return;
     seenInitial.current = initial;
-    if (dragging.current || pending.current > 0 || sendBackOpen.current) return;
+    if (dragging.current || pending.current > 0 || sendBackOpen.current) {
+      missedRender.current = true;
+      return;
+    }
     if (Date.now() - renderedAt > 5_000) {
       void mutate();
       return;
@@ -338,8 +345,12 @@ export function WorkProvider({
     } finally {
       pending.current--;
       lastLocal.current = Date.now();
+      if (missedRender.current && pending.current === 0 && !dragging.current && !sendBackOpen.current) {
+        missedRender.current = false;
+        void mutate();
+      }
     }
-  }, []);
+  }, [mutate]);
 
   const refresh = useCallback(() => void mutate(), [mutate]);
 
