@@ -256,6 +256,7 @@ test("the change token moves with anything a card shows", () => {
     commentsAt: new Date("2026-11-02T09:00:00Z"),
     comments: 4,
     hours: 7.5,
+    hoursMix: 7.5 * 1000,
     entries: 3,
     billedAt: null,
     billed: 0,
@@ -268,6 +269,8 @@ test("the change token moves with anything a card shows", () => {
     { commentsAt: new Date("2026-11-02T09:30:00Z") },
     { comments: 3 },
     { hours: 7.75 },
+    // The same hours, moved to another item.
+    { hoursMix: 7.5 * 2000 },
     { entries: 4 },
   ];
   for (const change of changes) {
@@ -278,8 +281,8 @@ test("the change token moves with anything a card shows", () => {
   assert.equal(workVersion(billed, { billing: false }), base);
   assert.notEqual(workVersion(billed, { billing: true }), workVersion(row, { billing: true }));
   const empty = workVersion(
-    { itemsAt: null, items: 0, commentsAt: null, comments: 0, hours: 0, entries: 0, billedAt: null, billed: 0 },
+    { itemsAt: null, items: 0, commentsAt: null, comments: 0, hours: 0, hoursMix: 0, entries: 0, billedAt: null, billed: 0 },
     { billing: true },
   );
-  assert.equal(empty, "0.0.0.0.0.0.0.0");
+  assert.equal(empty, "0.0.0.0.0.0.0.0.0");
 });

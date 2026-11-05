@@ -491,6 +491,8 @@ export type WorkVersionRow = {
   commentsAt: Date | null;
   comments: number;
   hours: number;
+  /** The hours weighted by item, so moving hours between items shows. */
+  hoursMix: number;
   entries: number;
   billedAt: Date | null;
   billed: number;
@@ -500,9 +502,10 @@ export type WorkVersionRow = {
  * The board poll's change token: one number for everything a card or row can
  * show that can change — the items themselves (any update bumps updatedAt;
  * archiving or adding changes the count), their threads (a new comment, a
- * resolved help request, a deleted comment), logged hours, and for ADMIN the
- * invoice lines that bill them. Equal tokens mean the viewer already holds the
- * current board, so the poll answers 204 with no body.
+ * resolved help request, a deleted comment), logged hours and which items
+ * they're on, and for ADMIN the invoice lines that bill them. Equal tokens
+ * mean the viewer already holds the current board, so the poll answers 204
+ * with no body.
  */
 export function workVersion(row: WorkVersionRow, opts: { billing: boolean }): string {
   const at = (d: Date | null) => (d ? d.getTime() : 0);
@@ -512,6 +515,7 @@ export function workVersion(row: WorkVersionRow, opts: { billing: boolean }): st
     at(row.commentsAt),
     row.comments,
     Math.round(row.hours * 100),
+    Math.round(row.hoursMix * 100),
     row.entries,
   ];
   if (opts.billing) parts.push(at(row.billedAt), row.billed);

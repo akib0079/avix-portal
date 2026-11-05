@@ -368,6 +368,7 @@ type VersionQueryRow = {
   commentsAt: Date | null;
   comments: number;
   hours: number;
+  hoursMix: number;
   entries: number;
   billedAt: Date | null;
   billed: number;
@@ -388,7 +389,7 @@ export async function getWorkVersion(
   const clientId = who.role === "CLIENT" ? who.id : null;
   const rows = await prisma.$queryRaw<VersionQueryRow[]>`
     SELECT w."itemsAt", w."items", c."commentsAt", c."comments",
-           t."hours", t."entries", b."billedAt", b."billed"
+           t."hours", t."hoursMix", t."entries", b."billedAt", b."billed"
     FROM "projects" p
     CROSS JOIN LATERAL (
       SELECT max(m."updatedAt") AS "itemsAt", count(*)::int AS "items"
@@ -403,7 +404,12 @@ export async function getWorkVersion(
       WHERE m."projectId" = p."id" AND m."archivedAt" IS NULL
     ) c
     CROSS JOIN LATERAL (
-      SELECT COALESCE(sum(te."hours"), 0)::float8 AS "hours", count(*)::int AS "entries"
+      -- hoursMix weighs each entry by a hash of its item, so hours moved from
+      -- one item to another change the token even when the total doesn't.
+      SELECT COALESCE(sum(te."hours"), 0)::float8 AS "hours",
+             COALESCE(sum(te."hours" * ((hashtext(te."milestoneId")::bigint & 1048575) + 1)), 0)::float8
+               AS "hoursMix",
+             count(*)::int AS "entries"
       FROM "time_entries" te
       JOIN "milestones" m ON m."id" = te."milestoneId"
       WHERE m."projectId" = p."id" AND m."archivedAt" IS NULL
@@ -424,6 +430,7 @@ export async function getWorkVersion(
     commentsAt: row.commentsAt,
     comments: Number(row.comments),
     hours: Number(row.hours),
+    hoursMix: Number(row.hoursMix),
     entries: Number(row.entries),
     billedAt: row.billedAt,
     billed: Number(row.billed),
