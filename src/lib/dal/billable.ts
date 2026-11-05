@@ -17,8 +17,6 @@ export type BillableWork = {
   lines: BillableLine[];
   /** Σ qty × rate of the lines above. */
   total: number;
-  /** Work already on an invoice that isn't cancelled, in USD. */
-  billed: number;
   /** Value of work done that nothing bills yet (the lines above), in USD. */
   unbilled: number;
   /** Contract projects: invoices with no USD value, left out of what has been invoiced. */
@@ -58,14 +56,9 @@ export const unbilledHours = {
   OR: [{ invoiceItemId: null }, { invoiceItem: { invoice: { status: "CANCELLED" } } }],
 } satisfies Prisma.TimeEntryWhereInput;
 
-/** Hours on a line of an invoice that still counts. */
-const billedHours = {
-  invoiceItem: { invoice: { status: { not: "CANCELLED" } } },
-} satisfies Prisma.TimeEntryWhereInput;
-
 /**
  * One wave: the project with its live work (and whether each fixed piece is
- * on a live invoice line), plus the hours split into billed and unbilled.
+ * on a live invoice line), plus the hours no live invoice bills yet.
  * `withEntries` loads the unbilled entries themselves, for the invoice that
  * is about to link them; otherwise their sums are enough.
  */
@@ -73,7 +66,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
   const hourly = {
     milestone: { projectId, archivedAt: null, pricingType: "HOURLY" },
   } satisfies Prisma.TimeEntryWhereInput;
-  const [project, open, billed] = await Promise.all([
+  const [project, open] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
       select: {
@@ -120,11 +113,6 @@ async function loadWork(projectId: string, withEntries: boolean) {
           .then((rows) =>
             rows.map((row) => ({ id: null, milestoneId: row.milestoneId, hours: row._sum.hours })),
           ),
-    prisma.timeEntry.groupBy({
-      by: ["milestoneId"],
-      where: { ...hourly, ...billedHours },
-      _sum: { hours: true },
-    }),
   ]);
   if (!project) return null;
 
@@ -137,7 +125,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
     unbilled[row.milestoneId] = (unbilled[row.milestoneId] ?? 0) + Number(row.hours ?? 0);
     if (row.id) (entries[row.milestoneId] ??= []).push(row.id);
   }
-  const { lines, total, billed: billedValue } = billableLines({
+  const { lines, total } = billableLines({
     projectName: project.projectName,
     billingType: project.billingType,
     contractPrice: project.contractPrice == null ? null : Number(project.contractPrice),
@@ -153,9 +141,6 @@ async function loadWork(projectId: string, withEntries: boolean) {
       onLiveInvoice: m.invoiceItems.length > 0,
     })),
     unbilledHours: unbilled,
-    billedHours: Object.fromEntries(
-      billed.map((row) => [row.milestoneId, Number(row._sum.hours ?? 0)]),
-    ),
   });
 
   const work: BillableWork = {
@@ -165,7 +150,6 @@ async function loadWork(projectId: string, withEntries: boolean) {
     currency: "USD",
     lines,
     total,
-    billed: billedValue,
     unbilled: total,
     missingUsd: project.billingType === "CONTRACT" ? invoiced.missing : 0,
   };

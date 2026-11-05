@@ -48,8 +48,8 @@ export type WorkInput = {
   items: WorkItem[];
   /** Hours per item that no live invoice bills. */
   unbilledHours: Record<string, number>;
-  /** Hours per item already on a live invoice. */
-  billedHours: Record<string, number>;
+  /** Hours per item already on a live invoice; only `billed` reads them. */
+  billedHours?: Record<string, number>;
 };
 
 function round(value: number): number {
@@ -133,7 +133,7 @@ export function billableLines(work: WorkInput): {
       }
       if (item.pricingType === "HOURLY") {
         const rate = item.hourlyRate ?? 0;
-        billed += (work.billedHours[item.id] ?? 0) * rate;
+        billed += (work.billedHours?.[item.id] ?? 0) * rate;
         const hours = round(work.unbilledHours[item.id] ?? 0);
         if (hours > 0 && rate > 0) {
           lines.push({
