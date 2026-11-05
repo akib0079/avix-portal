@@ -457,16 +457,16 @@ export async function moveWorkItem(
   const renumbered = plan.length > 1 || planned !== target ? plan : [];
   const pending = plan.filter((r) => r.id !== item.id || r.boardPosition !== row.boardPosition);
   if (pending.length) {
-    await prisma.$transaction(
-      pending.map((r) =>
-        prisma.milestone.update({
-          where: { id: r.id },
-          data: { boardPosition: r.boardPosition },
-          select: { id: true },
-        }),
-      ),
-    );
-    row = { ...row, boardPosition: planned };
+    // One statement for the whole renumber: one round trip, all or nothing,
+    // and the column's rows are locked only while it runs. updatedAt is set by
+    // hand (a raw write skips @updatedAt): the poll's version token reads it.
+    const now = new Date();
+    await prisma.$executeRaw`
+      UPDATE "milestones" AS m
+      SET "boardPosition" = v."pos", "updatedAt" = ${now}::timestamp
+      FROM unnest(${pending.map((r) => r.id)}::text[], ${pending.map((r) => r.boardPosition)}::float8[]) AS v("id", "pos")
+      WHERE m."id" = v."id" AND m."projectId" = ${item.projectId}`;
+    row = { ...row, boardPosition: planned, updatedAt: now };
   }
 
   if (from !== to) {

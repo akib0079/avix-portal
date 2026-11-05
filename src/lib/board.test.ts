@@ -123,6 +123,38 @@ test("a drop writes one row while there is room", () => {
   assert.deepEqual(placeInColumn([], "x", 1024), [{ id: "x", boardPosition: 1024 }]);
 });
 
+test("a drop onto a hidden card goes just past it instead of renumbering", () => {
+  const column = [
+    { id: "a", boardPosition: 1024 },
+    { id: "b", boardPosition: 2048 },
+    { id: "c", boardPosition: 3072 },
+  ];
+  // A filter hides b: the drop between a and c lands exactly on it.
+  assert.deepEqual(placeInColumn(column, "x", 2048), [{ id: "x", boardPosition: 1536 }]);
+  // Just above b goes above it.
+  assert.deepEqual(placeInColumn(column, "x", 2048 + MIN_POSITION_GAP / 4), [
+    { id: "x", boardPosition: 2560 },
+  ]);
+  // On the first card, halfway to zero.
+  assert.deepEqual(placeInColumn(column, "x", 1024), [{ id: "x", boardPosition: 512 }]);
+  // No room beside the card: renumber.
+  const tight = [
+    { id: "a", boardPosition: 1024 },
+    { id: "b", boardPosition: 1024 + MIN_POSITION_GAP * 1.5 },
+  ];
+  assert.equal(placeInColumn(tight, "x", 1024 + MIN_POSITION_GAP * 1.5).length > 1, true);
+  // Two cards at the same number are a run, not one card: renumber.
+  const tied = [
+    { id: "a", boardPosition: 1024 },
+    { id: "b", boardPosition: 1024 },
+  ];
+  assert.deepEqual(placeInColumn(tied, "x", 1024), [
+    { id: "x", boardPosition: 1024 },
+    { id: "a", boardPosition: 2048 },
+    { id: "b", boardPosition: 3072 },
+  ]);
+});
+
 test("a drop renumbers the column when the spot is worn out or not above zero", () => {
   const column = [
     { id: "a", boardPosition: 1024 },
