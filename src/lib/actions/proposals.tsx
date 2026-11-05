@@ -2018,6 +2018,9 @@ export async function declineProposal(
   return { ok: true };
 }
 
+/** Reloads and repeat calls this close together count as one open. */
+const VIEW_DEDUPE_MS = 5 * 60 * 1000;
+
 /**
  * PUBLIC action, called by the public page once it has mounted. Counting from
  * the browser rather than the server render is deliberate: link scanners
@@ -2026,7 +2029,10 @@ export async function declineProposal(
  * previewing the page doesn't count either.
  *
  * One statement does the counting, the audit row and the lookup for the
- * notification, because this runs on every open of every proposal.
+ * notification, because this runs on every open of every proposal. Opens
+ * within VIEW_DEDUPE_MS of the last one count once: the window is in the
+ * statement, so a script calling this in a loop can't inflate the count or
+ * grow the event log, whatever address it claims.
  */
 export async function recordProposalView(id: string, token: string): Promise<void> {
   const claims = readProposalLink(id, token);
@@ -2047,6 +2053,7 @@ export async function recordProposalView(id: string, token: string): Promise<voi
         AND "archivedAt" IS NULL
         AND "linkVersion" = ${claims.version}
         AND "expiresAt" > ${now}::timestamp
+        AND ("lastViewedAt" IS NULL OR "lastViewedAt" < ${new Date(now.getTime() - VIEW_DEDUPE_MS)}::timestamp)
       RETURNING id, "viewCount", title, "leadId", "recipientName"
     ), logged AS (
       INSERT INTO proposal_events (id, "proposalId", type, "ipAddress", "userAgent", "createdAt")
