@@ -39,6 +39,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { toneChip } from "@/lib/tone";
+import { SoftPill } from "@/components/ui/status-pill";
+import { HUE } from "@/lib/status-colors";
 import { Suspense } from "react";
 import { SignedProposalLink } from "@/components/portal/signed-proposal-link";
 
@@ -309,13 +311,19 @@ function BillingAndCalls({
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       <span className="text-sm font-medium">
+                        {/* A credit note is money back, not a bill. */}
+                        {invoice.creditNoteForId && invoice.status !== "CANCELLED" && "−"}
                         {formatCurrency(invoice.amount, invoice.currency)}
                       </span>
-                      <InvoiceStatusBadge
-                        status={
-                          invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]
-                        }
-                      />
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
+                        <SoftPill color={HUE.violet}>Credit note</SoftPill>
+                      ) : (
+                        <InvoiceStatusBadge
+                          status={
+                            invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]
+                          }
+                        />
+                      )}
                     </span>
                   </Link>
                 </li>

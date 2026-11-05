@@ -73,7 +73,8 @@ export default async function ClientInvoiceDetailPage({
                 </p>
               </div>
             </div>
-            {invoice.creditNoteForId ? (
+            {/* A cancelled credit note shows as cancelled: it credits nothing. */}
+            {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
               <SoftPill color={HUE.violet}>Credit note</SoftPill>
             ) : (
               <InvoiceStatusBadge status={invoice.status} />
@@ -83,10 +84,21 @@ export default async function ClientInvoiceDetailPage({
           {invoice.creditNoteFor ? (
             <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div>
-                <p className="text-xs text-muted-foreground">Credited to you</p>
-                <p className="font-heading text-xl font-bold">
-                  {formatCurrency(total, invoice.currency)}
-                </p>
+                {invoice.status === "CANCELLED" ? (
+                  <>
+                    <p className="text-xs text-muted-foreground">Cancelled, nothing credited</p>
+                    <p className="font-heading text-xl font-bold text-muted-foreground line-through">
+                      {formatCurrency(total, invoice.currency)}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">Credited to you</p>
+                    <p className="font-heading text-xl font-bold">
+                      {formatCurrency(total, invoice.currency)}
+                    </p>
+                  </>
+                )}
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Against</p>

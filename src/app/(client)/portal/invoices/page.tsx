@@ -126,12 +126,13 @@ export default async function MyInvoicesPage() {
                       {formatDate(invoice.dueDate)}
                     </TableCell>
                     <TableCell className="text-sm font-medium">
-                      {/* A credit note is money back, so it reads as one. */}
-                      {invoice.creditNoteForId && "−"}
+                      {/* A credit note is money back, so it reads as one; a
+                          cancelled one gives nothing back. */}
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" && "−"}
                       {formatCurrency(Number(invoice.amount), invoice.currency)}
                     </TableCell>
                     <TableCell>
-                      {invoice.creditNoteForId ? (
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
                         <SoftPill color={HUE.violet}>Credit note</SoftPill>
                       ) : (
                         <InvoiceStatusBadge status={invoice.status} />
