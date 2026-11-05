@@ -1,7 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
-import type { Lead, LeadStage, LeadSource, Priority, LeadEntryKind } from "@prisma/client";
+import { keptWithoutLead } from "@/lib/proposal-rules";
+import type { Lead, LeadStage, LeadSource, Priority, LeadEntryKind, ProposalStatus } from "@prisma/client";
 
 /** Serialized lead safe for client components (no Decimal/Date). */
 export type LeadView = {
@@ -24,6 +25,8 @@ export type LeadView = {
   lostReason: string | null;
   tags: string[];
   convertedClientId: string | null;
+  /** Its proposals, archived ones too, as deleting the lead treats them (keptWithoutLead). */
+  proposalCounts: { unsent: number; kept: number };
   createdAt: string;
   updatedAt: string;
 };
@@ -44,9 +47,13 @@ export type LeadEntryView = {
 
 export type LeadOwnerOption = { id: string; name: string };
 
-type LeadWithOwner = Lead & { owner?: { firstName: string; lastName: string } | null };
+type LeadWithOwner = Lead & {
+  owner?: { firstName: string; lastName: string } | null;
+  proposals?: { status: ProposalStatus; sentAt: Date | null; archivedAt: Date | null }[];
+};
 
 export function toLeadView(lead: LeadWithOwner): LeadView {
+  const kept = (lead.proposals ?? []).filter(keptWithoutLead).length;
   return {
     id: lead.id,
     name: lead.name,
@@ -69,6 +76,7 @@ export function toLeadView(lead: LeadWithOwner): LeadView {
     lostReason: lead.lostReason,
     tags: lead.tags,
     convertedClientId: lead.convertedClientId,
+    proposalCounts: { unsent: (lead.proposals?.length ?? 0) - kept, kept },
     createdAt: lead.createdAt.toISOString(),
     updatedAt: lead.updatedAt.toISOString(),
   };
@@ -80,7 +88,11 @@ export async function listLeads(): Promise<LeadView[]> {
     orderBy: [{ nextFollowUp: "asc" }, { createdAt: "desc" }],
     // Bounded — the kanban holds this comfortably; WON/LOST age out of view.
     take: 300,
-    include: { owner: { select: { firstName: true, lastName: true } } },
+    include: {
+      owner: { select: { firstName: true, lastName: true } },
+      // For the delete dialog: what deleting the lead does to them.
+      proposals: { select: { status: true, sentAt: true, archivedAt: true } },
+    },
   });
   return rows.map(toLeadView);
 }
@@ -96,15 +108,16 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
         orderBy: { createdAt: "desc" },
         include: { author: { select: { firstName: true, lastName: true } } },
       },
-      // Archived proposals are off the board, so off the lead too.
+      // Archived ones too, for the delete dialog's counts (toLeadView).
       proposals: {
-        where: { archivedAt: null },
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
           title: true,
           status: true,
           currency: true,
+          sentAt: true,
+          archivedAt: true,
           items: { select: { amount: true } },
         },
       },
@@ -123,7 +136,8 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
         : null,
       createdAt: e.createdAt.toISOString(),
     })),
-    proposals: lead.proposals.map((p) => ({
+    // Archived proposals are off the board, so off the lead's list too.
+    proposals: lead.proposals.filter((p) => !p.archivedAt).map((p) => ({
       id: p.id,
       title: p.title,
       status: p.status,

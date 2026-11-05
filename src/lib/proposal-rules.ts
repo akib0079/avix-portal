@@ -112,6 +112,33 @@ export function proposalRemovalPlan(
   return { mode, invoice: removable ? "offer" : "keep" };
 }
 
+/**
+ * Deleting a lead: which of its proposals outlive it. A draft nobody was sent
+ * goes with the lead, tidied up as deleting it would be. A sent, declined or
+ * archived one is the record of what was offered (archived ones can still be
+ * restored), so it stays as a proposal without a lead, addressed as the lead
+ * was. deleteLead repeats this as its where clause.
+ */
+export function keptWithoutLead(p: { status: ProposalStatus; sentAt: DateLike; archivedAt: DateLike }): boolean {
+  return proposalRemovalMode(p) === "archive" || ms(p.archivedAt) != null;
+}
+
+/** What the lead delete dialogs say happens to the lead's proposals. */
+export function leadDeleteNote(counts: { unsent: number; kept: number }): string | null {
+  const parts: string[] = [];
+  if (counts.unsent > 0) {
+    parts.push(
+      `${counts.unsent} unsent draft proposal${counts.unsent === 1 ? " is" : "s are"} deleted with it.`,
+    );
+  }
+  if (counts.kept > 0) {
+    parts.push(
+      `${counts.kept} sent or archived proposal${counts.kept === 1 ? " stays" : "s stay"}, addressed to the lead's contact.`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 // ---------- The builder ----------
 
 /**

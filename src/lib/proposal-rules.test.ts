@@ -10,6 +10,8 @@ import {
   handoffContractPrice,
   invoiceKeptReason,
   keepLineFormatting,
+  keptWithoutLead,
+  leadDeleteNote,
   proposalRemovalMode,
   proposalRemovalPlan,
   timeAgo,
@@ -83,6 +85,25 @@ test("the removal plan: drafts take a safe invoice along, archives only offer it
   assert.deepEqual(proposalRemovalPlan(sent, paperwork), { mode: "archive", invoice: "offer" });
   assert.deepEqual(proposalRemovalPlan(sent, sentInvoice), { mode: "archive", invoice: "keep" });
   assert.deepEqual(proposalRemovalPlan(accepted, paperwork), { mode: "archive", invoice: "keep" });
+});
+
+test("deleting a lead takes only its unsent drafts; sent and archived proposals stay", () => {
+  assert.equal(keptWithoutLead({ status: "DRAFT", sentAt: null, archivedAt: null }), false);
+  assert.equal(keptWithoutLead({ status: "DRAFT", sentAt: new Date(), archivedAt: null }), true);
+  assert.equal(keptWithoutLead({ status: "DRAFT", sentAt: null, archivedAt: new Date() }), true);
+  assert.equal(keptWithoutLead({ status: "SENT", sentAt: new Date(), archivedAt: null }), true);
+  assert.equal(keptWithoutLead({ status: "DECLINED", sentAt: "2026-10-01T10:00:00Z", archivedAt: null }), true);
+
+  assert.equal(leadDeleteNote({ unsent: 0, kept: 0 }), null);
+  assert.equal(leadDeleteNote({ unsent: 1, kept: 0 }), "1 unsent draft proposal is deleted with it.");
+  assert.equal(
+    leadDeleteNote({ unsent: 2, kept: 1 }),
+    "2 unsent draft proposals are deleted with it. 1 sent or archived proposal stays, addressed to the lead's contact.",
+  );
+  assert.equal(
+    leadDeleteNote({ unsent: 0, kept: 3 }),
+    "3 sent or archived proposals stay, addressed to the lead's contact.",
+  );
 });
 
 test("a builder save keeps the formatting of the lines whose words it left alone", () => {

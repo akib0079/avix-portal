@@ -85,11 +85,7 @@ export default async function LeadDetailPage({
         title={lead.name}
         description={`${leadSourceLabels[lead.source]} · added ${formatDate(lead.createdAt)}`}
         action={
-          <LeadDetailActions
-            lead={lead}
-            owners={owners}
-            proposalCount={lead.proposals.length}
-          />
+          <LeadDetailActions lead={lead} owners={owners} />
         }
       />
 

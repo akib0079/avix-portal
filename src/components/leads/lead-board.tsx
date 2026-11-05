@@ -20,6 +20,7 @@ import type { LeadStage } from "@prisma/client";
 import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
 import { leadStageLabels, leadSourceLabels } from "@/lib/validation/lead";
 import { setLeadStage, deleteLead, convertLead } from "@/lib/actions/leads";
+import { leadDeleteNote } from "@/lib/proposal-rules";
 import { LeadFormDialog } from "./lead-form-dialog";
 import { LeadImportDialog } from "./lead-import-dialog";
 import { ProposalFormDialog } from "@/components/proposals/proposal-form-dialog";
@@ -295,6 +296,7 @@ export function LeadBoard({
   const [lostReason, setLostReason] = useState("");
   const [proposingLeadId, setProposingLeadId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const deleteNote = deleting ? leadDeleteNote(deleting.proposalCounts) : null;
   const [folded, toggleFold] = useLocalSet("avix.leads.folded", ["LOST"]);
 
   const [prevLeads, setPrevLeads] = useState(leads);
@@ -504,7 +506,10 @@ export function LeadBoard({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete “{deleting?.name}”?</DialogTitle>
-            <DialogDescription>This removes the lead permanently.</DialogDescription>
+            <DialogDescription>
+              This removes the lead permanently.
+              {deleteNote && <> {deleteNote}</>}
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleting(null)}>
@@ -526,7 +531,10 @@ export function LeadBoard({
                   toast.error(result.error);
                   return;
                 }
-                toast.success("Lead deleted.");
+                const kept = result.data?.keptProposals ?? 0;
+                toast.success(
+                  kept > 0 ? `Lead deleted. ${kept} proposal${kept === 1 ? " was" : "s were"} kept.` : "Lead deleted.",
+                );
                 router.refresh();
               }}
             >

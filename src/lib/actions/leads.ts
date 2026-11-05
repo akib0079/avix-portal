@@ -13,6 +13,9 @@ import {
   type LeadEntryInput,
 } from "@/lib/validation/lead";
 import { logActivity } from "@/lib/dal/activity";
+import { deleteUpload } from "@/lib/uploads";
+import { keptWithoutLead } from "@/lib/proposal-rules";
+import { ActionAbort, removeDraftInvoice, removeSilentClient } from "@/lib/proposal-cleanup";
 import type { LeadStage, Prisma } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
@@ -184,21 +187,48 @@ export async function deleteLeadEntry(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-export async function deleteLead(id: string): Promise<ActionResult> {
+/** An accepted or signed proposal: the agreement behind a client's project and invoice. */
+const AGREED = {
+  OR: [{ status: "ACCEPTED" }, { acceptedAt: { not: null } }, { signatures: { some: {} } }],
+} satisfies Prisma.ProposalWhereInput;
+
+/**
+ * Deletes a lead and decides for each of its proposals, as keptWithoutLead()
+ * says: an unsent draft goes, with the draft invoice and silent account
+ * deleting it would take; a sent, declined or archived one is kept as a
+ * proposal without a lead, addressed as the lead was. An accepted one keeps
+ * the lead (mark it Won instead). Everything happens in one transaction whose
+ * last statement deletes the lead only once no proposal points at it, so a
+ * send or an acceptance that lands meanwhile still wins.
+ */
+export async function deleteLead(id: string): Promise<ActionResult<{ keptProposals: number }>> {
   await requireAdmin();
-  const [lead, agreed] = await Promise.all([
-    prisma.lead.findUnique({ where: { id }, select: { id: true } }),
-    // Proposals go with their lead (onDelete: Cascade). An accepted or signed
-    // one is the agreement behind a client's project and invoice, so it must
-    // never disappear as a side effect of tidying the pipeline.
-    prisma.proposal.count({
-      where: {
-        leadId: id,
-        OR: [{ status: "ACCEPTED" }, { acceptedAt: { not: null } }, { signatures: { some: {} } }],
+  const lead = await prisma.lead.findUnique({
+    where: { id },
+    select: {
+      name: true,
+      email: true,
+      company: true,
+      proposals: {
+        select: {
+          id: true,
+          status: true,
+          sentAt: true,
+          archivedAt: true,
+          acceptedAt: true,
+          convertedInvoiceId: true,
+          convertedClientId: true,
+          createdClientAccount: true,
+          invoicePdfPath: true,
+          _count: { select: { signatures: true } },
+        },
       },
-    }),
-  ]);
+    },
+  });
   if (!lead) return { ok: false, error: "Lead not found." };
+  const agreed = lead.proposals.filter(
+    (p) => p.status === "ACCEPTED" || p.acceptedAt != null || p._count.signatures > 0,
+  ).length;
   if (agreed > 0) {
     return {
       ok: false,
@@ -208,11 +238,90 @@ export async function deleteLead(id: string): Promise<ActionResult> {
           : `This lead has ${agreed} accepted proposals, the agreements behind client projects. Keep the lead (mark it Won) instead of deleting it.`,
     };
   }
+  const drafts = lead.proposals.filter((p) => !keptWithoutLead(p));
+  const kept = lead.proposals.length - drafts.length;
 
-  await prisma.lead.delete({ where: { id } });
+  let result: { invoices: number; plans: number; clients: number; dropFiles: string[] };
+  try {
+    result = await prisma.$transaction(
+      async (tx) => {
+        if (kept > 0) {
+          await tx.proposal.updateMany({
+            where: {
+              leadId: id,
+              OR: [{ status: { not: "DRAFT" } }, { sentAt: { not: null } }, { archivedAt: { not: null } }],
+              NOT: AGREED,
+            },
+            data: {
+              leadId: null,
+              recipientName: lead.name,
+              recipientEmail: lead.email?.toLowerCase() ?? null,
+              recipientCompany: lead.company,
+            },
+          });
+        }
+        if (drafts.length > 0) {
+          const gone = await tx.proposal.deleteMany({
+            where: {
+              id: { in: drafts.map((p) => p.id) },
+              leadId: id,
+              status: "DRAFT",
+              sentAt: null,
+              archivedAt: null,
+            },
+          });
+          if (gone.count !== drafts.length) {
+            throw new ActionAbort("A proposal on this lead was just sent. Refresh and try again.");
+          }
+        }
+        // As deleteProposal tidies up: the invoices first, since a plan an
+        // invoice started makes its account an owner.
+        let invoices = 0;
+        let plans = 0;
+        for (const p of drafts) {
+          if (!p.convertedInvoiceId) continue;
+          const removed = await removeDraftInvoice(tx, p.convertedInvoiceId);
+          if (removed.removed) invoices++;
+          plans += removed.plans;
+        }
+        let clients = 0;
+        const accounts = new Map(
+          drafts.flatMap((p) =>
+            p.createdClientAccount && p.convertedClientId ? [[p.convertedClientId, p.id] as const] : [],
+          ),
+        );
+        for (const [userId, proposalId] of accounts) {
+          if (await removeSilentClient(tx, userId, proposalId)) clients++;
+        }
+        // An uploaded PDF goes once no invoice that stays still serves it.
+        const paths = [...new Set(drafts.flatMap((p) => (p.invoicePdfPath ? [p.invoicePdfPath] : [])))];
+        const used =
+          paths.length > 0
+            ? await tx.invoice.findMany({ where: { pdfPath: { in: paths } }, select: { pdfPath: true } })
+            : [];
+        const stillUsed = new Set(used.map((i) => i.pdfPath));
+
+        const removed = await tx.lead.deleteMany({ where: { id, proposals: { none: {} } } });
+        if (removed.count === 0) {
+          throw new ActionAbort("A proposal on this lead changed a moment ago. Refresh and try again.");
+        }
+        return { invoices, plans, clients, dropFiles: paths.filter((path) => !stillUsed.has(path)) };
+      },
+      { maxWait: 10_000, timeout: 20_000 },
+    );
+  } catch (err) {
+    if (err instanceof ActionAbort) return { ok: false, error: err.message };
+    throw err;
+  }
+
+  for (const path of result.dropFiles) await deleteUpload("invoices", path);
   revalidatePath("/admin/leads");
   revalidatePath("/admin");
-  return { ok: true };
+  if (lead.proposals.length > 0) revalidatePath("/admin/proposals");
+  if (result.invoices > 0) revalidatePath("/admin/invoices");
+  if (result.plans > 0) revalidatePath("/admin/retainers");
+  if (result.clients > 0) revalidatePath("/admin/clients");
+  return { ok: true, data: { keptProposals: kept } };
 }
 
 /** Minimal RFC-4180-ish CSV parser (handles quotes, commas, newlines). */
