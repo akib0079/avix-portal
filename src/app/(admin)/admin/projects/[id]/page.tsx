@@ -45,7 +45,11 @@ export default async function ProjectDetailPage({
     },
   });
   // One round trip for everything the page needs — getBillableWork used to run
-  // after this block, adding a serial query to every load.
+  // after this block, adding a serial query to every load. The poll token is
+  // read before the rows go out, so it is never newer than the rows: a
+  // change landing between the two shows up on the next poll instead of
+  // being taken as already seen.
+  const versionRead = getWorkVersion(id);
   const [viewer, project, messages, deliverables, workspace, team, billableOrNull, items, version] =
     await Promise.all([
       requireTeam(),
@@ -58,8 +62,8 @@ export default async function ProjectDetailPage({
       getBillableWork(id).catch(() => null),
       // The one read of the work: the board, the list, the header and the
       // poll all use these rows. Scoped to the session inside the read.
-      getWorkItems(id),
-      getWorkVersion(id),
+      versionRead.then(() => getWorkItems(id)),
+      versionRead,
     ]);
   if (!project) notFound();
   // Read once: the board and the header's "due in N days" agree on what now is.
