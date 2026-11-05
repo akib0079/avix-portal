@@ -112,12 +112,14 @@ test("a retired payment account is not carried over", () => {
   assert.equal(copyOf({ paymentAccount: null }).input.paymentAccountId, "none");
 });
 
-test("USD mirrors the total; other currencies wait, with last time's value as a hint", () => {
+test("a copy carries no USD value, with last time's as a hint for other currencies", () => {
   const eur = copyOf();
   assert.equal(eur.input.amountUsd, null);
   assert.equal(eur.lastAmountUsd, 351.2);
+  // Saving mirrors a dollar copy's total; seeding it would follow the copy
+  // into another currency.
   const usd = copyOf({ currency: "USD", amountUsd: 322 });
-  assert.equal(usd.input.amountUsd, 322);
+  assert.equal(usd.input.amountUsd, null);
   assert.equal(usd.input.amount, 322);
   assert.equal(usd.lastAmountUsd, null);
 });

@@ -284,8 +284,13 @@ export default async function InvoiceDetailPage({
               title: invoice.title ?? "",
               currency: invoice.currency,
               // Without it every save of a EUR or GBP invoice wiped the USD
-              // value the owner had entered.
-              amountUsd: invoice.amountUsd == null ? null : Number(invoice.amountUsd),
+              // value the owner had entered. A dollar invoice's is only its
+              // total (a save re-mirrors it), and switched to another
+              // currency it would have stood as that invoice's USD value.
+              amountUsd:
+                invoice.currency === "USD" || invoice.amountUsd == null
+                  ? null
+                  : Number(invoice.amountUsd),
               paymentAccountId: invoice.paymentAccountId ?? "none",
               billToCompany: invoice.billToCompany ?? "",
               billToAddress: invoice.billToAddress ?? "",

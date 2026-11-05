@@ -154,7 +154,9 @@ function PlanForm({
       projectId: retainer?.projectId ?? "none",
       amount: retainer?.amount ?? ("" as unknown as number),
       currency: retainer?.currency ?? "USD",
-      amountUsd: retainer?.amountUsd ?? null,
+      // A dollar plan's USD value is its amount (re-mirrored on save), so it
+      // isn't seeded: switched to another currency it stood as that value.
+      amountUsd: retainer && retainer.currency !== "USD" ? (retainer.amountUsd ?? null) : null,
       paymentTermsDays: retainer ? retainer.paymentTermsDays : 14,
       active: retainer ? retainer.state === "active" : true,
       notes: retainer?.notes ?? "",

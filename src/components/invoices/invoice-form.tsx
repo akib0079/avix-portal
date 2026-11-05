@@ -646,7 +646,18 @@ export function InvoiceForm({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Currency</FormLabel>
-                      <Select value={field.value ?? "USD"} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value ?? "USD"}
+                        onValueChange={(next) => {
+                          // A dollar invoice's USD value is its own total, not
+                          // a value someone entered: it doesn't follow it into
+                          // another currency. A EUR to GBP fix keeps the typed one.
+                          if ((field.value ?? "USD") === "USD" && next !== "USD") {
+                            form.setValue("amountUsd", null);
+                          }
+                          field.onChange(next);
+                        }}
+                      >
                         <FormControl>
                           <SelectTrigger className="w-full">
                             <SelectValue />
