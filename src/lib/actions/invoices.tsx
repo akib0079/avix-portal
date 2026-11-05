@@ -882,8 +882,8 @@ export async function createCreditNote(
  * The owner checked and the payment the client reported hasn't arrived:
  * clear the claim. A claimed invoice is never chased, so without this one
  * mistaken "I've paid" silenced its reminders for good. An invoice that was
- * In review because of the claim goes back to where its money puts it, and
- * the client can report the payment again.
+ * In review because of the claim goes back to Sent, or to where its money
+ * puts it, and the client can report the payment again.
  */
 export async function clearPaymentClaim(id: string): Promise<ActionResult> {
   await requireAdmin();
@@ -891,10 +891,11 @@ export async function clearPaymentClaim(id: string): Promise<ActionResult> {
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if (!invoice.paymentClaimedAt && invoice.status !== "IN_REVIEW") return { ok: true };
 
+  // Back to Sent, not guessed from sentAt: the client reported paying from
+  // the portal, so they have it, and an invoice marked Sent by hand has no
+  // sentAt. Assigned is never chased, so reminders silently stayed off.
   const status =
-    invoice.status === "IN_REVIEW"
-      ? settledStatus(invoice, { status: invoice.sentAt ? "SENT" : "ASSIGNED" })
-      : invoice.status;
+    invoice.status === "IN_REVIEW" ? settledStatus(invoice, { status: "SENT" }) : invoice.status;
   await prisma.invoice.update({ where: { id }, data: { paymentClaimedAt: null, status } });
 
   after(() =>
