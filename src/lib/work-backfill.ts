@@ -173,6 +173,33 @@ FROM (SELECT t."id",
     ON top."projectId" = t."projectId" AND top."stage" = t."status"
   WHERE t."position" <= 0) x
 WHERE m."id" = x."id"`,
+
+  // 14–15. Invoices the old code marked paid by status alone, with nothing
+  //     recorded as paid. Their status is now worked out from the payments
+  //     and credits, so one credit note would reopen them with the rest owing.
+  //     They get what Mark paid records now: a "Marked paid" payment for the
+  //     balance net of live credits, and amountPaid to match. A paid invoice
+  //     the new code wrote is always covered, so this only finds those.
+  `INSERT INTO "invoice_payments" ("id", "invoiceId", "amount", "paidAt", "method", "createdAt")
+SELECT 'legacy_' || i."id", i."id", i."amount" - c."credited" - i."amountPaid", i."updatedAt",
+  'Marked paid', now() AT TIME ZONE 'UTC'
+FROM "invoices" i
+JOIN (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
+  FROM "invoices" p
+  LEFT JOIN "invoices" n ON n."creditNoteForId" = p."id" AND n."status" NOT IN ('CANCELLED', 'DRAFT')
+  WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
+  GROUP BY p."id") c ON c."id" = i."id"
+WHERE i."amountPaid" + c."credited" < i."amount"
+ON CONFLICT DO NOTHING`,
+
+  `UPDATE "invoices" i SET "amountPaid" = i."amount" - c."credited"
+FROM (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
+  FROM "invoices" p
+  LEFT JOIN "invoices" n ON n."creditNoteForId" = p."id" AND n."status" NOT IN ('CANCELLED', 'DRAFT')
+  WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
+  GROUP BY p."id") c
+WHERE i."id" = c."id" AND i."amountPaid" + c."credited" < i."amount"`,
+
 ];
 
 type Db = {
