@@ -243,6 +243,21 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
   const edited = editedSchedule(existing, data.schedule, timeZone, taken);
   if ("error" in edited) return { ok: false, error: edited.error };
 
+  // Turning a paused plan on here is a Resume (setRetainerActive): it picks
+  // up at the first run from today, and the periods it was paused for stay
+  // unbilled. Kept at the date the form pre-filled, it drafted, and could
+  // send, an invoice for every one of them.
+  let columns = edited.columns;
+  let nextDay = data.schedule.nextDate;
+  const today = dayIn(new Date(), timeZone);
+  if (!existing.active && data.active && nextDay < today) {
+    nextDay = rollForward(nextDay, scheduleOf(columns), today);
+    if (!runAllowed(nextDay, planEnd({ ...columns, runCount: existing.runCount }))) {
+      return { ok: false, error: "This plan has ended. Set a later end, and it starts again." };
+    }
+    columns = { ...columns, nextRunAt: runInstant(nextDay, timeZone) };
+  }
+
   const money = template
     ? {
         amount: template.amount,
@@ -269,10 +284,10 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
       ...money,
       notes: data.notes || null,
       active: data.active,
-      ...edited.columns,
+      ...columns,
     },
   });
-  if (data.active && dueNow(data.schedule.nextDate, timeZone)) {
+  if (data.active && dueNow(nextDay, timeZone)) {
     after(() => runPlanIfDue(id, timeZone));
   }
   revalidatePlans();
