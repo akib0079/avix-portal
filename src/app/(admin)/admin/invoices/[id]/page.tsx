@@ -268,7 +268,13 @@ export default async function InvoiceDetailPage({
               id: invoice.id,
               clientId: invoice.clientId,
               projectId: invoice.projectId ?? "none",
-              amount: Number(invoice.amount),
+              // With no lines the amount is what discount and tax apply to,
+              // so it reopens as the subtotal: the stored amount is the total
+              // after them, and each save taxed it again.
+              amount:
+                invoice.items.length === 0 && invoice.subtotal != null
+                  ? Number(invoice.subtotal)
+                  : Number(invoice.amount),
               discount: Number(invoice.discount ?? 0),
               taxRate: invoice.taxRate == null ? null : Number(invoice.taxRate),
               taxLabel: invoice.taxLabel ?? "",
