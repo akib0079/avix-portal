@@ -60,8 +60,8 @@ import {
 
 /**
  * Writes on project work — the board and the list share them. Every piece of
- * work is a Milestone row (v49); nothing here touches the frozen v48 board
- * tables.
+ * work is a Milestone row (v49); the frozen v48 board tables are only ever
+ * touched to delete a migrated row along with its copy.
  *
  * Who may do what:
  *  - the team creates and edits anything (pricing is ADMIN-only: STAFF are
@@ -627,7 +627,13 @@ export async function deleteWorkItem(
     if (!item.archivedAt) await archiveTree(item.id);
   } else {
     // Its sub-items stay, at the top level (the relation sets parentId null).
-    await prisma.milestone.delete({ where: { id: item.id } });
+    // A card migrated from v48 shares its id with the frozen project_tasks
+    // row (its old comments cascade with it); that row goes too, or a re-run
+    // of the backfill would bring the card back. Same wave.
+    await Promise.all([
+      prisma.milestone.delete({ where: { id: item.id } }),
+      prisma.projectTask.deleteMany({ where: { id: item.id } }),
+    ]);
   }
   later(() =>
     logActivity({
@@ -895,7 +901,12 @@ export async function deleteWorkComment(
   if (comment.authorId !== viewer.user.id && viewer.role !== "ADMIN") {
     return { ok: false, error: "You can only delete your own comments." };
   }
-  await prisma.milestoneComment.delete({ where: { id: comment.id } });
+  // A comment migrated from v48 keeps its old row's id: that row goes too, or
+  // a re-run of the backfill would bring the comment back.
+  await Promise.all([
+    prisma.milestoneComment.delete({ where: { id: comment.id } }),
+    prisma.projectTaskComment.deleteMany({ where: { id: comment.id } }),
+  ]);
   const [itemRow, extras] = await Promise.all([
     prisma.milestone.findUniqueOrThrow({ where: { id: item.id }, select: itemSelect }),
     itemExtras(item.id, viewer),
