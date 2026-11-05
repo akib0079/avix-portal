@@ -150,6 +150,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
     billingType: project.billingType,
     contractPrice: project.contractPrice == null ? null : Number(project.contractPrice),
     contractInvoicedUsd,
+    contractMissingUsd: invoiced.missing,
     items: project.milestones.map((m) => ({
       id: m.id,
       title: m.title,

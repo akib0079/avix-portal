@@ -56,7 +56,7 @@ function Stat({
 }: {
   label: string;
   value: string;
-  hint?: string;
+  hint?: React.ReactNode;
   icon: React.ComponentType<{ className?: string }>;
   tone?: "good" | "warn";
 }) {
@@ -101,8 +101,17 @@ export function ProjectMoney({
   contractPrice: number | null;
   invoices: InvoiceRow[];
   retainers: RetainerRow[];
-  /** Work that could be billed right now, from getBillableWork. */
-  billable: { lines: BillableLineView[]; total: number; unbilled: number; legacyUsd: number };
+  /**
+   * Work that could be billed right now, from getBillableWork. missingUsd:
+   * contract projects' invoices with no USD value.
+   */
+  billable: {
+    lines: BillableLineView[];
+    total: number;
+    unbilled: number;
+    legacyUsd: number;
+    missingUsd: number;
+  };
 }) {
   const totalLogged = milestones.reduce((sum, m) => sum + m.loggedHours, 0);
   const hourly = milestones.filter((m) => m.pricingType === "HOURLY");
@@ -118,6 +127,10 @@ export function ProjectMoney({
     .reduce((sum, m) => sum + (m.fixedPrice ?? 0), 0);
   const earned =
     billingType === "CONTRACT" ? (contractPrice ?? 0) : earnedHourly + earnedFixed;
+  // A contract with no price has nothing to compare; one with an invoice of
+  // unknown USD value can't say what's left of it.
+  const unpriced = billingType === "CONTRACT" && contractPrice == null;
+  const unvalued = billingType === "CONTRACT" ? billable.missingUsd : 0;
 
   // Cancelled documents and credit notes never count as receivables.
   const liveInvoices = invoices.filter((i) => i.status !== "CANCELLED");
@@ -170,10 +183,21 @@ export function ProjectMoney({
         />
         <Stat
           label={billingType === "CONTRACT" ? "Contract value" : "Earned"}
-          value={usd.format(earned)}
-          hint={unbilled > 0 ? `${usd.format(unbilled)} not yet invoiced` : "Fully invoiced"}
+          value={unpriced ? "Not set" : usd.format(earned)}
+          hint={
+            unpriced ? undefined : unvalued > 0 ? (
+              <Link href="/admin/invoices?filter=needs-usd" className="hover:text-primary">
+                {unvalued} invoice{unvalued === 1 ? " has" : "s have"} no USD value, so what&apos;s
+                left of the contract can&apos;t be worked out
+              </Link>
+            ) : unbilled > 0 ? (
+              `${usd.format(unbilled)} not yet invoiced`
+            ) : (
+              "Fully invoiced"
+            )
+          }
           icon={BadgeDollarSign}
-          tone={unbilled > 0 ? "warn" : undefined}
+          tone={unbilled > 0 || unvalued > 0 ? "warn" : undefined}
         />
         <Stat
           label="Invoiced"

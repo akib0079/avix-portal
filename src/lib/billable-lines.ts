@@ -45,6 +45,11 @@ export type WorkInput = {
   contractPrice: number | null;
   /** Contract projects: USD invoiced against the project so far, net of credits. */
   contractInvoicedUsd: number;
+  /**
+   * Contract projects: invoices with no USD value, which contractInvoicedUsd
+   * can't count. While there are any, what's left of the contract is unknown.
+   */
+  contractMissingUsd: number;
   items: WorkItem[];
   /** Hours per item that no live invoice bills. */
   unbilledHours: Record<string, number>;
@@ -114,7 +119,9 @@ function hoursLabel(hours: number): string {
 
 /**
  * The lines still to bill, what they add up to, and what is already billed
- * (all USD). A contract project bills what is left of its price.
+ * (all USD). A contract project bills what is left of its price, once every
+ * invoice on it has a USD value: one without would count as nothing invoiced
+ * and offer the whole contract again.
  */
 export function billableLines(work: WorkInput): {
   lines: BillableLine[];
@@ -129,7 +136,7 @@ export function billableLines(work: WorkInput): {
     const invoiced = Math.max(work.contractInvoicedUsd, 0);
     const left = round(price - invoiced);
     billed = round(Math.min(invoiced, price));
-    if (left > 0) {
+    if (left > 0 && work.contractMissingUsd === 0) {
       lines.push({
         key: "contract",
         description:

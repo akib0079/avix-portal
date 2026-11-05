@@ -24,6 +24,7 @@ const work = (patch: Partial<WorkInput>): WorkInput => ({
   billingType: "MILESTONE",
   contractPrice: null,
   contractInvoicedUsd: 0,
+  contractMissingUsd: 0,
   items: [],
   unbilledHours: {},
   billedHours: {},
@@ -119,6 +120,15 @@ test("a contract bills what is left of its price", () => {
       .lines,
     [],
   );
+});
+
+test("a contract bills nothing more while an invoice on it has no USD value", () => {
+  // A £4,000 deposit nobody has valued yet: what's left can't be worked out.
+  const result = billableLines(
+    work({ billingType: "CONTRACT", contractPrice: 10000, contractMissingUsd: 1 }),
+  );
+  assert.deepEqual(result.lines, []);
+  assert.equal(result.total, 0);
 });
 
 test("a contract counts drafts and issued invoices, less issued credit notes", () => {
