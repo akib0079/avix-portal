@@ -307,9 +307,10 @@ export function emptyExtras(): ItemExtras {
 }
 
 /**
- * A project's work items as both views draw them, in plan order. Bounded: a
- * project past a few hundred live items needs filters, not a longer payload on
- * every poll.
+ * A project's work items as both views draw them, in plan order. The live
+ * read is every live item: the counts, the attention lists and the plan's
+ * reorder all assume the whole plan is here, so a cap would hide the newest
+ * work first. Only the archive is bounded, newest archived first.
  *
  * The viewer defaults to the session (React's cache shares that lookup with
  * the page's own requireTeam/requireClient), and the reads are scoped by it:
@@ -334,8 +335,10 @@ export async function getWorkItems(
       // The client's scope is part of the query: someone else's project
       // simply has no rows. The other reads are only joined to these.
       where: who.role === "CLIENT" ? { ...live, project: { clientId: who.id } } : live,
-      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-      take: 500,
+      orderBy: opts.archived
+        ? [{ archivedAt: "desc" }, { position: "asc" }]
+        : [{ position: "asc" }, { createdAt: "asc" }],
+      ...(opts.archived ? { take: 500 } : {}),
       select: { ...itemSelect, project: { select: { billingType: true } } },
     }),
     openHelpFor({ milestone: live }),
