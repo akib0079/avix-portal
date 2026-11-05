@@ -19,10 +19,10 @@ export async function register() {
   // process open on shutdown.
   setInterval(warm, 4 * 60_000).unref();
   void seed(prisma);
-  // v49 folded the board cards into milestones. This catches anything the old
-  // code wrote while the new build was deploying; once per database.
+  // v49 folded the board cards into milestones. This catches anything an older
+  // build wrote since the last boot (the deploy window, or a rollback).
   void import("@/lib/work-backfill")
-    .then(({ backfillWorkItemsOnce }) => backfillWorkItemsOnce(prisma))
+    .then(({ backfillWorkItemsOnBoot }) => backfillWorkItemsOnBoot(prisma))
     .catch((err) => console.warn("[backfill] work items:", (err as Error).message));
 }
 

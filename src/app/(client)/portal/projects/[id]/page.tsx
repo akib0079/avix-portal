@@ -39,6 +39,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { toneChip } from "@/lib/tone";
+import { SoftPill } from "@/components/ui/status-pill";
+import { HUE } from "@/lib/status-colors";
 import { Suspense } from "react";
 import { SignedProposalLink } from "@/components/portal/signed-proposal-link";
 
@@ -63,14 +65,17 @@ export default async function MyProjectPage({
   // Everything loads in the same wave as the ownership check. The work reads
   // scope themselves to the session; the messages and deliverables don't, so
   // nothing is rendered unless getMyProject — scoped to the session — found
-  // the project.
+  // the project. The poll token is read before the work rows go out, so it
+  // is never newer than the rows (a change in between shows up on the next
+  // poll instead of being taken as already seen).
+  const versionRead = getWorkVersion(id);
   const [user, project, whatsappUrl, items, version, people, messages, deliverables, extras] =
     await Promise.all([
       requireClient(),
       getMyProject(id),
       getWhatsappSupportUrl(),
-      getWorkItems(id),
-      getWorkVersion(id),
+      versionRead.then(() => getWorkItems(id)),
+      versionRead,
       getBoardPeople(id),
       getProjectMessages(id),
       listByProject(id),
@@ -309,13 +314,19 @@ function BillingAndCalls({
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       <span className="text-sm font-medium">
+                        {/* A credit note is money back, not a bill. */}
+                        {invoice.creditNoteForId && invoice.status !== "CANCELLED" && "−"}
                         {formatCurrency(invoice.amount, invoice.currency)}
                       </span>
-                      <InvoiceStatusBadge
-                        status={
-                          invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]
-                        }
-                      />
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
+                        <SoftPill color={HUE.violet}>Credit note</SoftPill>
+                      ) : (
+                        <InvoiceStatusBadge
+                          status={
+                            invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]
+                          }
+                        />
+                      )}
                     </span>
                   </Link>
                 </li>

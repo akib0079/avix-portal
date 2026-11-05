@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getSession, requireAdmin } from "@/lib/dal/session";
 import { sendPasswordLink } from "@/lib/auth-utils";
-import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { createWithNextNumber } from "@/lib/invoice-number";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { milestoneTemplates, textToDoc } from "@/lib/milestone-templates";
 import { stageWrite } from "@/lib/work-stage";
@@ -26,15 +26,22 @@ import {
   type ProposalLinks,
 } from "@/lib/dal/proposals";
 import { getProposalDefaultTerms, listActivePaymentAccounts } from "@/lib/dal/settings";
+import { getBookingConfig } from "@/lib/dal/availability";
+import { dayIn, dayToDate } from "@/lib/recurring";
 import { formatCurrency } from "@/lib/currency";
 import { usdToStore } from "@/lib/invoice-usd";
 import { dueDateFromTerms, invoiceTotals } from "@/lib/invoice-totals";
 import { requestMeta } from "@/lib/request-meta";
 import {
+  acceptedInvoiceDates,
   draftInvoiceRemovable,
   firstInvoicePromise,
+  handoffContractPrice,
+  invoiceKeptReason,
+  keepLineFormatting,
   proposalRemovalPlan,
 } from "@/lib/proposal-rules";
+import { ActionAbort, removeDraftInvoice, removeSilentClient } from "@/lib/proposal-cleanup";
 import { readProposalLink } from "@/lib/marketing-token";
 import { emailProposal, emailSignedProposal, proposalUrl } from "@/lib/proposal-mail";
 import { appUrl } from "@/lib/app-url";
@@ -81,12 +88,6 @@ const LINK_EXPIRED =
   "This proposal has expired. Reply to our email and we'll send you a fresh link.";
 const TEAM_EMAIL =
   "This email belongs to a team account. Use the client's own email — it becomes their login.";
-
-/**
- * Thrown inside a transaction to roll it back with a message for the user,
- * e.g. when a row changed between the check and the write.
- */
-class ActionAbort extends Error {}
 
 /** Lead source → the project's source enum (only Fiverr/Upwork map 1:1). */
 function mapSource(source: LeadSource | null): ProjectSource {
@@ -212,57 +213,6 @@ async function findOrCreateClient(
     },
   });
   return { id: user.id, email: user.email, emailVerified: false, created: true };
-}
-
-/**
- * Removes the account a proposal created for its recipient while it is still
- * only that: never verified (the invite was never completed), never signed
- * in, and owning nothing. Callers check createdClientAccount first; this
- * checks everything else in the statement that deletes, so anything the
- * account gained in the meantime keeps it.
- */
-async function removeSilentClient(tx: Tx, userId: string, proposalId: string): Promise<boolean> {
-  const otherProposals = await tx.proposal.count({
-    where: { convertedClientId: userId, id: { not: proposalId } },
-  });
-  if (otherProposals > 0) return false;
-  const removed = await tx.user.deleteMany({
-    where: {
-      id: userId,
-      role: "CLIENT",
-      emailVerified: false,
-      sessions: { none: {} },
-      invoices: { none: {} },
-      projects: { none: {} },
-      retainers: { none: {} },
-      meetings: { none: {} },
-      messages: { none: {} },
-      clientMessages: { none: {} },
-      taskRequests: { none: {} },
-      imageUploads: { none: {} },
-      tasksAbout: { none: {} },
-      campaignRecipients: { none: {} },
-    },
-  });
-  return removed.count > 0;
-}
-
-/**
- * Deletes the proposal's invoice only while it is still paperwork — the
- * statement form of draftInvoiceRemovable() in proposal-rules.ts, so a send or
- * a payment that lands between the dialog and the click still wins.
- */
-async function removeDraftInvoice(tx: Tx, invoiceId: string): Promise<boolean> {
-  const removed = await tx.invoice.deleteMany({
-    where: {
-      id: invoiceId,
-      status: { in: ["DRAFT", "ASSIGNED"] },
-      sentAt: null,
-      amountPaid: 0,
-      payments: { none: {} },
-    },
-  });
-  return removed.count > 0;
 }
 
 function invoiceItemRows(items: { description: string; qty: number; rate: number }[]) {
@@ -418,11 +368,11 @@ export async function createProposal(
   const passwordHash = recipient.account ? null : await newPasswordHash();
   const totals = invoiceTotals({ items: inv.items });
 
-  let created: { proposalId: string; clientId: string; clientCreated: boolean };
-  try {
-    created = await prisma.$transaction(async (tx) => {
+  // One attempt under one number, so createWithNextNumber can try again under
+  // the next one when a number typed by hand elsewhere already holds it.
+  const write = (invoiceNumber: string) =>
+    prisma.$transaction(async (tx) => {
       const client = await findOrCreateClient(tx, contact, passwordHash);
-      const invoiceNumber = customNo || (await nextInvoiceNumber(tx));
       const invoice = await tx.invoice.create({
         data: {
           invoiceNumber,
@@ -473,6 +423,11 @@ export async function createProposal(
       });
       return { proposalId: proposal.id, clientId: client.id, clientCreated: client.created };
     });
+
+  let created: { proposalId: string; clientId: string; clientCreated: boolean };
+  try {
+    // A number typed in the builder is used as it is, as the invoice form does.
+    created = customNo ? await write(customNo) : await createWithNextNumber(prisma, write);
   } catch (err) {
     if (pdf.fileName) await deleteUpload("invoices", pdf.fileName);
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
@@ -500,7 +455,7 @@ export async function createProposal(
 export async function updateProposal(
   id: string,
   formData: FormData,
-): Promise<ActionResult<{ invoiceLocked: string | null }>> {
+): Promise<ActionResult<{ invoiceLocked: { invoiceNumber: string; reason: string } | null }>> {
   await requireAdmin();
   const parsed = parsePayload(formData);
   if (!parsed.success) {
@@ -561,7 +516,11 @@ export async function updateProposal(
       ? null
       : existing.invoicePdfOriginalName;
 
-  let outcome: { moved: boolean; invoiceLocked: string | null };
+  let outcome: {
+    moved: boolean;
+    invoiceLocked: { invoiceNumber: string; reason: string } | null;
+    dropOldFile: boolean;
+  };
   try {
     outcome = await prisma.$transaction(async (tx) => {
       const invoice = existing.convertedInvoiceId
@@ -572,36 +531,60 @@ export async function updateProposal(
               invoiceNumber: true,
               status: true,
               sentAt: true,
+              paymentClaimedAt: true,
               amount: true,
               amountPaid: true,
               amountUsd: true,
               currency: true,
               discount: true,
               taxRate: true,
-              _count: { select: { payments: true } },
+              retainerId: true,
+              retainer: { select: { title: true } },
+              retainerTemplateFor: {
+                select: { id: true, title: true, _count: { select: { invoices: true } } },
+              },
+              _count: { select: { payments: true, creditNotes: true } },
+              items: {
+                orderBy: { sortOrder: "asc" },
+                select: { description: true, descriptionRich: true },
+              },
             },
           })
         : null;
 
       // Still paperwork? Once the invoice has been sent from the invoice
-      // page (or paid against), the builder must not rewrite it.
-      const invoiceIsPaperwork =
-        invoice != null &&
-        draftInvoiceRemovable({
-          status: invoice.status,
-          sentAt: invoice.sentAt,
-          amountPaid: Number(invoice.amountPaid),
-          paymentCount: invoice._count.payments,
-        });
+      // page, paid or credited, or a running plan copies it, the builder
+      // must not rewrite it.
+      const facts = invoice && {
+        status: invoice.status,
+        sentAt: invoice.sentAt,
+        paymentClaimedAt: invoice.paymentClaimedAt,
+        amountPaid: Number(invoice.amountPaid),
+        paymentCount: invoice._count.payments,
+        creditNoteCount: invoice._count.creditNotes,
+        // deleteInvoice's rule: a plan with invoices besides this one keeps it.
+        copiedByPlan: invoice.retainerTemplateFor.some(
+          (plan) => plan._count.invoices > (invoice.retainerId === plan.id ? 1 : 0),
+        ),
+      };
+      const invoiceIsPaperwork = facts != null && draftInvoiceRemovable(facts);
 
       let clientId = existing.convertedClientId;
       let createdClientAccount = existing.createdClientAccount;
       if (recipientMoved) {
         // An invoice the old address has already received can't quietly
         // change hands.
-        if (invoice && !invoiceIsPaperwork) {
+        if (invoice && facts && !invoiceIsPaperwork) {
           throw new ActionAbort(
-            `Invoice ${invoice.invoiceNumber} has already gone to the old recipient, so the email can't change here. Start a new proposal for the new address instead.`,
+            `Invoice ${invoice.invoiceNumber} stays with the old recipient (${invoiceKeptReason(facts)}), so the email can't change here. Start a new proposal for the new address instead.`,
+          );
+        }
+        // A plan bills one client, so its invoices and its template stay
+        // with it, as updateInvoice holds them.
+        const plan = invoice?.retainer ?? invoice?.retainerTemplateFor[0];
+        if (invoice && plan) {
+          throw new ActionAbort(
+            `Invoice ${invoice.invoiceNumber} is part of the recurring plan “${plan.title}”, which bills the old recipient, so the email can't change here. Start a new proposal for the new address instead.`,
           );
         }
         const next = await findOrCreateClient(tx, contact, passwordHash);
@@ -677,7 +660,17 @@ export async function updateProposal(
               ? { pdfPath: nextPdfPath, pdfOriginalName: nextPdfName }
               : {}),
             pdfExternalUrl: data.invoicePdfExternalUrl || null,
-            items: { create: invoiceItemRows(inv.items) },
+            // Formatting added on the invoice page survives on the lines
+            // whose words the builder left alone.
+            items: {
+              create: keepLineFormatting(
+                invoice.items.map((i) => ({
+                  description: i.description,
+                  descriptionRich: i.descriptionRich as Prisma.InputJsonValue | null,
+                })),
+                invoiceItemRows(inv.items),
+              ),
+            },
           },
         });
       }
@@ -687,7 +680,13 @@ export async function updateProposal(
       }
       return {
         moved: recipientMoved,
-        invoiceLocked: invoice && !invoiceIsPaperwork ? invoice.invoiceNumber : null,
+        invoiceLocked:
+          invoice && facts && !invoiceIsPaperwork
+            ? { invoiceNumber: invoice.invoiceNumber, reason: invoiceKeptReason(facts) }
+            : null,
+        // An invoice left alone still points at the old file and serves it
+        // to the client; only a rewritten one has let go of it.
+        dropOldFile: !invoice || invoiceIsPaperwork,
       };
     });
   } catch (err) {
@@ -697,7 +696,7 @@ export async function updateProposal(
   }
 
   // Drop the superseded file only after the row is safely updated.
-  if ((replacing || clearing) && existing.invoicePdfPath) {
+  if ((replacing || clearing) && existing.invoicePdfPath && outcome.dropOldFile) {
     await deleteUpload("invoices", existing.invoicePdfPath);
   }
 
@@ -752,7 +751,7 @@ export async function deleteProposal(
   const plan = proposalRemovalPlan(p, invoiceFacts(links.invoice));
 
   if (plan.mode === "delete") {
-    let result: { invoiceRemoved: boolean; clientRemoved: boolean; dropFile: boolean };
+    let result: { invoiceRemoved: boolean; plansRemoved: number; clientRemoved: boolean; dropFile: boolean };
     try {
       result = await prisma.$transaction(async (tx) => {
         // Only while it is still an unsent draft: a send that landed after
@@ -763,10 +762,11 @@ export async function deleteProposal(
         if (gone.count === 0) {
           throw new ActionAbort("This proposal was just sent, so it can only be archived now.");
         }
-        const invoiceRemoved =
+        // Before the account: a plan the invoice started makes it an owner.
+        const invoice =
           plan.invoice === "remove" && p.convertedInvoiceId
             ? await removeDraftInvoice(tx, p.convertedInvoiceId)
-            : false;
+            : { removed: false, plans: 0 };
         const clientRemoved =
           p.createdClientAccount && p.convertedClientId
             ? await removeSilentClient(tx, p.convertedClientId, id)
@@ -776,7 +776,12 @@ export async function deleteProposal(
         const stillUsed = p.invoicePdfPath
           ? (await tx.invoice.count({ where: { pdfPath: p.invoicePdfPath } })) > 0
           : true;
-        return { invoiceRemoved, clientRemoved, dropFile: !stillUsed };
+        return {
+          invoiceRemoved: invoice.removed,
+          plansRemoved: invoice.plans,
+          clientRemoved,
+          dropFile: !stillUsed,
+        };
       });
     } catch (err) {
       if (err instanceof ActionAbort) return { ok: false, error: err.message };
@@ -798,6 +803,7 @@ export async function deleteProposal(
     );
     revalidateProposalViews(p.leadId);
     if (result.invoiceRemoved) revalidatePath("/admin/invoices");
+    if (result.plansRemoved > 0) revalidatePath("/admin/retainers");
     if (result.clientRemoved) revalidatePath("/admin/clients");
     return {
       ok: true,
@@ -806,10 +812,13 @@ export async function deleteProposal(
   }
 
   const removeInvoice = opts.removeInvoice === true && plan.invoice === "offer" && !!p.convertedInvoiceId;
-  let invoiceRemoved = false;
+  let removal = { removed: false, plans: 0 };
   try {
-    invoiceRemoved = await prisma.$transaction(async (tx) => {
-      const removed = removeInvoice ? await removeDraftInvoice(tx, p.convertedInvoiceId!) : false;
+    removal = await prisma.$transaction(async (tx) => {
+      const invoice = removeInvoice
+        ? await removeDraftInvoice(tx, p.convertedInvoiceId!)
+        : { removed: false, plans: 0 };
+      const removed = invoice.removed;
       // Bumping the link version withdraws every link already sent; the
       // public page recognises them and says the proposal was withdrawn. An
       // accepted proposal only leaves the board: it is the client's
@@ -834,12 +843,13 @@ export async function deleteProposal(
           ...(removed && links.invoice ? { meta: { removedInvoice: links.invoice.invoiceNumber } } : {}),
         },
       });
-      return removed;
+      return invoice;
     });
   } catch (err) {
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
     throw err;
   }
+  const invoiceRemoved = removal.removed;
 
   after(() =>
     logActivity({
@@ -856,6 +866,7 @@ export async function deleteProposal(
   );
   revalidateProposalViews(p.leadId);
   if (invoiceRemoved) revalidatePath("/admin/invoices");
+  if (removal.plans > 0) revalidatePath("/admin/retainers");
   return { ok: true, data: { mode: "archived", invoiceRemoved, clientRemoved: false } };
 }
 
@@ -1144,13 +1155,13 @@ export async function duplicateProposal(
   const title = `${source.title} (copy)`.slice(0, 160);
   const issueDate = new Date();
 
-  let created: { id: string; clientCreated: boolean };
-  try {
-    created = await prisma.$transaction(async (tx) => {
+  // Numbered as createProposal is: one attempt per number.
+  const write = (invoiceNumber: string) =>
+    prisma.$transaction(async (tx) => {
       const client = await findOrCreateClient(tx, recipient.contact, passwordHash);
       const invoice = await tx.invoice.create({
         data: {
-          invoiceNumber: await nextInvoiceNumber(tx),
+          invoiceNumber,
           clientId: client.id,
           status: "DRAFT",
           amount: totals.total,
@@ -1206,6 +1217,10 @@ export async function duplicateProposal(
       });
       return { id: proposal.id, clientCreated: client.created };
     });
+
+  let created: { id: string; clientCreated: boolean };
+  try {
+    created = await createWithNextNumber(prisma, write);
   } catch (err) {
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
     throw err;
@@ -1237,20 +1252,22 @@ const HANDOFF_INCLUDE = {
 /** The proposal as the hand-off read it, just before claiming it. */
 type HandoffProposal = Prisma.ProposalGetPayload<{ include: typeof HANDOFF_INCLUDE }>;
 
-type Loaded = { proposal: HandoffProposal; links: ProposalLinks };
+type Loaded = { proposal: HandoffProposal; links: ProposalLinks; timeZone: string };
 
 /**
  * What a hand-off works from, in one wave: the proposal with its scope and
- * lead, and the references it keeps without foreign keys (proposalLinks). The
- * sign action reads it once and builds its snapshot from the same rows the
- * hand-off then uses, so nothing is read twice.
+ * lead, the references it keeps without foreign keys (proposalLinks), and the
+ * agency's zone, whose today the first invoice is dated from. The sign action
+ * reads it once and builds its snapshot from the same rows the hand-off then
+ * uses, so nothing is read twice.
  */
 async function loadHandoff(id: string): Promise<Loaded | null> {
-  const [proposal, links] = await Promise.all([
+  const [proposal, links, booking] = await Promise.all([
     prisma.proposal.findUnique({ where: { id }, include: HANDOFF_INCLUDE }),
     proposalLinks(id),
+    getBookingConfig(),
   ]);
-  return proposal && links ? { proposal, links } : null;
+  return proposal && links ? { proposal, links, timeZone: booking.agencyTimezone } : null;
 }
 
 /**
@@ -1356,9 +1373,10 @@ function handoffMilestones(proposal: HandoffProposal, now: Date) {
 /**
  * The one hand-off, behind the client's signature AND the admin's "mark
  * accepted". It records the signature evidence, creates a CONTRACT project
- * priced at the proposal total with the scope as its milestones, attaches the
- * first invoice (or creates the deposit invoice the client was promised),
- * marks a backing lead WON and records who accepted.
+ * priced at the proposal total (a dollar total only, see handoffContractPrice)
+ * with the scope as its milestones, attaches the first invoice (or creates
+ * the deposit invoice the client was promised), marks a backing lead WON and
+ * records who accepted.
  *
  * The FIRST statement of its transaction claims the proposal: a conditional
  * update to ACCEPTED that only one caller can win. Two tabs, a double click,
@@ -1374,7 +1392,10 @@ function handoffMilestones(proposal: HandoffProposal, now: Date) {
  * the response. Callers must have already authorised the action (link or
  * admin session).
  */
-async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): Promise<HandoffResult> {
+async function runHandoff(
+  { proposal, links, timeZone }: Loaded,
+  acceptance: Acceptance,
+): Promise<HandoffResult> {
   const id = proposal.id;
   const now = new Date();
   if (proposal.status === "ACCEPTED") return ALREADY_ACCEPTED;
@@ -1382,6 +1403,7 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
   if (blocker) return { ok: false, error: blocker };
 
   const total = sumAmounts(proposal.items);
+  const price = handoffContractPrice({ total, currency: proposal.currency });
   const contact = proposalContact(proposal);
 
   // Proposals made before provisioning moved to creation time have no
@@ -1411,6 +1433,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
   );
   const attach = promise?.kind === "invoice" ? links.invoice : null;
   const deposit = promise?.kind === "deposit" ? promise : null;
+  // The attached invoice is owed from today, not from when it was drafted.
+  const dates = attach ? acceptedInvoiceDates(attach, dayIn(now, timeZone)) : null;
+  const redated = dates
+    ? { issueDate: dayToDate(dates.issueDate), dueDate: dates.dueDate ? dayToDate(dates.dueDate) : null }
+    : {};
 
   const claimWhere: Prisma.ProposalWhereInput = acceptance.byAdmin
     ? {
@@ -1441,9 +1468,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
         signatureId: string;
       };
 
-  let outcome: Outcome;
-  try {
-    outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
+  // The whole hand-off is one attempt; with a deposit to create it is made
+  // under one number, so a number typed by hand elsewhere can be stepped past
+  // by trying again (the failed attempt rolled back its claim too).
+  const handoff = (depositNumber: string | null) =>
+    prisma.$transaction(async (tx): Promise<Outcome> => {
       const claimed = await tx.proposal.updateMany({
         where: claimWhere,
         data: {
@@ -1501,7 +1530,8 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
           priority: "MEDIUM",
           status: "PLANNING",
           billingType: "CONTRACT",
-          contractPrice: total,
+          // Dollars only: another currency's total would be read as dollars.
+          contractPrice: price,
           milestones: { create: handoffMilestones(proposal, now) },
         },
         select: { id: true },
@@ -1512,18 +1542,31 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
       if (attach) {
         await tx.invoice.updateMany({ where: { id: attach.id }, data: { projectId: project.id } });
         // Agreed now, so owed now: the draft becomes a normal invoice the
-        // client sees and the admin can send.
+        // client sees and the admin can send, dated from today.
         if (attach.status === "DRAFT") {
           await tx.invoice.updateMany({
             where: { id: attach.id, status: "DRAFT" },
-            data: { status: "ASSIGNED" },
+            data: { status: "ASSIGNED", ...redated },
+          });
+        } else if (dates && draftInvoiceRemovable(invoiceFacts(attach))) {
+          // An older proposal's invoice was ASSIGNED from the start. Still
+          // unsent and unpaid, it moves to today as well.
+          await tx.invoice.updateMany({
+            where: {
+              id: attach.id,
+              status: "ASSIGNED",
+              sentAt: null,
+              paymentClaimedAt: null,
+              amountPaid: 0,
+            },
+            data: redated,
           });
         }
-      } else if (deposit) {
+      } else if (deposit && depositNumber) {
         const label = `${proposal.title} — ${deposit.percent}% deposit`;
         const invoice = await tx.invoice.create({
           data: {
-            invoiceNumber: await nextInvoiceNumber(tx),
+            invoiceNumber: depositNumber,
             clientId: client.id,
             projectId: project.id,
             amount: deposit.amount,
@@ -1585,6 +1628,11 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
         signatureId: signature.id,
       };
     });
+
+  let outcome: Outcome;
+  try {
+    // Attaching the draft invoice uses no number at all.
+    outcome = deposit ? await createWithNextNumber(prisma, handoff) : await handoff(null);
   } catch (err) {
     if (err instanceof ActionAbort) return { ok: false, error: err.message };
     throw err;
@@ -1648,6 +1696,7 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
           title: `${who} signed "${proposal.title}"`,
           body:
             `${formatCurrency(total, proposal.currency)} · project created` +
+            (price == null ? ` (set its contract price in USD: the proposal is in ${proposal.currency})` : "") +
             (invoiceNumber ? `, invoice ${invoiceNumber} ready to send` : "") +
             (pdf ? ". The signed PDF is attached." : ""),
           link: proposalHref(id),
@@ -1681,8 +1730,10 @@ async function runHandoff({ proposal, links }: Loaded, acceptance: Acceptance): 
 }
 
 /**
- * Signing tries per address before the action stops listening for a while.
- * A real signer needs one or two; this only slows a script down.
+ * Signing tries per proposal before the action stops listening for a while.
+ * A real signer needs one or two; this only slows a script down. Keyed on the
+ * proposal, not the address: x-forwarded-for is the caller's to write, and a
+ * new value on every try would be a new bucket every time.
  */
 const signAttempts = createRateLimiter({ limit: 10, windowMs: 10 * 60 * 1000 });
 
@@ -1710,7 +1761,7 @@ function validTimeZone(zone: string | undefined): string | null {
  * - the link's signature is checked first, before any database read, and its
  *   version and expiry again in the hand-off's claim;
  * - every field is capped (signProposalSchema) and attempts are rate-limited
- *   per address;
+ *   per proposal;
  * - a drawn signature must be a real, non-empty PNG of sane size
  *   (signature-png.ts), a typed one has no image at all;
  * - the document is rebuilt from the database, never from the client, and
@@ -1732,7 +1783,7 @@ export async function signProposal(
   if (!claims) return { ok: false, error: LINK_INVALID };
 
   const meta = await requestMeta();
-  const allowed = signAttempts.take(meta.ipAddress ?? `proposal:${id}`);
+  const allowed = signAttempts.take(`proposal:${id}`);
   if (!allowed.ok) {
     return {
       ok: false,
@@ -1967,6 +2018,9 @@ export async function declineProposal(
   return { ok: true };
 }
 
+/** Reloads and repeat calls this close together count as one open. */
+const VIEW_DEDUPE_MS = 5 * 60 * 1000;
+
 /**
  * PUBLIC action, called by the public page once it has mounted. Counting from
  * the browser rather than the server render is deliberate: link scanners
@@ -1975,7 +2029,10 @@ export async function declineProposal(
  * previewing the page doesn't count either.
  *
  * One statement does the counting, the audit row and the lookup for the
- * notification, because this runs on every open of every proposal.
+ * notification, because this runs on every open of every proposal. Opens
+ * within VIEW_DEDUPE_MS of the last one count once: the window is in the
+ * statement, so a script calling this in a loop can't inflate the count or
+ * grow the event log, whatever address it claims.
  */
 export async function recordProposalView(id: string, token: string): Promise<void> {
   const claims = readProposalLink(id, token);
@@ -1996,6 +2053,7 @@ export async function recordProposalView(id: string, token: string): Promise<voi
         AND "archivedAt" IS NULL
         AND "linkVersion" = ${claims.version}
         AND "expiresAt" > ${now}::timestamp
+        AND ("lastViewedAt" IS NULL OR "lastViewedAt" < ${new Date(now.getTime() - VIEW_DEDUPE_MS)}::timestamp)
       RETURNING id, "viewCount", title, "leadId", "recipientName"
     ), logged AS (
       INSERT INTO proposal_events (id, "proposalId", type, "ipAddress", "userAgent", "createdAt")

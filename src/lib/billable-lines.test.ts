@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { billableLines, contractInvoiced, type WorkInput, type WorkItem } from "./billable-lines";
+import {
+  billableLines,
+  contractInvoiced,
+  legacyInvoicedUsd,
+  type WorkInput,
+  type WorkItem,
+} from "./billable-lines";
 
 const item = (patch: Partial<WorkItem> & { id: string }): WorkItem => ({
   title: patch.id,
@@ -18,6 +24,7 @@ const work = (patch: Partial<WorkInput>): WorkInput => ({
   billingType: "MILESTONE",
   contractPrice: null,
   contractInvoicedUsd: 0,
+  contractMissingUsd: 0,
   items: [],
   unbilledHours: {},
   billedHours: {},
@@ -115,6 +122,15 @@ test("a contract bills what is left of its price", () => {
   );
 });
 
+test("a contract bills nothing more while an invoice on it has no USD value", () => {
+  // A £4,000 deposit nobody has valued yet: what's left can't be worked out.
+  const result = billableLines(
+    work({ billingType: "CONTRACT", contractPrice: 10000, contractMissingUsd: 1 }),
+  );
+  assert.deepEqual(result.lines, []);
+  assert.equal(result.total, 0);
+});
+
 test("a contract counts drafts and issued invoices, less issued credit notes", () => {
   assert.deepEqual(
     contractInvoiced([
@@ -127,4 +143,37 @@ test("a contract counts drafts and issued invoices, less issued credit notes", (
     ]),
     { usd: 2200, missing: 1 },
   );
+});
+
+test("only old invoices that link no work count as maybe billing it already", () => {
+  const cutover = new Date("2026-11-02T08:00:00Z");
+  const before = new Date("2026-09-10T00:00:00Z");
+  const after = new Date("2026-11-03T00:00:00Z");
+  const invoice = (patch: Partial<Parameters<typeof legacyInvoicedUsd>[0][number]>) => ({
+    usd: 1000,
+    creditNote: false,
+    status: "PAID",
+    createdAt: before,
+    linked: false,
+    ...patch,
+  });
+  assert.equal(
+    legacyInvoicedUsd(
+      [
+        invoice({ usd: 3700 }),
+        invoice({ usd: 200, status: "SENT" }),
+        // The backfill matched its lines to the work.
+        invoice({ linked: true }),
+        // The new code's: a hand-made invoice bills no tracked work.
+        invoice({ createdAt: after }),
+        invoice({ status: "CANCELLED" }),
+        invoice({ creditNote: true, status: "SENT" }),
+        // Worth an unknown number of dollars: nothing to warn about in USD.
+        invoice({ usd: null }),
+      ],
+      cutover,
+    ),
+    3900,
+  );
+  assert.equal(legacyInvoicedUsd([], cutover), 0);
 });

@@ -14,13 +14,15 @@ import {
   type SetStateAction,
 } from "react";
 import dynamic from "next/dynamic";
-import useSWR from "swr";
+import { useSearchParams } from "next/navigation";
+import useSWR, { mutate as mutateKey } from "swr";
 import type { ProjectBillingType, ProjectTaskStatus } from "@prisma/client";
 import { toast } from "sonner";
 import {
   COLUMN_BY_ID,
   canMoveWorkItem,
   canSeePricing,
+  resolveWorkLink,
   type BoardData,
   type BoardPerson,
   type BoardPhase,
@@ -38,7 +40,9 @@ import {
 } from "@/lib/actions/project-board";
 import { stageToStatus } from "@/lib/work-stage";
 import { endOfColumn, planPhases } from "@/lib/work-list";
-import { todayKey } from "./board-bits";
+import { acceptedItem, sameBilling } from "@/lib/work-sync";
+import { useToday } from "./board-bits";
+import { workItemDetailKey } from "./use-work-item-detail";
 import {
   AcceptRequestDialog,
   DeclineRequestDialog,
@@ -85,6 +89,14 @@ async function timedFetch(url: string, version: string): Promise<Timed> {
   return { startedAt, data: (await res.json()) as BoardData };
 }
 
+/**
+ * Reload an open drawer's item — its thread, hours and description — when the
+ * board's version has moved. The drawer doesn't poll it on its own.
+ */
+function reloadDetail(itemId: string | null) {
+  if (itemId) void mutateKey(workItemDetailKey(itemId));
+}
+
 function sameItem(a: WorkItem, b: WorkItem) {
   return (
     a.updatedAt === b.updatedAt &&
@@ -97,7 +109,7 @@ function sameItem(a: WorkItem, b: WorkItem) {
     a.openHelp.team === b.openHelp.team &&
     a.loggedHours === b.loggedHours &&
     a.childCount === b.childCount &&
-    a.billedOn.length === b.billedOn.length &&
+    sameBilling(a.billedOn, b.billedOn) &&
     a.title === b.title
   );
 }
@@ -218,7 +230,7 @@ export function WorkProvider({
   initial: BoardData;
   /** When the server built `initial` — a page from the router cache may be old. */
   renderedAt: number;
-  /** ?item= (or a v48 ?task=) from the URL — a notification's deep link to one item. */
+  /** ?item= (or a v48 ?task=) the page was opened with — a notification's deep link to one item. */
   initialItemId?: string | null;
   children: ReactNode;
 }) {
@@ -226,7 +238,7 @@ export function WorkProvider({
   const [people, setPeople] = useState(initial.people);
   const phases = useMemo(() => planPhases(items), [items]);
   const [openId, setOpenId] = useState<string | null>(initialItemId);
-  const [today] = useState(todayKey);
+  const today = useToday(renderedAt);
   const [sendingBack, setSendingBack] = useState<SendingBack | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
@@ -234,24 +246,40 @@ export function WorkProvider({
   const [creating, setCreating] = useState<{ stage?: ProjectTaskStatus; parentId?: string | null } | null>(
     null,
   );
-  // A notification link to another item on this same page arrives as a new
-  // ?item= without remounting; open it. Adjusted during render.
-  const [seenItemParam, setSeenItemParam] = useState(initialItemId);
-  if (initialItemId !== seenItemParam) {
-    setSeenItemParam(initialItemId);
-    if (initialItemId) setOpenId(initialItemId);
+  // A link to an item on this same page (a notification, "Review 1 item")
+  // arrives as a new ?item= without remounting; open it. Read from the URL,
+  // not the server's prop: closing the drawer only rewrites the address bar,
+  // so the prop still names the item and the same link clicked again would
+  // change nothing. Adjusted during render.
+  const urlItem = resolveWorkLink(useSearchParams()).itemId;
+  const [seenUrlItem, setSeenUrlItem] = useState(urlItem);
+  if (urlItem !== seenUrlItem) {
+    setSeenUrlItem(urlItem);
+    if (urlItem) setOpenId(urlItem);
   }
 
   // Refs the poll consults so it never clobbers a drag or an unsaved write.
   const dragging = useRef(false);
   const pending = useRef(0);
   const lastLocal = useRef(0);
+  // A client's send-back is waiting on its reason: the card is painted moved
+  // and the board before it is held to go back to, so nothing may land.
+  const sendBackOpen = useRef(false);
+  // A fresh render skipped while a write was in flight: once the writes
+  // settle, ask for the board instead of waiting for the next poll.
+  const missedRender = useRef(false);
   const itemsRef = useRef(items);
   const versionRef = useRef(initial.version);
   const seenInitial = useRef(initial);
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+  // Read by the writes below, so they stay the same functions while the
+  // drawer opens and closes (the rows are memoised on them), and by the poll.
+  const openIdRef = useRef(openId);
+  useEffect(() => {
+    openIdRef.current = openId;
+  }, [openId]);
 
   // The poll sends the version it holds; an unchanged board answers 204 with
   // no body, so a quiet board costs the server one small query. A hidden tab
@@ -271,7 +299,9 @@ export function WorkProvider({
       onSuccess: (res) => {
         const data = res?.data;
         if (!res || !data) return;
-        if (dragging.current || pending.current > 0 || res.startedAt < lastLocal.current) return;
+        if (dragging.current || pending.current > 0 || sendBackOpen.current || res.startedAt < lastLocal.current) return;
+        if (data.version !== versionRef.current) reloadDetail(openIdRef.current);
+        missedRender.current = false;
         versionRef.current = data.version;
         setItems((prev) => reconcile(prev, data.items));
         setPeople((prev) => (samePeople(prev, data.people) ? prev : data.people));
@@ -291,11 +321,15 @@ export function WorkProvider({
   useEffect(() => {
     if (initial === seenInitial.current) return;
     seenInitial.current = initial;
-    if (dragging.current || pending.current > 0) return;
+    if (dragging.current || pending.current > 0 || sendBackOpen.current) {
+      missedRender.current = true;
+      return;
+    }
     if (Date.now() - renderedAt > 5_000) {
       void mutate();
       return;
     }
+    if (initial.version !== versionRef.current) reloadDetail(openIdRef.current);
     versionRef.current = initial.version;
     queueMicrotask(() => {
       setItems((prev) => reconcile(prev, initial.items));
@@ -311,8 +345,12 @@ export function WorkProvider({
     } finally {
       pending.current--;
       lastLocal.current = Date.now();
+      if (missedRender.current && pending.current === 0 && !dragging.current && !sendBackOpen.current) {
+        missedRender.current = false;
+        void mutate();
+      }
     }
-  }, []);
+  }, [mutate]);
 
   const refresh = useCallback(() => void mutate(), [mutate]);
 
@@ -345,13 +383,6 @@ export function WorkProvider({
     window.addEventListener("avix:board-card", onItem);
     return () => window.removeEventListener("avix:board-card", onItem);
   }, [projectId, upsert]);
-
-  // Read by the writes below, so they stay the same functions while the
-  // drawer opens and closes (the rows are memoised on them).
-  const openIdRef = useRef(openId);
-  useEffect(() => {
-    openIdRef.current = openId;
-  }, [openId]);
 
   // The open item lives in the URL too, so it can be shared and survives a
   // reload. replaceState: opening an item is not a navigation.
@@ -411,6 +442,7 @@ export function WorkProvider({
       );
       if (check.kind === "send-back") {
         // The team needs to know why: ask before writing anything.
+        sendBackOpen.current = true;
         setSendingBack({ id, stage, boardPosition, revert });
         return true;
       }
@@ -436,8 +468,9 @@ export function WorkProvider({
   );
 
   // Structural writes revalidate the page, and the server's render is the
-  // truth for whatever moved with them (a phase's work, renumbered plans):
-  // once they land, ask for the current board.
+  // truth for whatever moved with them (a phase's work, renumbered plans).
+  // The action's response carries that render and the effect above takes it
+  // in, so there's no need to ask for the board again.
   const archive = useCallback(
     async (id: string) => {
       const before = itemsRef.current;
@@ -455,10 +488,9 @@ export function WorkProvider({
         return false;
       }
       toast.success("Archived — it's under “Show archived” with its history.");
-      refresh();
       return true;
     },
-    [track, refresh, open],
+    [track, open],
   );
 
   const restore = useCallback(
@@ -470,10 +502,9 @@ export function WorkProvider({
       }
       upsert(result.data.item);
       toast.success("Restored.");
-      refresh();
       return result.data.item;
     },
-    [track, upsert, refresh],
+    [track, upsert],
   );
 
   const remove = useCallback(
@@ -488,10 +519,9 @@ export function WorkProvider({
         return false;
       }
       toast.success(result.data.archived ? "Archived — its history is kept." : "Deleted.");
-      refresh();
       return true;
     },
-    [track, drop, refresh, open],
+    [track, drop, open],
   );
 
   const withdraw = useCallback(
@@ -523,34 +553,20 @@ export function WorkProvider({
     [],
   );
 
-  /** Paints an accepted request where the team put it, until the poll brings the row. */
+  /** Paints an accepted request where the team put it, until the page's fresh render brings the row. */
   const accepted = useCallback(
     (id: string, choice: AcceptChoice) => {
       const item = itemsRef.current.find((c) => c.id === id);
       if (!item) return;
-      const person = choice.assigneeId ? people.find((p) => p.id === choice.assigneeId) : null;
-      const priced = viewer.role === "ADMIN";
-      upsert({
-        ...item,
-        stage: choice.stage,
-        status: stageToStatus(choice.stage),
-        boardPosition: endOfColumn(itemsRef.current, choice.stage, id),
-        assigneeId: choice.assigneeId,
-        assignee: person ? { id: person.id, name: person.name, image: null } : null,
-        dueDate: choice.dueDate,
-        parentId: choice.parentId,
-        ...(priced
-          ? {
-              pricingType: choice.pricingType,
-              hourlyRate: choice.pricingType === "HOURLY" ? (choice.hourlyRate ?? null) : null,
-              estimatedHours: choice.pricingType === "HOURLY" ? (choice.estimatedHours ?? null) : null,
-              fixedPrice: choice.pricingType === "FIXED" ? (choice.fixedPrice ?? null) : null,
-            }
-          : {}),
-      });
-      refresh();
+      upsert(
+        acceptedItem(item, choice, {
+          boardPosition: endOfColumn(itemsRef.current, choice.stage, id),
+          people,
+          priced: viewer.role === "ADMIN",
+        }),
+      );
     },
-    [people, viewer.role, upsert, refresh],
+    [people, viewer.role, upsert],
   );
 
   const value = useMemo<WorkStore>(
@@ -648,7 +664,6 @@ export function WorkProvider({
           milestone={loggingItem}
           open
           onOpenChange={(o) => !o && setLogging(null)}
-          onChanged={refresh}
         />
       )}
 
@@ -659,6 +674,8 @@ export function WorkProvider({
         onCancel={() => {
           if (sendingBack) setItems(sendingBack.revert);
           setSendingBack(null);
+          sendBackOpen.current = false;
+          lastLocal.current = Date.now();
         }}
         onSend={async (comment) => {
           if (!sendingBack) return false;
@@ -666,6 +683,7 @@ export function WorkProvider({
           const ok = await commitMove(id, stage, boardPosition, revert, comment);
           if (ok) {
             setSendingBack(null);
+            sendBackOpen.current = false;
             toast.success(`Sent back to ${COLUMN_BY_ID[stage].clientLabel} — the team has your note.`);
           }
           return ok;
@@ -685,12 +703,7 @@ export function WorkProvider({
           people={people}
           phases={phases}
           itemId={acceptingItem.id}
-          defaultPricing={{
-            pricingType: acceptingItem.pricingType,
-            hourlyRate: acceptingItem.hourlyRate,
-            estimatedHours: acceptingItem.estimatedHours,
-            fixedPrice: acceptingItem.fixedPrice,
-          }}
+          item={acceptingItem}
           onAccepted={(choice) => accepted(acceptingItem.id, choice)}
         />
       )}
@@ -705,7 +718,6 @@ export function WorkProvider({
           onDeclined={() => {
             drop([decliningItem.id]);
             if (openId === decliningItem.id) open(null);
-            refresh();
           }}
         />
       )}

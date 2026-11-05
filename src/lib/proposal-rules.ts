@@ -1,12 +1,13 @@
 import type { InvoiceStatus, ProposalStatus } from "@prisma/client";
 import { formatCurrency, sumByCurrency } from "./currency";
+import { invoiceStatusLabels } from "./format";
 
 /**
  * The decisions behind the proposal flow that don't need a database: what
  * "Delete" does, when the draft invoice may go with it, what the client is
- * promised as a first invoice, when a reminder is due, and how money adds up
- * across currencies. Dependency-free, so the server, the board and the tests
- * all read the same rules.
+ * promised as a first invoice, what acceptance sets up, when a reminder is
+ * due, and how money adds up across currencies. Dependency-free, so the
+ * server, the board and the tests all read the same rules.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,13 +42,23 @@ export type DraftInvoiceFacts = {
   sentAt: DateLike;
   amountPaid: number;
   paymentCount: number;
+  /** The client reported paying it. */
+  paymentClaimedAt: DateLike;
+  /** Credit notes issued against it. */
+  creditNoteCount: number;
+  /**
+   * A recurring plan with invoices of its own copies it each period. (A plan
+   * this invoice alone started doesn't count: it goes with the invoice.)
+   */
+  copiedByPlan: boolean;
 };
 
 /**
- * The proposal's invoice may only be removed while it is still paperwork:
- * never sent, nothing paid, no payment rows. Once it has reached the client or
- * money has moved against it, it is a business record with its own delete
- * flow. deleteProposal repeats this as a conditional delete inside its
+ * The proposal's invoice may only be removed (or rewritten by the builder)
+ * while it is still paperwork: never sent, nothing paid or reported paid, no
+ * credit notes, and no running plan copying it. Past that it is a business
+ * record with its own delete flow, the same line deleteInvoice draws.
+ * removeDraftInvoice repeats this as a conditional delete inside the caller's
  * transaction, so a send or payment that lands meanwhile still wins.
  */
 export function draftInvoiceRemovable(invoice: DraftInvoiceFacts | null): boolean {
@@ -55,9 +66,22 @@ export function draftInvoiceRemovable(invoice: DraftInvoiceFacts | null): boolea
   return (
     (invoice.status === "DRAFT" || invoice.status === "ASSIGNED") &&
     ms(invoice.sentAt) == null &&
+    ms(invoice.paymentClaimedAt) == null &&
     invoice.amountPaid === 0 &&
-    invoice.paymentCount === 0
+    invoice.paymentCount === 0 &&
+    invoice.creditNoteCount === 0 &&
+    !invoice.copiedByPlan
   );
+}
+
+/** Why the invoice stays, in the words of draftInvoiceRemovable: "Invoice INV-041 stays: …". */
+export function invoiceKeptReason(invoice: DraftInvoiceFacts): string {
+  if (ms(invoice.sentAt) != null) return "it has already been sent";
+  if (invoice.amountPaid > 0 || invoice.paymentCount > 0) return "money has been recorded against it";
+  if (ms(invoice.paymentClaimedAt) != null) return "the client reported paying it";
+  if (invoice.creditNoteCount > 0) return "credit notes were issued against it";
+  if (invoice.copiedByPlan) return "a recurring plan copies it";
+  return `it is ${invoiceStatusLabels[invoice.status].toLowerCase()}`;
 }
 
 export type ProposalRemovalPlan = {
@@ -86,6 +110,58 @@ export function proposalRemovalPlan(
   if (mode === "delete") return { mode, invoice: removable ? "remove" : "keep" };
   if (proposal.status === "ACCEPTED") return { mode, invoice: "keep" };
   return { mode, invoice: removable ? "offer" : "keep" };
+}
+
+/**
+ * Deleting a lead: which of its proposals outlive it. A draft nobody was sent
+ * goes with the lead, tidied up as deleting it would be. A sent, declined or
+ * archived one is the record of what was offered (archived ones can still be
+ * restored), so it stays as a proposal without a lead, addressed as the lead
+ * was. deleteLead repeats this as its where clause.
+ */
+export function keptWithoutLead(p: { status: ProposalStatus; sentAt: DateLike; archivedAt: DateLike }): boolean {
+  return proposalRemovalMode(p) === "archive" || ms(p.archivedAt) != null;
+}
+
+/** What the lead delete dialogs say happens to the lead's proposals. */
+export function leadDeleteNote(counts: { unsent: number; kept: number }): string | null {
+  const parts: string[] = [];
+  if (counts.unsent > 0) {
+    parts.push(
+      `${counts.unsent} unsent draft proposal${counts.unsent === 1 ? " is" : "s are"} deleted with it.`,
+    );
+  }
+  if (counts.kept > 0) {
+    parts.push(
+      `${counts.kept} sent or archived proposal${counts.kept === 1 ? " stays" : "s stay"}, addressed to the lead's contact.`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+// ---------- The builder ----------
+
+/**
+ * The builder edits the invoice's lines as plain text, while the invoice page
+ * can also format them (descriptionRich). On a builder save, a line whose
+ * words were left alone keeps its formatting, matched in order so two lines
+ * with the same words keep their own; a line whose words changed drops it,
+ * because the formatted version would still print the old wording.
+ */
+export function keepLineFormatting<Row extends { description: string }, Rich>(
+  saved: { description: string; descriptionRich: Rich | null }[],
+  rows: Row[],
+): (Row | (Row & { descriptionRich: NonNullable<Rich> }))[] {
+  const byWords = new Map<string, (Rich | null)[]>();
+  for (const line of saved) {
+    const queue = byWords.get(line.description);
+    if (queue) queue.push(line.descriptionRich);
+    else byWords.set(line.description, [line.descriptionRich]);
+  }
+  return rows.map((row) => {
+    const rich = byWords.get(row.description)?.shift();
+    return rich == null ? row : { ...row, descriptionRich: rich };
+  });
 }
 
 // ---------- Money ----------
@@ -124,6 +200,44 @@ export function firstInvoicePromise(
   const amount = depositAmount(proposal.total, proposal.depositPercent);
   if (amount <= 0) return null;
   return { kind: "deposit", percent: proposal.depositPercent, amount, currency: proposal.currency };
+}
+
+/** A YYYY-MM-DD day as whole days since the epoch, in UTC so no zone shifts it. */
+function dayNumber(day: string): number {
+  return Math.round(Date.parse(`${day}T00:00:00Z`) / DAY_MS);
+}
+
+/**
+ * The dates the proposal's invoice is issued with once the client accepts.
+ * The builder dated it when the proposal was made, often weeks earlier; kept,
+ * it would land already overdue, and the chaser's final reminder would follow
+ * days after it was sent. An issue date before the acceptance day moves to
+ * that day and the due date follows: the invoice's net terms when it has
+ * them, otherwise the gap it had (none without a due date). A later issue
+ * date was chosen on purpose and stays. Null when nothing moves.
+ */
+export function acceptedInvoiceDates(
+  invoice: { issueDate: string; dueDate: string | null; paymentTermsDays: number | null },
+  today: string,
+): { issueDate: string; dueDate: string | null } | null {
+  if (invoice.issueDate >= today) return null;
+  const days =
+    invoice.paymentTermsDays ??
+    (invoice.dueDate ? Math.max(0, dayNumber(invoice.dueDate) - dayNumber(invoice.issueDate)) : null);
+  if (days == null) return { issueDate: today, dueDate: null };
+  const due = new Date((dayNumber(today) + days) * DAY_MS).toISOString().slice(0, 10);
+  return { issueDate: today, dueDate: due };
+}
+
+/**
+ * What the project a signed proposal creates is priced at. Project prices
+ * are dollars (Bill work, the portal and the project form all read them so)
+ * and nothing here converts currencies, so an agreement in another currency
+ * starts with no price: the admin enters its USD value once they know it,
+ * and the proposal keeps the agreed total in its own currency.
+ */
+export function handoffContractPrice(proposal: { total: number; currency: string }): number | null {
+  return proposal.currency === "USD" ? proposal.total : null;
 }
 
 /**

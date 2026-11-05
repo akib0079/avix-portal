@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { LeadView, LeadOwnerOption } from "@/lib/dal/leads";
 import { convertLead, deleteLead, setLeadStage } from "@/lib/actions/leads";
 import { leadStageLabels, leadStageValues } from "@/lib/validation/lead";
+import { leadDeleteNote } from "@/lib/proposal-rules";
 import { LeadFormDialog } from "./lead-form-dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,11 +31,9 @@ import { Pencil, Trash2, UserPlus, Loader2 } from "lucide-react";
 export function LeadDetailActions({
   lead,
   owners,
-  proposalCount,
 }: {
   lead: LeadView;
   owners: LeadOwnerOption[];
-  proposalCount: number;
 }) {
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
@@ -43,6 +42,7 @@ export function LeadDetailActions({
   const [lostFor, setLostFor] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const proposalNote = leadDeleteNote(lead.proposalCounts);
 
   async function changeStage(next: string) {
     if (next === lead.stage) return;
@@ -168,13 +168,10 @@ export function LeadDetailActions({
             <DialogTitle>Delete {lead.name}?</DialogTitle>
             <DialogDescription>
               This can&apos;t be undone.
-              {proposalCount > 0 && (
+              {proposalNote && (
                 <>
                   {" "}
-                  <span className="font-medium text-destructive">
-                    {proposalCount} proposal{proposalCount === 1 ? "" : "s"} attached to
-                    this lead will be deleted too.
-                  </span>
+                  <span className="font-medium text-destructive">{proposalNote}</span>
                 </>
               )}
             </DialogDescription>
@@ -191,7 +188,10 @@ export function LeadDetailActions({
                 const res = await deleteLead(lead.id);
                 setBusy(false);
                 if (!res.ok) return void toast.error(res.error);
-                toast.success("Lead deleted.");
+                const kept = res.data?.keptProposals ?? 0;
+                toast.success(
+                  kept > 0 ? `Lead deleted. ${kept} proposal${kept === 1 ? " was" : "s were"} kept.` : "Lead deleted.",
+                );
                 router.push("/admin/leads");
               }}
             >

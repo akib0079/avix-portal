@@ -45,11 +45,16 @@ export type WorkInput = {
   contractPrice: number | null;
   /** Contract projects: USD invoiced against the project so far, net of credits. */
   contractInvoicedUsd: number;
+  /**
+   * Contract projects: invoices with no USD value, which contractInvoicedUsd
+   * can't count. While there are any, what's left of the contract is unknown.
+   */
+  contractMissingUsd: number;
   items: WorkItem[];
   /** Hours per item that no live invoice bills. */
   unbilledHours: Record<string, number>;
-  /** Hours per item already on a live invoice. */
-  billedHours: Record<string, number>;
+  /** Hours per item already on a live invoice; only `billed` reads them. */
+  billedHours?: Record<string, number>;
 };
 
 function round(value: number): number {
@@ -80,13 +85,43 @@ export function contractInvoiced(
   return { usd: round(usd), missing };
 }
 
+/**
+ * What the old code invoiced on a milestone project without saying what for,
+ * in USD: live invoices from before the first v49 boot pass (`cutover`) with
+ * no line linked to work. The backfill links the lines the old Bill work
+ * wrote; the rest (hand-typed lines, work renamed since) may bill work that
+ * is offered again here, so Bill work warns about this much. Nothing newer
+ * counts: the new code links every line it bills.
+ */
+export function legacyInvoicedUsd(
+  invoices: {
+    usd: number | null;
+    creditNote: boolean;
+    status: string;
+    createdAt: Date;
+    /** A line on it is linked to a milestone or to hours. */
+    linked: boolean;
+  }[],
+  cutover: Date,
+): number {
+  let usd = 0;
+  for (const invoice of invoices) {
+    if (invoice.status === "CANCELLED" || invoice.creditNote || invoice.linked) continue;
+    if (invoice.createdAt >= cutover) continue;
+    usd += invoice.usd ?? 0;
+  }
+  return round(usd);
+}
+
 function hoursLabel(hours: number): string {
   return `${Number.isInteger(hours) ? hours : round(hours)}h`;
 }
 
 /**
  * The lines still to bill, what they add up to, and what is already billed
- * (all USD). A contract project bills what is left of its price.
+ * (all USD). A contract project bills what is left of its price, once every
+ * invoice on it has a USD value: one without would count as nothing invoiced
+ * and offer the whole contract again.
  */
 export function billableLines(work: WorkInput): {
   lines: BillableLine[];
@@ -101,7 +136,7 @@ export function billableLines(work: WorkInput): {
     const invoiced = Math.max(work.contractInvoicedUsd, 0);
     const left = round(price - invoiced);
     billed = round(Math.min(invoiced, price));
-    if (left > 0) {
+    if (left > 0 && work.contractMissingUsd === 0) {
       lines.push({
         key: "contract",
         description:
@@ -133,7 +168,7 @@ export function billableLines(work: WorkInput): {
       }
       if (item.pricingType === "HOURLY") {
         const rate = item.hourlyRate ?? 0;
-        billed += (work.billedHours[item.id] ?? 0) * rate;
+        billed += (work.billedHours?.[item.id] ?? 0) * rate;
         const hours = round(work.unbilledHours[item.id] ?? 0);
         if (hours > 0 && rate > 0) {
           lines.push({

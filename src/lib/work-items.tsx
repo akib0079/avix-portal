@@ -11,7 +11,9 @@ import { COLUMN_BY_ID, parentProblem, positionBetween, workItemHref } from "@/li
 import { stageWrite } from "@/lib/work-stage";
 import { PLAN_ITEM } from "@/lib/work-scope";
 import {
+  itemScalarSelect,
   itemSelect,
+  withRelations,
   type AccessedItem,
   type BoardViewer,
   type ItemRow,
@@ -75,13 +77,15 @@ export const NO_PRICING = {
 /**
  * The assignee must be on the team — or, when the team assigns, this
  * project's client ("there's a task for you"). The phase must be a valid
- * parent for this item (see parentProblem in board.ts).
+ * parent for this item (see parentProblem in board.ts). Hands back the
+ * assignee as a row shows them (null when none was named), so a write
+ * needn't select them.
  */
 export async function checkWorkRefs(
   viewer: BoardViewer,
   refs: { assigneeId?: string | null; parentId?: string | null },
   item?: { id: string; childCount: number },
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; assignee: ItemRow["assignee"] } | { ok: false; error: string }> {
   const clientId = viewer.side === "ADMIN" ? viewer.project.clientId : null;
   const [assignee, parent] = await Promise.all([
     refs.assigneeId
@@ -91,7 +95,7 @@ export async function checkWorkRefs(
             status: "ACTIVE",
             OR: [{ role: { in: ["ADMIN", "STAFF"] } }, ...(clientId ? [{ id: clientId }] : [])],
           },
-          select: { id: true },
+          select: { id: true, firstName: true, lastName: true, name: true, image: true },
         })
       : null,
     refs.parentId
@@ -106,7 +110,7 @@ export async function checkWorkRefs(
     const problem = parentProblem(item ?? { childCount: 0 }, parent, viewer.project.id);
     if (problem) return { ok: false, error: problem };
   }
-  return { ok: true };
+  return { ok: true, assignee };
 }
 
 /**
@@ -364,15 +368,16 @@ async function announceRequest(
 export async function writeApproval(item: AccessedItem, boardPosition?: number): Promise<ItemRow> {
   const now = new Date();
   const position = boardPosition ?? (await endOfColumn(item.projectId, "DONE"));
-  return prisma.milestone.update({
+  const row = await prisma.milestone.update({
     where: { id: item.id },
     data: {
       ...stageWrite("DONE", item, now),
       clientApprovedAt: item.clientApprovedAt ?? now,
       boardPosition: position,
     },
-    select: itemSelect,
+    select: itemScalarSelect,
   });
+  return withRelations(row, item);
 }
 
 /** Who hears that the client approved: the admins (it may now be billable) and whoever did it. */
@@ -442,7 +447,6 @@ export async function writeSendBack(
   boardPosition?: number,
 ): Promise<ItemRow> {
   const position = boardPosition ?? (await endOfColumn(item.projectId, to));
-  // The comment first, so the row read back counts it.
   const [, row] = await prisma.$transaction([
     prisma.milestoneComment.create({
       data: {
@@ -457,10 +461,10 @@ export async function writeSendBack(
     prisma.milestone.update({
       where: { id: item.id },
       data: { ...stageWrite(to, item), clientApprovedAt: null, boardPosition: position },
-      select: itemSelect,
+      select: itemScalarSelect,
     }),
   ]);
-  return row;
+  return withRelations(row, { ...item, _count: { ...item._count, comments: item._count.comments + 1 } });
 }
 
 export async function announceSendBack(

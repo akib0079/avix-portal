@@ -100,7 +100,9 @@ export async function boardAccess(projectId: string): Promise<BoardViewer | null
 
 /**
  * The same rule reached through an item. Returns the item's raw row too —
- * everything the write actions check, without the description.
+ * everything the write actions check, without the description — and the
+ * people and counts a row shows, so a write can hand back its row without
+ * selecting them (see withRelations).
  */
 export async function itemAccess(itemId: string) {
   const viewer = await currentWorkViewer();
@@ -110,8 +112,8 @@ export async function itemAccess(itemId: string) {
     omit: { description: true },
     include: {
       project: { select: projectSelect },
-      parent: { select: { archivedAt: true } },
-      _count: { select: { children: { where: { archivedAt: null } } } },
+      parent: { select: { archivedAt: true, parentId: true } },
+      ...itemRelations,
     },
   });
   if (!item) return null;
@@ -135,8 +137,13 @@ export type AccessedItem = NonNullable<Awaited<ReturnType<typeof itemAccess>>>["
  * What a list row or a card shows. relationJoins makes the people and the
  * counts part of the one statement. The description is read only to answer
  * "has details?"; it never leaves the server from here.
+ *
+ * Writes select the scalars only: a write that selects a relation runs as
+ * BEGIN, the write, a read-back and COMMIT — four round trips instead of one
+ * UPDATE … RETURNING. The action fills the rest in (withRelations) from what
+ * it already read.
  */
-export const itemSelect = {
+export const itemScalarSelect = {
   id: true,
   title: true,
   stage: true,
@@ -162,12 +169,29 @@ export const itemSelect = {
   estimatedHours: true,
   createdAt: true,
   updatedAt: true,
+} satisfies Prisma.MilestoneSelect;
+
+const itemRelations = {
   assignee: { select: { id: true, firstName: true, lastName: true, name: true, image: true } },
   createdBy: { select: { firstName: true, lastName: true, name: true } },
   _count: { select: { comments: true, children: { where: { archivedAt: null } } } },
 } satisfies Prisma.MilestoneSelect;
 
+export const itemSelect = { ...itemScalarSelect, ...itemRelations } satisfies Prisma.MilestoneSelect;
+
 export type ItemRow = Prisma.MilestoneGetPayload<{ select: typeof itemSelect }>;
+export type ItemScalarRow = Prisma.MilestoneGetPayload<{ select: typeof itemScalarSelect }>;
+type ItemRelations = Pick<ItemRow, "assignee" | "createdBy" | "_count">;
+
+/** A row a write returned (itemScalarSelect), with the people and counts it left out. */
+export function withRelations(row: ItemScalarRow, rel: ItemRelations): ItemRow {
+  return { ...row, assignee: rel.assignee, createdBy: rel.createdBy, _count: rel._count };
+}
+
+/** A signed-in user as a row's creator or a comment's author. */
+export function personOf(u: { firstName?: string | null; lastName?: string | null; name: string }) {
+  return { firstName: u.firstName ?? "", lastName: u.lastName ?? "", name: u.name };
+}
 
 /** The per-item numbers that come from other tables. */
 export type ItemExtras = {
@@ -307,9 +331,10 @@ export function emptyExtras(): ItemExtras {
 }
 
 /**
- * A project's work items as both views draw them, in plan order. Bounded: a
- * project past a few hundred live items needs filters, not a longer payload on
- * every poll.
+ * A project's work items as both views draw them, in plan order. The live
+ * read is every live item: the counts, the attention lists and the plan's
+ * reorder all assume the whole plan is here, so a cap would hide the newest
+ * work first. Only the archive is bounded, newest archived first.
  *
  * The viewer defaults to the session (React's cache shares that lookup with
  * the page's own requireTeam/requireClient), and the reads are scoped by it:
@@ -334,8 +359,10 @@ export async function getWorkItems(
       // The client's scope is part of the query: someone else's project
       // simply has no rows. The other reads are only joined to these.
       where: who.role === "CLIENT" ? { ...live, project: { clientId: who.id } } : live,
-      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-      take: 500,
+      orderBy: opts.archived
+        ? [{ archivedAt: "desc" }, { position: "asc" }]
+        : [{ position: "asc" }, { createdAt: "asc" }],
+      ...(opts.archived ? { take: 500 } : {}),
       select: { ...itemSelect, project: { select: { billingType: true } } },
     }),
     openHelpFor({ milestone: live }),
@@ -365,6 +392,7 @@ type VersionQueryRow = {
   commentsAt: Date | null;
   comments: number;
   hours: number;
+  hoursMix: number;
   entries: number;
   billedAt: Date | null;
   billed: number;
@@ -385,7 +413,7 @@ export async function getWorkVersion(
   const clientId = who.role === "CLIENT" ? who.id : null;
   const rows = await prisma.$queryRaw<VersionQueryRow[]>`
     SELECT w."itemsAt", w."items", c."commentsAt", c."comments",
-           t."hours", t."entries", b."billedAt", b."billed"
+           t."hours", t."hoursMix", t."entries", b."billedAt", b."billed"
     FROM "projects" p
     CROSS JOIN LATERAL (
       SELECT max(m."updatedAt") AS "itemsAt", count(*)::int AS "items"
@@ -400,7 +428,12 @@ export async function getWorkVersion(
       WHERE m."projectId" = p."id" AND m."archivedAt" IS NULL
     ) c
     CROSS JOIN LATERAL (
-      SELECT COALESCE(sum(te."hours"), 0)::float8 AS "hours", count(*)::int AS "entries"
+      -- hoursMix weighs each entry by a hash of its item, so hours moved from
+      -- one item to another change the token even when the total doesn't.
+      SELECT COALESCE(sum(te."hours"), 0)::float8 AS "hours",
+             COALESCE(sum(te."hours" * ((hashtext(te."milestoneId")::bigint & 1048575) + 1)), 0)::float8
+               AS "hoursMix",
+             count(*)::int AS "entries"
       FROM "time_entries" te
       JOIN "milestones" m ON m."id" = te."milestoneId"
       WHERE m."projectId" = p."id" AND m."archivedAt" IS NULL
@@ -421,6 +454,7 @@ export async function getWorkVersion(
     commentsAt: row.commentsAt,
     comments: Number(row.comments),
     hours: Number(row.hours),
+    hoursMix: Number(row.hoursMix),
     entries: Number(row.entries),
     billedAt: row.billedAt,
     billed: Number(row.billed),
@@ -482,7 +516,8 @@ export async function getBoard(
 /* Comments and the drawer                                                  */
 /* ------------------------------------------------------------------------ */
 
-export const commentSelect = {
+/** A comment's own columns; writes select only these (see itemScalarSelect). */
+export const commentScalarSelect = {
   id: true,
   authorId: true,
   authorRole: true,
@@ -492,10 +527,18 @@ export const commentSelect = {
   attachments: true,
   resolvedAt: true,
   createdAt: true,
-  author: { select: { firstName: true, lastName: true, name: true, role: true } },
 } satisfies Prisma.MilestoneCommentSelect;
 
-type CommentRow = Prisma.MilestoneCommentGetPayload<{ select: typeof commentSelect }>;
+export const commentAuthorSelect = {
+  select: { firstName: true, lastName: true, name: true, role: true },
+} satisfies Prisma.UserDefaultArgs;
+
+export const commentSelect = {
+  ...commentScalarSelect,
+  author: commentAuthorSelect,
+} satisfies Prisma.MilestoneCommentSelect;
+
+export type CommentRow = Prisma.MilestoneCommentGetPayload<{ select: typeof commentSelect }>;
 
 function jsonList<T>(value: unknown, pick: (v: Record<string, unknown>) => T | null): T[] {
   if (!Array.isArray(value)) return [];

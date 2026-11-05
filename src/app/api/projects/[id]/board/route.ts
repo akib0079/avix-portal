@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { currentWorkViewer, getBoard, getWorkItems, getWorkVersion } from "@/lib/dal/project-board";
+import { prisma } from "@/lib/prisma";
+import {
+  currentWorkViewer,
+  getBoard,
+  getBoardPeople,
+  getWorkItems,
+  getWorkVersion,
+} from "@/lib/dal/project-board";
 
 /**
  * The Milestones tab's poll. Same access rule as the page: the team sees any
@@ -12,6 +19,10 @@ import { currentWorkViewer, getBoard, getWorkItems, getWorkVersion } from "@/lib
  *
  * ?archived=1 lists the project's archive instead (the team only), for the
  * list's "Show archived".
+ *
+ * ?for=accept|new-task is a dialog opened away from the project page (My
+ * Work, the Requests inbox, chat) filling its pickers: just the people and
+ * the phases, in one wave with the access check, not the whole board.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const [{ id }, viewer] = await Promise.all([params, currentWorkViewer()]);
@@ -25,6 +36,31 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (viewer.role === "CLIENT") return NextResponse.json({ error: "Not found" }, { status: 404 });
     const items = await getWorkItems(id, viewer, { archived: true });
     return NextResponse.json({ items }, { headers });
+  }
+
+  const purpose = query.get("for");
+  if (purpose === "accept" || purpose === "new-task") {
+    const clientId = viewer.role === "CLIENT" ? viewer.id : null;
+    const [allowed, people, phases] = await Promise.all([
+      clientId ? prisma.project.count({ where: { id, clientId } }) : 1,
+      // Checks nothing itself: it's thrown away below unless the check passes.
+      getBoardPeople(id),
+      // The phases as phasesOf picks them: live, accepted, top level, in plan order.
+      prisma.milestone.findMany({
+        where: {
+          projectId: id,
+          archivedAt: null,
+          parentId: null,
+          stage: { not: "REQUESTED" },
+          ...(clientId ? { project: { clientId } } : {}),
+        },
+        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+        take: 500,
+        select: { id: true, title: true },
+      }),
+    ]);
+    if (!allowed) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ people, phases }, { headers });
   }
 
   const version = await getWorkVersion(id, viewer);

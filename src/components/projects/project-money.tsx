@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { MilestoneView } from "@/components/milestones/milestone-types";
 import { InvoiceStatusBadge } from "@/components/status-badges";
+import { SoftPill } from "@/components/ui/status-pill";
+import { HUE } from "@/lib/status-colors";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -13,19 +15,20 @@ import {
 import { usd, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Clock, BadgeDollarSign, ReceiptText, Repeat } from "lucide-react";
-import { BillWorkButton, type BillableLineView } from "@/components/invoices/bill-work-button";
+import {
+  BillWorkButton,
+  LegacyNote,
+  type BillableLineView,
+} from "@/components/invoices/bill-work-button";
 import { toneChip, toneText } from "@/lib/tone";
 import { formatCurrency } from "@/lib/currency";
 import { cadenceLabel, cadenceSuffix } from "@/lib/recurring";
+import { projectMoneyTotals, type ProjectInvoice } from "@/lib/project-money";
 
-type InvoiceRow = {
+type InvoiceRow = ProjectInvoice & {
   id: string;
   invoiceNumber: string;
   issueDate: Date | string;
-  amount: number;
-  /** Money actually received — partial payments count toward "collected". */
-  amountPaid: number;
-  status: string;
 };
 
 type RetainerRow = {
@@ -52,7 +55,7 @@ function Stat({
 }: {
   label: string;
   value: string;
-  hint?: string;
+  hint?: React.ReactNode;
   icon: React.ComponentType<{ className?: string }>;
   tone?: "good" | "warn";
 }) {
@@ -97,8 +100,17 @@ export function ProjectMoney({
   contractPrice: number | null;
   invoices: InvoiceRow[];
   retainers: RetainerRow[];
-  /** Work that could be billed right now, from getBillableWork. */
-  billable: { lines: BillableLineView[]; total: number; unbilled: number };
+  /**
+   * Work that could be billed right now, from getBillableWork. missingUsd:
+   * contract projects' invoices with no USD value.
+   */
+  billable: {
+    lines: BillableLineView[];
+    total: number;
+    unbilled: number;
+    legacyUsd: number;
+    missingUsd: number;
+  };
 }) {
   const totalLogged = milestones.reduce((sum, m) => sum + m.loggedHours, 0);
   const hourly = milestones.filter((m) => m.pricingType === "HOURLY");
@@ -114,15 +126,14 @@ export function ProjectMoney({
     .reduce((sum, m) => sum + (m.fixedPrice ?? 0), 0);
   const earned =
     billingType === "CONTRACT" ? (contractPrice ?? 0) : earnedHourly + earnedFixed;
+  // A contract with no price has nothing to compare; one with an invoice of
+  // unknown USD value can't say what's left of it.
+  const unpriced = billingType === "CONTRACT" && contractPrice == null;
+  const unvalued = billingType === "CONTRACT" ? billable.missingUsd : 0;
 
-  // Cancelled documents and credit notes never count as receivables.
-  const liveInvoices = invoices.filter((i) => i.status !== "CANCELLED");
-  const invoiced = liveInvoices.reduce((sum, i) => sum + i.amount, 0);
-  const paid = liveInvoices.reduce((sum, i) => sum + i.amountPaid, 0);
-  // Nor are drafts: nothing on one is owed until it has been sent.
-  const outstanding = liveInvoices
-    .filter((i) => i.status !== "DRAFT")
-    .reduce((sum, i) => sum + i.amount - i.amountPaid, 0);
+  // Cancelled documents and credit notes never count as receivables, and
+  // every invoice counts at its USD value (lib/project-money).
+  const { invoiced, paid, outstanding, count, missingUsd } = projectMoneyTotals(invoices);
   // Work no invoice line bills yet, from the links between them, rather than
   // the work's value minus every invoice on the project.
   const unbilled = billable.unbilled;
@@ -135,18 +146,20 @@ export function ProjectMoney({
             <p className="text-sm font-medium">
               {billable.unbilled > 0
                 ? `${usd.format(billable.unbilled)} of completed work isn't invoiced yet`
-                : "All completed work has been invoiced"}
+                : "Older invoices may already bill this work"}
             </p>
             <p className="text-xs text-muted-foreground">
               {billable.lines.length} line
               {billable.lines.length === 1 ? "" : "s"} no invoice bills yet — completed
               fixed-price work and logged hours.
             </p>
+            {billable.legacyUsd > 0 && <LegacyNote legacyUsd={billable.legacyUsd} />}
           </div>
           <BillWorkButton
             projectId={projectId}
             lines={billable.lines}
             unbilled={billable.unbilled}
+            legacyUsd={billable.legacyUsd}
           />
         </div>
       )}
@@ -164,15 +177,29 @@ export function ProjectMoney({
         />
         <Stat
           label={billingType === "CONTRACT" ? "Contract value" : "Earned"}
-          value={usd.format(earned)}
-          hint={unbilled > 0 ? `${usd.format(unbilled)} not yet invoiced` : "Fully invoiced"}
+          value={unpriced ? "Not set" : usd.format(earned)}
+          hint={
+            unpriced ? undefined : unvalued > 0 ? (
+              <Link href="/admin/invoices?filter=needs-usd" className="hover:text-primary">
+                {unvalued} invoice{unvalued === 1 ? " has" : "s have"} no USD value, so what&apos;s
+                left of the contract can&apos;t be worked out
+              </Link>
+            ) : unbilled > 0 ? (
+              `${usd.format(unbilled)} not yet invoiced`
+            ) : (
+              "Fully invoiced"
+            )
+          }
           icon={BadgeDollarSign}
-          tone={unbilled > 0 ? "warn" : undefined}
+          tone={unbilled > 0 || unvalued > 0 ? "warn" : undefined}
         />
         <Stat
           label="Invoiced"
           value={usd.format(invoiced)}
-          hint={`${liveInvoices.length} invoice${liveInvoices.length === 1 ? "" : "s"}`}
+          hint={
+            `${count} invoice${count === 1 ? "" : "s"}` +
+            (missingUsd > 0 ? ` · ${missingUsd} with no USD value, not counted` : "")
+          }
           icon={ReceiptText}
         />
         <Stat
@@ -267,11 +294,19 @@ export function ProjectMoney({
                     <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
                       {formatDate(invoice.issueDate)}
                     </TableCell>
-                    <TableCell className="text-sm">{usd.format(invoice.amount)}</TableCell>
+                    <TableCell className="text-sm">
+                      {/* A credit note is money back, so it reads as one. */}
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" && "−"}
+                      {formatCurrency(invoice.amount, invoice.currency)}
+                    </TableCell>
                     <TableCell>
-                      <InvoiceStatusBadge
-                        status={invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]}
-                      />
+                      {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
+                        <SoftPill color={HUE.violet}>Credit note</SoftPill>
+                      ) : (
+                        <InvoiceStatusBadge
+                          status={invoice.status as Parameters<typeof InvoiceStatusBadge>[0]["status"]}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

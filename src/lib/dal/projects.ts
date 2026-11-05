@@ -56,7 +56,11 @@ export async function getProject(id: string) {
         },
       },
       owner: { select: { id: true, firstName: true, lastName: true } },
-      invoices: { orderBy: { createdAt: "desc" } },
+      // With what each one's credit notes take off it (the Money tab).
+      invoices: {
+        orderBy: { createdAt: "desc" },
+        include: { creditNotes: { select: { amount: true, status: true } } },
+      },
     },
   });
   if (project && viewer.role === "STAFF") {

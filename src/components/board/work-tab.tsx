@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ViewToggle, VIEW_MODES, type ViewMode } from "@/components/ui/lanes";
 import { useLocalChoice } from "@/lib/use-local-pref";
-import { WORK_TAB, type WorkView } from "@/lib/board";
+import { WORK_TAB, resolveWorkLink, type WorkView } from "@/lib/board";
 import { MilestoneList } from "@/components/milestones/milestone-board";
 import { ClientWorkList } from "@/components/projects/client-project-timeline";
 import { ProjectBoard } from "./project-board";
@@ -26,11 +27,15 @@ export function WorkTab({ initialView }: { initialView: WorkView | null }) {
   const [remembered, remember] = useLocalChoice<ViewMode>(VIEW_KEY, "board", VIEW_MODES);
   const [picked, setPicked] = useState<ViewMode | null>(initialView);
   // A link elsewhere on the page ("Review 2 items") changes ?view=; follow it.
-  // Adjusted during render, not in an effect.
-  const [seen, setSeen] = useState(initialView);
-  if (initialView !== seen) {
-    setSeen(initialView);
-    if (initialView) setPicked(initialView);
+  // Read from the URL (old link shapes included, as the server reads them),
+  // not the server's prop, which a switch here doesn't move: after picking
+  // List, a link back to the board would change nothing. Adjusted during
+  // render, not in an effect.
+  const urlView = resolveWorkLink(useSearchParams()).view;
+  const [seen, setSeen] = useState(urlView);
+  if (urlView !== seen) {
+    setSeen(urlView);
+    if (urlView) setPicked(urlView);
   }
   const view = picked ?? remembered;
 
