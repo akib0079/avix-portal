@@ -24,6 +24,7 @@ import {
   restoreCancelled,
   settleIfRaced,
   settledStatus,
+  uncountRun,
   updateLines,
 } from "@/lib/invoice-write";
 import {
@@ -955,6 +956,7 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
       paymentClaimedAt: true,
       creditNoteForId: true,
       retainerId: true,
+      retainerPeriod: true,
       _count: { select: { payments: true, creditNotes: true } },
       retainerTemplateFor: {
         select: { id: true, title: true, _count: { select: { invoices: true } } },
@@ -993,14 +995,23 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
     };
   }
 
-  if (plans.length > 0) {
-    await prisma.$transaction([
-      prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } }),
-      prisma.invoice.delete({ where: { id } }),
-    ]);
-  } else {
-    await prisma.invoice.delete({ where: { id } });
-  }
+  // One of a plan's own period invoices no longer counts toward its end
+  // ("ends after N"): the plan can bill that period again (Generate now), and
+  // counting both ended the plan a period early. The decrement follows the
+  // delete in one batch, so a second click's failed delete can't repeat it.
+  const uncount =
+    invoice.retainerId && invoice.retainerPeriod && !plans.some((p) => p.id === invoice.retainerId)
+      ? [uncountRun(prisma, invoice.retainerId)]
+      : [];
+  const writes = [
+    ...(plans.length > 0
+      ? [prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } })]
+      : []),
+    prisma.invoice.delete({ where: { id } }),
+    ...uncount,
+  ];
+  if (writes.length > 1) await prisma.$transaction(writes);
+  else await writes[0];
   const file = invoice.pdfPath;
   if (file) after(() => deleteUpload("invoices", file));
   await resettleCredited(invoice.creditNoteForId);

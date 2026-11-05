@@ -401,6 +401,18 @@ export async function restoreCancelled(
   }
 }
 
+/**
+ * A plan's period invoice stopped counting (deleted, or detached from the
+ * plan), so the plan's count of invoices made drops by one, and an "ends
+ * after N" plan can still bill N periods. Never below zero.
+ */
+export function uncountRun(db: Prisma.TransactionClient, retainerId: string) {
+  return db.retainer.updateMany({
+    where: { id: retainerId, runCount: { gt: 0 } },
+    data: { runCount: { decrement: 1 } },
+  });
+}
+
 export type PreparedInvoice = {
   data: InvoiceInput;
   refs: Refs;

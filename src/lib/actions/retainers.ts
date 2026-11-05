@@ -646,15 +646,29 @@ export async function attachInvoiceToRetainer(
 
 /**
  * Unlink an invoice from its plan (the invoice itself is untouched). Its
- * period goes too, so that period can be invoiced by the plan again.
+ * period goes too, so that period can be invoiced by the plan again, and so
+ * it stops counting toward the plan's end, as a deleted one does: counted twice, an
+ * "ends after N" plan ended a period early. An attached invoice (no period)
+ * was never counted. One statement: the row lock makes a second click find
+ * the invoice already detached, so the count can't drop twice.
  */
 export async function detachInvoiceFromRetainer(invoiceId: string): Promise<ActionResult> {
   await requireAdmin();
-  const detached = await prisma.invoice.updateMany({
-    where: { id: invoiceId },
-    data: { retainerId: null, retainerPeriod: null },
-  });
-  if (detached.count === 0) return { ok: false, error: "Invoice not found." };
+  const detached = await prisma.$queryRaw<unknown[]>`
+    WITH detached AS (
+      UPDATE "invoices" AS i SET "retainerId" = NULL, "retainerPeriod" = NULL, "updatedAt" = now()
+      FROM (
+        SELECT "id", "retainerId", "retainerPeriod" FROM "invoices" WHERE "id" = ${invoiceId} FOR UPDATE
+      ) AS was
+      WHERE i."id" = was."id"
+      RETURNING was."retainerId", was."retainerPeriod"
+    ), uncounted AS (
+      UPDATE "retainers" SET "runCount" = "runCount" - 1, "updatedAt" = now()
+      WHERE "runCount" > 0
+        AND "id" = (SELECT "retainerId" FROM detached WHERE "retainerPeriod" IS NOT NULL)
+    )
+    SELECT 1 FROM detached`;
+  if (detached.length === 0) return { ok: false, error: "Invoice not found." };
   revalidatePlans();
   return { ok: true };
 }
