@@ -100,7 +100,9 @@ export async function boardAccess(projectId: string): Promise<BoardViewer | null
 
 /**
  * The same rule reached through an item. Returns the item's raw row too —
- * everything the write actions check, without the description.
+ * everything the write actions check, without the description — and the
+ * people and counts a row shows, so a write can hand back its row without
+ * selecting them (see withRelations).
  */
 export async function itemAccess(itemId: string) {
   const viewer = await currentWorkViewer();
@@ -111,7 +113,7 @@ export async function itemAccess(itemId: string) {
     include: {
       project: { select: projectSelect },
       parent: { select: { archivedAt: true, parentId: true } },
-      _count: { select: { children: { where: { archivedAt: null } } } },
+      ...itemRelations,
     },
   });
   if (!item) return null;
@@ -135,8 +137,13 @@ export type AccessedItem = NonNullable<Awaited<ReturnType<typeof itemAccess>>>["
  * What a list row or a card shows. relationJoins makes the people and the
  * counts part of the one statement. The description is read only to answer
  * "has details?"; it never leaves the server from here.
+ *
+ * Writes select the scalars only: a write that selects a relation runs as
+ * BEGIN, the write, a read-back and COMMIT — four round trips instead of one
+ * UPDATE … RETURNING. The action fills the rest in (withRelations) from what
+ * it already read.
  */
-export const itemSelect = {
+export const itemScalarSelect = {
   id: true,
   title: true,
   stage: true,
@@ -162,12 +169,29 @@ export const itemSelect = {
   estimatedHours: true,
   createdAt: true,
   updatedAt: true,
+} satisfies Prisma.MilestoneSelect;
+
+const itemRelations = {
   assignee: { select: { id: true, firstName: true, lastName: true, name: true, image: true } },
   createdBy: { select: { firstName: true, lastName: true, name: true } },
   _count: { select: { comments: true, children: { where: { archivedAt: null } } } },
 } satisfies Prisma.MilestoneSelect;
 
+export const itemSelect = { ...itemScalarSelect, ...itemRelations } satisfies Prisma.MilestoneSelect;
+
 export type ItemRow = Prisma.MilestoneGetPayload<{ select: typeof itemSelect }>;
+export type ItemScalarRow = Prisma.MilestoneGetPayload<{ select: typeof itemScalarSelect }>;
+type ItemRelations = Pick<ItemRow, "assignee" | "createdBy" | "_count">;
+
+/** A row a write returned (itemScalarSelect), with the people and counts it left out. */
+export function withRelations(row: ItemScalarRow, rel: ItemRelations): ItemRow {
+  return { ...row, assignee: rel.assignee, createdBy: rel.createdBy, _count: rel._count };
+}
+
+/** A signed-in user as a row's creator or a comment's author. */
+export function personOf(u: { firstName?: string | null; lastName?: string | null; name: string }) {
+  return { firstName: u.firstName ?? "", lastName: u.lastName ?? "", name: u.name };
+}
 
 /** The per-item numbers that come from other tables. */
 export type ItemExtras = {
@@ -492,7 +516,8 @@ export async function getBoard(
 /* Comments and the drawer                                                  */
 /* ------------------------------------------------------------------------ */
 
-export const commentSelect = {
+/** A comment's own columns; writes select only these (see itemScalarSelect). */
+export const commentScalarSelect = {
   id: true,
   authorId: true,
   authorRole: true,
@@ -502,10 +527,18 @@ export const commentSelect = {
   attachments: true,
   resolvedAt: true,
   createdAt: true,
-  author: { select: { firstName: true, lastName: true, name: true, role: true } },
 } satisfies Prisma.MilestoneCommentSelect;
 
-type CommentRow = Prisma.MilestoneCommentGetPayload<{ select: typeof commentSelect }>;
+export const commentAuthorSelect = {
+  select: { firstName: true, lastName: true, name: true, role: true },
+} satisfies Prisma.UserDefaultArgs;
+
+export const commentSelect = {
+  ...commentScalarSelect,
+  author: commentAuthorSelect,
+} satisfies Prisma.MilestoneCommentSelect;
+
+export type CommentRow = Prisma.MilestoneCommentGetPayload<{ select: typeof commentSelect }>;
 
 function jsonList<T>(value: unknown, pick: (v: Record<string, unknown>) => T | null): T[] {
   if (!Array.isArray(value)) return [];

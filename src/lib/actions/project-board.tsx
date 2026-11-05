@@ -7,14 +7,20 @@ import { prisma } from "@/lib/prisma";
 import {
   boardAccess,
   itemAccess,
+  itemScalarSelect,
   itemSelect,
   itemExtras,
   emptyExtras,
+  personOf,
   toWorkItem,
+  withRelations,
+  commentAuthorSelect,
+  commentScalarSelect,
   commentSelect,
   toComment,
   listBoardPeople,
   type ItemRow,
+  type ItemScalarRow,
 } from "@/lib/dal/project-board";
 import { logActivity } from "@/lib/dal/activity";
 import { clipPreview } from "@/lib/rich-text";
@@ -163,7 +169,7 @@ export async function createWorkItem(
   }
 
   const now = new Date();
-  const row = await prisma.milestone.create({
+  const created = await prisma.milestone.create({
     data: {
       projectId: viewer.project.id,
       title: d.title,
@@ -180,7 +186,12 @@ export async function createWorkItem(
       createdById: viewer.user.id,
       createdByRole: "ADMIN",
     },
-    select: itemSelect,
+    select: itemScalarSelect,
+  });
+  const row = withRelations(created, {
+    assignee: refs.assignee,
+    createdBy: personOf(viewer.user),
+    _count: { comments: 0, children: 0 },
   });
 
   const actor = displayName(viewer.user);
@@ -272,7 +283,7 @@ export async function updateWorkItem(
     ...(dueDate !== undefined ? { dueDate } : {}),
   };
 
-  const write = async (): Promise<ItemRow | null> => {
+  const write = async (): Promise<ItemScalarRow | null> => {
     if (viewer.side === "CLIENT") {
       // The request is the client's own wording; it follows their edits.
       const sync =
@@ -291,7 +302,7 @@ export async function updateWorkItem(
           // Still waiting: the team may have just decided it.
           where: { id: item.id, stage: "REQUESTED", archivedAt: null },
           data: { ...fields, ...sync },
-          select: itemSelect,
+          select: itemScalarSelect,
         });
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") return null;
@@ -302,11 +313,16 @@ export async function updateWorkItem(
     if (p.parentId !== undefined) data.parentId = p.parentId;
     if (p.assigneeId !== undefined) data.assigneeId = p.assigneeId;
     if (p.pricing) Object.assign(data, pricingColumns(p.pricing));
-    return prisma.milestone.update({ where: { id: item.id }, data, select: itemSelect });
+    return prisma.milestone.update({ where: { id: item.id }, data, select: itemScalarSelect });
   };
   // The other-table numbers don't depend on this write: same wave.
-  const [row, extras] = await Promise.all([write(), itemExtras(item.id, viewer)]);
-  if (!row) return { ok: false, error: "The team just picked this up — comment on it instead." };
+  const [written, extras] = await Promise.all([write(), itemExtras(item.id, viewer)]);
+  if (!written) return { ok: false, error: "The team just picked this up — comment on it instead." };
+  const row = withRelations(written, {
+    assignee: p.assigneeId !== undefined ? refs.assignee : item.assignee,
+    createdBy: item.createdBy,
+    _count: item._count,
+  });
 
   const newAssignee = p.assigneeId !== undefined && p.assigneeId !== item.assigneeId ? p.assigneeId : null;
   if (newAssignee && newAssignee !== viewer.user.id) {
@@ -413,21 +429,21 @@ export async function moveWorkItem(
       case "send-back":
         return writeSendBack(viewer, item, to as "TODO" | "IN_PROGRESS", comment!, boardPosition);
       case "reorder":
-        return prisma.milestone.update({
-          where: { id: item.id },
-          data: { boardPosition },
-          select: itemSelect,
-        });
+        return prisma.milestone
+          .update({ where: { id: item.id }, data: { boardPosition }, select: itemScalarSelect })
+          .then((row) => withRelations(row, item));
       case "move":
-        return prisma.milestone.update({
-          where: { id: item.id },
-          data: {
-            ...stageWrite(to, item),
-            clientApprovedAt: approvalAfterMove(to, viewer.role, item.clientApprovedAt),
-            boardPosition,
-          },
-          select: itemSelect,
-        });
+        return prisma.milestone
+          .update({
+            where: { id: item.id },
+            data: {
+              ...stageWrite(to, item),
+              clientApprovedAt: approvalAfterMove(to, viewer.role, item.clientApprovedAt),
+              boardPosition,
+            },
+            select: itemScalarSelect,
+          })
+          .then((row) => withRelations(row, item));
     }
   };
 
@@ -767,7 +783,7 @@ export async function addWorkComment(
     .filter((p) => d.mentionIds.includes(p.id) && body.includes(`@${p.name}`))
     .map((p) => ({ id: p.id, name: p.name }));
 
-  const row = await prisma.milestoneComment.create({
+  const created = await prisma.milestoneComment.create({
     data: {
       milestoneId: item.id,
       authorId: viewer.user.id,
@@ -777,8 +793,9 @@ export async function addWorkComment(
       mentions: mentions.length ? mentions : undefined,
       attachments: d.attachments.length ? d.attachments : undefined,
     },
-    select: commentSelect,
+    select: commentScalarSelect,
   });
+  const row = { ...created, author: { ...personOf(viewer.user), role: viewer.role } };
   const [itemRow, extras] = await Promise.all([
     prisma.milestone.findUniqueOrThrow({ where: { id: item.id }, select: itemSelect }),
     itemExtras(item.id, viewer),
@@ -859,7 +876,14 @@ export async function addWorkComment(
 async function commentAccess(commentId: string) {
   const comment = await prisma.milestoneComment.findUnique({
     where: { id: commentId },
-    select: { id: true, milestoneId: true, authorId: true, kind: true, resolvedAt: true },
+    select: {
+      id: true,
+      milestoneId: true,
+      authorId: true,
+      kind: true,
+      resolvedAt: true,
+      author: commentAuthorSelect,
+    },
   });
   if (!comment) return null;
   const access = await itemAccess(comment.milestoneId);
@@ -877,11 +901,14 @@ export async function resolveWorkHelp(
 
   const row = comment.resolvedAt
     ? await prisma.milestoneComment.findUniqueOrThrow({ where: { id: comment.id }, select: commentSelect })
-    : await prisma.milestoneComment.update({
-        where: { id: comment.id },
-        data: { resolvedAt: new Date(), resolvedById: viewer.user.id },
-        select: commentSelect,
-      });
+    : {
+        ...(await prisma.milestoneComment.update({
+          where: { id: comment.id },
+          data: { resolvedAt: new Date(), resolvedById: viewer.user.id },
+          select: commentScalarSelect,
+        })),
+        author: comment.author,
+      };
   const [itemRow, extras] = await Promise.all([
     prisma.milestone.findUniqueOrThrow({ where: { id: item.id }, select: itemSelect }),
     itemExtras(item.id, viewer),
