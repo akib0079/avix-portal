@@ -30,7 +30,6 @@ import {
   contractInvoiceSelect,
   getBillableWorkToInvoice,
   toContractInvoice,
-  unbilledHours,
 } from "@/lib/dal/billable";
 import { contractInvoiced } from "@/lib/billable-lines";
 import { todayIn } from "@/lib/invoice-copy";
@@ -639,18 +638,25 @@ export async function createInvoiceFromWork(
             select: { id: true, invoiceNumber: true, items: { select: { id: true, sortOrder: true } } },
           });
 
-          // The hours rolled into each hourly line point at it. Every one has
-          // to be still unbilled, or another invoice got there first.
-          for (const [index, line] of lines.entries()) {
-            if (line.source !== "milestone-hourly" || !line.milestoneId) continue;
-            const ids = entries[line.milestoneId] ?? [];
+          // The hours rolled into each hourly line point at it, every line's
+          // in one statement (one per line held the lock a round trip each).
+          // Every entry has to be still unbilled (unbilledHours), or another
+          // invoice got there first. An entry is on one line only, so one
+          // count covers them all.
+          const pairs = lines.flatMap((line, index) => {
+            if (line.source !== "milestone-hourly" || !line.milestoneId) return [];
             const item = created.items.find((i) => i.sortOrder === index);
-            if (!item || ids.length === 0) continue;
-            const linked = await tx.timeEntry.updateMany({
-              where: { id: { in: ids }, ...unbilledHours },
-              data: { invoiceItemId: item.id },
-            });
-            if (linked.count !== ids.length) throw new BilledMeanwhile();
+            return item ? (entries[line.milestoneId] ?? []).map((entry) => [entry, item.id]) : [];
+          });
+          if (pairs.length > 0) {
+            const linked = await tx.$executeRaw`
+              UPDATE "time_entries" AS t SET "invoiceItemId" = v."item"
+              FROM unnest(${pairs.map((p) => p[0])}::text[], ${pairs.map((p) => p[1])}::text[]) AS v("id", "item")
+              WHERE t."id" = v."id"
+                AND (t."invoiceItemId" IS NULL OR EXISTS (
+                  SELECT 1 FROM "invoice_items" AS ii JOIN "invoices" AS i ON i."id" = ii."invoiceId"
+                  WHERE ii."id" = t."invoiceItemId" AND i."status" = 'CANCELLED'))`;
+            if (linked !== pairs.length) throw new BilledMeanwhile();
           }
           return { id: created.id, invoiceNumber: created.invoiceNumber };
         },
