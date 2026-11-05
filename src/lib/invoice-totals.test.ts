@@ -61,6 +61,11 @@ test("a zero total with nothing paid is not PAID", () => {
   assert.equal(settleStatus({ total: 0, paid: 0, current: "SENT" }), "SENT");
 });
 
+test("a zero total marked paid stays paid: nothing was owed", () => {
+  assert.equal(settleStatus({ total: 0, paid: 0, current: "PAID" }), "PAID");
+  assert.equal(settleStatus({ total: 0, paid: 0, current: "PARTIALLY_PAID" }), "SENT");
+});
+
 test("the fallback follows what happened to the invoice", () => {
   assert.equal(unsettledStatus({ sentAt: null, paymentClaimedAt: null }), "ASSIGNED");
   assert.equal(unsettledStatus({ sentAt: new Date(), paymentClaimedAt: null }), "SENT");

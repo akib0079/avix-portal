@@ -542,7 +542,14 @@ async function generateSystemTasks(now: Date): Promise<void> {
         creditNoteForId: null,
         dueDate: { not: null, lt: now },
       },
-      select: { id: true, invoiceNumber: true, clientId: true },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        clientId: true,
+        amount: true,
+        amountPaid: true,
+        creditNotes: { select: { amount: true, status: true } },
+      },
       take: 50,
     }),
     prisma.invoice.findMany({
@@ -557,6 +564,14 @@ async function generateSystemTasks(now: Date): Promise<void> {
     closeSettledInvoiceTasks(now),
   ]);
   for (const inv of overdue) {
+    // Nothing left owing ($0, or credited in full): the email chaser skips
+    // these too.
+    const balance = balanceDue(
+      Number(inv.amount),
+      Number(inv.amountPaid),
+      creditedTotal(inv.creditNotes),
+    );
+    if (balance <= 0) continue;
     seeds.push({
       systemKey: `invoice-overdue:${inv.id}`,
       title: `Chase payment on ${inv.invoiceNumber}`,

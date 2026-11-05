@@ -94,6 +94,8 @@ export function settleStatus(input: {
   const covered = round(paid + (input.credited ?? 0));
   if (covered > 0 && covered >= round(input.total)) return "PAID";
   if (paid > 0) return "PARTIALLY_PAID";
+  // Nothing was ever owed (a $0 invoice), so the owner's Paid stands.
+  if (current === "PAID" && round(input.total) <= 0) return "PAID";
   if (current === "PAID" || current === "PARTIALLY_PAID") return input.fallback ?? "SENT";
   return current;
 }
