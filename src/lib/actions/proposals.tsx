@@ -1730,8 +1730,10 @@ async function runHandoff(
 }
 
 /**
- * Signing tries per address before the action stops listening for a while.
- * A real signer needs one or two; this only slows a script down.
+ * Signing tries per proposal before the action stops listening for a while.
+ * A real signer needs one or two; this only slows a script down. Keyed on the
+ * proposal, not the address: x-forwarded-for is the caller's to write, and a
+ * new value on every try would be a new bucket every time.
  */
 const signAttempts = createRateLimiter({ limit: 10, windowMs: 10 * 60 * 1000 });
 
@@ -1759,7 +1761,7 @@ function validTimeZone(zone: string | undefined): string | null {
  * - the link's signature is checked first, before any database read, and its
  *   version and expiry again in the hand-off's claim;
  * - every field is capped (signProposalSchema) and attempts are rate-limited
- *   per address;
+ *   per proposal;
  * - a drawn signature must be a real, non-empty PNG of sane size
  *   (signature-png.ts), a typed one has no image at all;
  * - the document is rebuilt from the database, never from the client, and
@@ -1781,7 +1783,7 @@ export async function signProposal(
   if (!claims) return { ok: false, error: LINK_INVALID };
 
   const meta = await requestMeta();
-  const allowed = signAttempts.take(meta.ipAddress ?? `proposal:${id}`);
+  const allowed = signAttempts.take(`proposal:${id}`);
   if (!allowed.ok) {
     return {
       ok: false,
