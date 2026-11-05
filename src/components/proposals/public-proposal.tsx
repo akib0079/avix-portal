@@ -155,6 +155,15 @@ export function ProposalSignPanel({
         setError({ message: result.error, reload: "reload" in result && result.reload });
         return;
       }
+      // Accepted meanwhile (Mark accepted, another tab, a co-signer): this
+      // signature wasn't stored and no copy is coming, so don't say it was.
+      if (result.data?.alreadyAccepted) {
+        setError({
+          message: "This proposal was already accepted, so nothing was signed or sent just now.",
+          reload: true,
+        });
+        return;
+      }
       setDone("signed");
     } catch {
       setError({ message: "Something went wrong while signing. Check your connection and try again." });
