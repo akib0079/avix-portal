@@ -566,10 +566,14 @@ export async function restoreWorkItem(itemId: string): Promise<BoardResult<{ ite
     prisma.$transaction([
       prisma.milestone.update({
         where: { id: item.id },
-        // Back under its phase only if the phase is still there.
+        // Back under its phase only if the phase is still there, and still a
+        // phase: it may have been put under another while this was away, and
+        // work nests one level deep.
         data: {
           archivedAt: null,
-          ...(item.parentId && (!item.parent || item.parent.archivedAt) ? { parentId: null } : {}),
+          ...(item.parentId && (!item.parent || item.parent.archivedAt || item.parent.parentId)
+            ? { parentId: null }
+            : {}),
         },
         select: itemSelect,
       }),
