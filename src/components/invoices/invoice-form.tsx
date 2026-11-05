@@ -176,9 +176,19 @@ export function InvoiceForm({
   const clientProjects = projectsByClient[selectedClient] ?? [];
 
   function pickClient(clientId: string, onChange: (value: string) => void) {
+    const moved = clientId !== form.getValues("clientId");
     onChange(clientId);
     // A project belongs to one client, so it can't follow the invoice to another.
     form.setValue("projectId", "none");
+    // Nor can the billed-to details: a duplicate moved to another client
+    // printed the first one's company, address and email on its PDF. Back on
+    // the client the form opened with, they are as it opened.
+    if (moved) {
+      const own = !!clientId && clientId === start?.clientId;
+      form.setValue("billToCompany", own ? (start?.billToCompany ?? "") : "");
+      form.setValue("billToAddress", own ? (start?.billToAddress ?? "") : "");
+      form.setValue("billToEmail", own ? (start?.billToEmail ?? "") : "");
+    }
     if (!clientId || projectsByClient[clientId]) return;
     startLoadingProjects(async () => {
       const list = await listInvoiceProjects(clientId);

@@ -44,11 +44,19 @@ export default async function NewInvoicePage({
   const today = todayIn(booking.agencyTimezone);
   const copy = source ? invoiceCopyDefaults(source, { today }) : null;
   // A copy for a client who has since been deactivated waits for the owner to
-  // pick who it is for, rather than quietly billing an inactive account.
+  // pick who it is for, rather than quietly billing an inactive account, and
+  // doesn't carry that client's billed-to details to whoever is picked.
   const clientGone = !!copy?.ok && !clients.some((c) => c.id === copy.input.clientId);
   const initial = copy?.ok
     ? clientGone
-      ? { ...copy.input, clientId: "", projectId: "none" }
+      ? {
+          ...copy.input,
+          clientId: "",
+          projectId: "none",
+          billToCompany: "",
+          billToAddress: "",
+          billToEmail: "",
+        }
       : copy.input
     : client && clients.some((c) => c.id === client)
       ? { clientId: client }
