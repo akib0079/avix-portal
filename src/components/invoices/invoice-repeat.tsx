@@ -15,10 +15,11 @@ import {
   cadenceLabel,
   defaultFirstRun,
   longDay,
-  monthsBetween,
   periodVars,
   shiftMonths,
   shortDay,
+  templateFrom,
+  templateShift,
   withoutMonths,
   type Day,
   type PlanState,
@@ -77,7 +78,9 @@ export type InvoicePlanView = {
   isTemplate: boolean;
   /** What the next invoice's title will be copied from, for the preview. */
   templateTitle: string | null;
+  /** The template's own period on the plan, if it has one. */
   templatePeriod: string | null;
+  templateIssueDay: Day | null;
 };
 
 type InvoiceFacts = {
@@ -89,16 +92,28 @@ type InvoiceFacts = {
   cancelled: boolean;
 };
 
-/** "dadad — November 2026" copied for the period of `day`. */
-function nextTitle(title: string | null, fromPeriod: string | null, draft: ScheduleDraft): string | null {
-  if (!title || !fromPeriod || draft.interval === "" || !draft.nextDate) return null;
-  const offset = /^\d{4}-\d{2}$/.test(fromPeriod) ? monthsBetween(fromPeriod, draft.nextDate) : 0;
+/**
+ * "dadad — November 2026" copied for the period of `day`, as the run copies
+ * it: from the template's own period on the plan (`own`) or its issue day.
+ */
+function nextTitle(
+  title: string | null,
+  own: string | null,
+  issued: Day | null,
+  draft: ScheduleDraft,
+): string | null {
+  if (!title || !issued || draft.interval === "" || !draft.nextDate) return null;
+  const { offset, days, around } = templateShift(
+    templateFrom(own, issued, draft.frequency),
+    draft.nextDate,
+    draft.frequency,
+  );
   const vars = periodVars(draft.nextDate, {
     frequency: draft.frequency,
     interval: draft.interval,
     dayOfMonth: Number(draft.nextDate.slice(8, 10)),
   });
-  return renderPeriodTags(shiftMonths(title, offset), vars);
+  return renderPeriodTags(shiftMonths(title, offset, days, around), vars);
 }
 
 /**
@@ -352,8 +367,8 @@ function RepeatDialog({
   }
 
   const preview = editing
-    ? nextTitle(plan.templateTitle, plan.templatePeriod, schedule)
-    : nextTitle(invoice.title, invoice.issueDay.slice(0, 7), schedule);
+    ? nextTitle(plan.templateTitle, plan.templatePeriod, plan.templateIssueDay, schedule)
+    : nextTitle(invoice.title, null, invoice.issueDay, schedule);
 
   async function save() {
     const parsed = repeatSchema.safeParse({ title, schedule: scheduleInput(schedule) });
@@ -390,7 +405,7 @@ function RepeatDialog({
           <DialogDescription>
             {editing
               ? "Changes apply to the invoices still to come."
-              : "Each new invoice copies this one: its lines, tax, notes and bank details, with its dates and months moved on to the new period."}
+              : "Each new invoice copies this one: its lines, tax, notes and bank details. The months and dates it names move on to the new period; a year on its own stays as written."}
           </DialogDescription>
         </DialogHeader>
 

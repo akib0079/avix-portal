@@ -82,11 +82,8 @@ export default async function InvoiceDetailPage({
           lastRunError: plan.lastRunError,
           isTemplate: template?.id === invoice.id,
           templateTitle: template?.title ?? null,
-          templatePeriod: template
-            ? template.retainerId === plan.id && /^\d{4}-\d{2}$/.test(template.retainerPeriod ?? "")
-              ? template.retainerPeriod
-              : dateToDay(template.issueDate).slice(0, 7)
-            : null,
+          templatePeriod: template?.retainerId === plan.id ? template.retainerPeriod : null,
+          templateIssueDay: template ? dateToDay(template.issueDate) : null,
         };
       })()
     : null;

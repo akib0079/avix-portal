@@ -8,7 +8,7 @@ import { dueDateFromTerms } from "@/lib/invoice-totals";
 import { invoiceCopySourceSelect, toInvoiceCopySource } from "@/lib/dal/invoices";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { logActivity } from "@/lib/dal/activity";
-import { sendInvoiceCore } from "@/lib/invoice-send";
+import { sendInvoiceCore, type SendResult } from "@/lib/invoice-send";
 import { renderPeriodTags, renderPeriodTagsInDoc } from "@/lib/merge-tags";
 import { richTextToLines } from "@/lib/rich-text";
 import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
@@ -17,9 +17,9 @@ import {
   advanceRun,
   dateToDay,
   dayIn,
+  legacyMonthWindow,
   legacyNextRunDay,
   longDay,
-  monthsBetween,
   nextRunDay,
   periodKey,
   periodVars,
@@ -29,6 +29,8 @@ import {
   runInstant,
   shiftMonths,
   shiftMonthsInDoc,
+  templateFrom,
+  templateShift,
   type Day,
   type Schedule,
 } from "@/lib/recurring";
@@ -146,14 +148,13 @@ function buildRunInput(
     // The template names its own period; every month it mentions moves on by
     // the distance from that period to this one. An issue date is a calendar
     // day stored at midnight UTC, so it is read as one, not in a time zone.
-    const from =
-      template.retainerId === plan.id && /^\d{4}-\d{2}$/.test(template.retainerPeriod ?? "")
-        ? template.retainerPeriod!
-        : periodKey(dateToDay(template.issueDate), "MONTH");
-    // Weekly plans too: a "November 2026" in a template issued in November
-    // reads "December 2026" on a run in December.
-    const offset = monthsBetween(from, day);
-    const text = (value: string) => renderPeriodTags(shiftMonths(value, offset), vars);
+    const from = templateFrom(
+      template.retainerId === plan.id ? template.retainerPeriod : null,
+      dateToDay(template.issueDate),
+      plan.frequency,
+    );
+    const { offset, days, around } = templateShift(from, day, plan.frequency);
+    const text = (value: string) => renderPeriodTags(shiftMonths(value, offset, days, around), vars);
     input = {
       ...copy.input,
       clientId: plan.clientId,
@@ -165,7 +166,7 @@ function buildRunInput(
       notes: clip(text(copy.input.notes ?? ""), 2000),
       items: (copy.input.items ?? []).map((item) => {
         const rich = item.descriptionRich
-          ? renderPeriodTagsInDoc(shiftMonthsInDoc(item.descriptionRich, offset), vars)
+          ? renderPeriodTagsInDoc(shiftMonthsInDoc(item.descriptionRich, offset, days, around), vars)
           : null;
         // The plain text is re-derived from the document, as the form does,
         // so the two can't disagree.
@@ -260,10 +261,27 @@ async function createRunInvoice(
   claim: Claim,
   ctx: { timeZone: string; now: Date; issueDay: Day; state: RunState },
 ): Promise<RunOutcome> {
+  const period = periodKey(day, plan.frequency);
+  // The pre-v49 code billed a month without a retainerPeriod, which the
+  // unique index can't see. It stamped lastGeneratedPeriod and created the
+  // invoice in that month, so a month at or before the stamp with such an
+  // invoice is taken. Checked before a number is used up.
+  const stamp = ctx.state.lastGeneratedPeriod;
+  if (plan.frequency === "MONTH" && stamp && /^\d{4}-\d{2}$/.test(stamp) && period <= stamp) {
+    const legacy = await prisma.invoice.findFirst({
+      where: {
+        retainerId: plan.id,
+        retainerPeriod: null,
+        creditNoteForId: null,
+        createdAt: legacyMonthWindow(period),
+      },
+      select: { id: true },
+    });
+    if (legacy) return { kind: "exists" };
+  }
   const built = buildRunInput(plan, day, ctx.issueDay);
   if ("error" in built) return { kind: "invalid", error: built.error };
   const columns = formColumns(built.input, built.refs);
-  const period = periodKey(day, plan.frequency);
   const nextDay = nextRunDay(day, scheduleOf(plan));
   const after = { ...planEnd(plan), runCount: ctx.state.runCount + 1 };
   // A scheduled run ends the plan when the run after it is not allowed; a
@@ -436,15 +454,29 @@ export async function runDuePlan(plan: PlanRun, now: Date, timeZone: string): Pr
  * client whose account is active. A failed send leaves the draft and says
  * why on the plan.
  */
-async function autoSend(pass: PlanPass): Promise<"sent" | "failed" | null> {
+async function autoSend(pass: PlanPass): Promise<"sent" | "emailed" | "failed" | null> {
   const { plan } = pass;
   if (!plan.autoSend || pass.catchUp || pass.created.length !== 1) return null;
   const invoice = pass.created[0];
-  const result =
-    plan.client.status === "ACTIVE"
-      ? await sendInvoiceCore(invoice.id)
-      : { ok: false as const, error: "The client's account is inactive." };
+  let result: SendResult;
+  if (plan.client.status !== "ACTIVE") {
+    result = { ok: false, error: "The client's account is inactive." };
+  } else {
+    try {
+      result = await sendInvoiceCore(invoice.id);
+    } catch (err) {
+      // A throw can come after the email went out, so say nothing about
+      // where it stands beyond what is known.
+      console.error(`[recurring] plan ${plan.id} auto-send failed:`, (err as Error).message);
+      pass.error = `${invoice.invoiceNumber} wasn't sent automatically: sending failed unexpectedly. Check whether the client received it before sending it again.`;
+      return "failed";
+    }
+  }
   if (result.ok) return "sent";
+  if (result.emailed) {
+    pass.error = `${invoice.invoiceNumber}: ${result.error}`;
+    return "emailed";
+  }
   pass.error = `${invoice.invoiceNumber} wasn't sent automatically: ${result.error} It's waiting as a draft.`;
   return "failed";
 }
@@ -471,7 +503,12 @@ async function reportError(plan: PlanRun, message: string, link: string, now: Da
   ]);
 }
 
-export type PlanResult = PlanPass & { sent: boolean };
+/**
+ * `emailed`: the client has the invoice but it isn't marked sent. Its own
+ * bell says what to do, so the batch summary counts it as neither drafted
+ * (to review and send) nor sent.
+ */
+export type PlanResult = PlanPass & { sent: boolean; emailed: boolean };
 
 /**
  * One plan's due runs, its auto-send and its record: an activity entry per
@@ -498,9 +535,10 @@ export async function processDuePlan(
       error: "The last run failed unexpectedly. It will be tried again on the next run.",
     };
   }
-  const sent = (await autoSend(pass)) === "sent";
+  const sendOutcome = await autoSend(pass);
 
-  await Promise.all([
+  // Settled, so a failed record can't stop the rest of the batch.
+  const recorded = await Promise.allSettled([
     ...pass.created.map((invoice) =>
       logActivity({
         type: "invoice.drafted",
@@ -521,13 +559,18 @@ export async function processDuePlan(
         )
       : null,
   ]);
-  return { ...pass, sent };
+  for (const r of recorded) {
+    if (r.status === "rejected") {
+      console.error(`[recurring] plan ${plan.id} record failed:`, (r.reason as Error)?.message);
+    }
+  }
+  return { ...pass, sent: sendOutcome === "sent", emailed: sendOutcome === "emailed" };
 }
 
 /** Tells the admins what a batch of plan passes did, in a few bells at most. */
 export async function summarisePlanResults(results: PlanResult[]): Promise<void> {
   const drafted = results
-    .filter((r) => !r.sent)
+    .filter((r) => !r.sent && !r.emailed)
     .reduce((n, r) => n + r.created.length, 0);
   const sent = results.filter((r) => r.sent).length;
   const notes: Promise<unknown>[] = [];
