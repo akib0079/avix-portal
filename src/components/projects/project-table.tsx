@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { ViewToggle, VIEW_MODES } from "@/components/ui/lanes";
-import { todayKey } from "@/components/board/board-bits";
+import { useToday } from "@/components/board/board-bits";
 import { useLocalChoice } from "@/lib/use-local-pref";
 import { ProjectLanes } from "./project-lanes";
 import { cn } from "@/lib/utils";
@@ -58,14 +58,17 @@ export function ProjectTable({
   projects,
   canDelete,
   canMove,
+  renderedAt,
 }: {
   projects: ProjectListRow[];
   canDelete: boolean;
   /** Admins can drag projects between status lanes. */
   canMove: boolean;
+  /** When the server rendered the list, so it and hydration agree on today (see useToday). */
+  renderedAt: number;
 }) {
   const [view, setView] = useLocalChoice("avix.projects.view", "board", VIEW_MODES);
-  const [today] = useState(todayKey);
+  const today = useToday(renderedAt);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["value"]>("all");
 

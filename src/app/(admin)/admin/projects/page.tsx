@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { projectTypeLabels, projectSourceLabels } from "@/lib/format";
 import { requireTeam } from "@/lib/dal/session";
+import { serverNow } from "@/lib/server-now";
 import { Plus, FolderKanban } from "lucide-react";
 
 export const metadata = { title: "Projects" };
@@ -59,6 +60,7 @@ export default async function ProjectsPage() {
         <ProjectTable
           canDelete={isAdmin}
           canMove={isAdmin}
+          renderedAt={serverNow()}
           projects={projects.map((project) => ({
             id: project.id,
             projectName: project.projectName,
