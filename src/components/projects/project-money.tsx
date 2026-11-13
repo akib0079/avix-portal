@@ -22,6 +22,7 @@ import {
 } from "@/components/invoices/bill-work-button";
 import { toneChip, toneText } from "@/lib/tone";
 import { formatCurrency } from "@/lib/currency";
+import { usdValue } from "@/lib/invoice-usd";
 import { cadenceLabel, cadenceSuffix } from "@/lib/recurring";
 import { projectMoneyTotals, type ProjectInvoice } from "@/lib/project-money";
 
@@ -180,10 +181,12 @@ export function ProjectMoney({
           value={unpriced ? "Not set" : usd.format(earned)}
           hint={
             unpriced ? undefined : unvalued > 0 ? (
-              <Link href="/admin/invoices?filter=needs-usd" className="hover:text-primary">
+              // The project's own list marks them, drafts included, which the
+              // invoices page's Needs USD filter leaves out.
+              <a href="#project-invoices" className="hover:text-primary">
                 {unvalued} invoice{unvalued === 1 ? " has" : "s have"} no USD value, so what&apos;s
                 left of the contract can&apos;t be worked out
-              </Link>
+              </a>
             ) : unbilled > 0 ? (
               `${usd.format(unbilled)} not yet invoiced`
             ) : (
@@ -261,7 +264,7 @@ export function ProjectMoney({
         </Card>
       )}
 
-      <Card>
+      <Card id="project-invoices" className="scroll-mt-20">
         <CardContent className="pt-6">
           <h3 className="title-card mb-3">
             Invoices ({invoices.length})
@@ -298,6 +301,13 @@ export function ProjectMoney({
                       {/* A credit note is money back, so it reads as one. */}
                       {invoice.creditNoteForId && invoice.status !== "CANCELLED" && "−"}
                       {formatCurrency(invoice.amount, invoice.currency)}
+                      {!invoice.creditNoteForId &&
+                        invoice.status !== "CANCELLED" &&
+                        usdValue(invoice) == null && (
+                          <span className={cn("block text-xs", toneText.warn)}>
+                            No USD value
+                          </span>
+                        )}
                     </TableCell>
                     <TableCell>
                       {invoice.creditNoteForId && invoice.status !== "CANCELLED" ? (
