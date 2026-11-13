@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
-import { getProject, getProjectWorkspace } from "@/lib/dal/projects";
+import { getProjectActivity, getProjectPage } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
-import { listByProject } from "@/lib/dal/deliverables";
 import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
@@ -45,18 +44,18 @@ export default async function ProjectDetailPage({
     },
   });
   // One round trip for everything the page needs — getBillableWork used to run
-  // after this block, adding a serial query to every load. The poll token is
-  // read before the rows go out, so it is never newer than the rows: a
+  // after this block, adding a serial query to every load. The project and
+  // everything its tabs show beyond the work is one statement. The poll token
+  // is read before the rows go out, so it is never newer than the rows: a
   // change landing between the two shows up on the next poll instead of
   // being taken as already seen.
   const versionRead = getWorkVersion(id);
-  const [viewer, project, messages, deliverables, workspace, team, billableOrNull, items, version] =
+  const [viewer, project, messages, activity, team, billableOrNull, items, version] =
     await Promise.all([
       requireTeam(),
-      getProject(id),
+      getProjectPage(id),
       getProjectMessages(id, { includeInternal: true }),
-      listByProject(id),
-      getProjectWorkspace(id),
+      getProjectActivity(id),
       listTeamOptions(),
       // Money-bearing: getBillableWork requires admin, so staff skip it.
       getBillableWork(id).catch(() => null),
@@ -66,6 +65,7 @@ export default async function ProjectDetailPage({
       versionRead,
     ]);
   if (!project) notFound();
+  const { deliverables } = project;
   // Read once: the board and the header's "due in N days" agree on what now is.
   const renderedAt = serverNow();
   // People are already loaded for this page; the board reuses them rather
@@ -169,7 +169,7 @@ export default async function ProjectDetailPage({
                   creditNoteForId: i.creditNoteForId,
                   credited: creditedTotal(i.creditNotes),
                 }))}
-                retainers={workspace.retainers}
+                retainers={project.retainers}
               />
             ),
           },
@@ -185,13 +185,13 @@ export default async function ProjectDetailPage({
         <div className="space-y-6">
           <ProjectRequests
             projectId={project.id}
-            requests={workspace.requests}
-            meetings={workspace.meetings}
+            requests={project.requests}
+            meetings={project.meetings}
           />
           <Card>
             <CardContent className="pt-6">
               <ActivityFeed
-                items={workspace.activity}
+                items={activity}
                 emptyLabel="Nothing recorded on this project yet."
               />
             </CardContent>
