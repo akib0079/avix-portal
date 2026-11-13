@@ -28,7 +28,7 @@ export default async function PortalSettingsPage() {
         title="Settings"
         description="Your details, timezone, email preferences, and password."
       />
-      <ProfileSettings profile={me} />
+      <ProfileSettings profile={me} userId={user.id} />
     </div>
   );
 }
