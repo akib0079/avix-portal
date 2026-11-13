@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/dal/session";
 import { usdValue } from "@/lib/invoice-usd";
 import { billableLines, contractInvoiced, legacyInvoicedUsd } from "@/lib/billable-lines";
 import { FIRST_PASS_KEY } from "@/lib/work-backfill";
+import { firstPassReader, type FirstPassSlot } from "@/lib/first-pass";
 import type { BillableLine } from "@/lib/billable-lines";
 
 export type { BillableLine } from "@/lib/billable-lines";
@@ -71,9 +72,24 @@ export const unbilledHours = {
 } satisfies Prisma.TimeEntryWhereInput;
 
 /**
+ * When the first v49 boot pass ran (older invoices weren't linked to their
+ * work). Written once, so it is read once per process; kept on globalThis,
+ * as prisma.ts keeps its client, so every bundle chunk shares one copy.
+ */
+const firstPassSlot = ((globalThis as unknown as { __avixFirstPass?: FirstPassSlot }).__avixFirstPass ??=
+  {});
+const firstPassAt = firstPassReader(
+  () =>
+    prisma.appSetting
+      .findUnique({ where: { key: FIRST_PASS_KEY }, select: { value: true } })
+      .then((row) => row?.value ?? null),
+  firstPassSlot,
+);
+
+/**
  * One wave: the project with its live work (and whether each fixed piece is
  * on a live invoice line), plus the hours no live invoice bills yet, and when
- * the first v49 boot pass ran (older invoices weren't linked to their work).
+ * the first v49 boot pass ran (a statement only until the process has it).
  * `withEntries` loads the unbilled entries themselves, for the invoice that
  * is about to link them; otherwise their sums are enough.
  */
@@ -137,7 +153,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
           .then((rows) =>
             rows.map((row) => ({ id: null, milestoneId: row.milestoneId, hours: row._sum.hours })),
           ),
-    prisma.appSetting.findUnique({ where: { key: FIRST_PASS_KEY }, select: { value: true } }),
+    firstPassAt(),
   ]);
   if (!project) return null;
 
@@ -178,7 +194,7 @@ async function loadWork(projectId: string, withEntries: boolean) {
             createdAt: i.createdAt,
             linked: i.items.length > 0,
           })),
-          cutover ? new Date(cutover.value) : new Date(),
+          cutover ?? new Date(),
         )
       : 0;
 
