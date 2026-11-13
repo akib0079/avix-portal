@@ -12,14 +12,15 @@ const projectSelect = { id: true, projectName: true, billingType: true } as cons
  * on top — with the client's wording from the request beside it. Decided
  * requests come from the ledger, newest decision first, without their
  * descriptions: the inbox shows what happened to them, not what was asked.
- * Both reads in one wave, both bounded.
+ * All reads in one wave, both lists bounded. waitingTotal is the uncapped
+ * count, so the page can say when the oldest-first cap hid newer requests.
  *
  * The team's: staff decide requests too (accepting only at no charge, which
  * the accept action enforces), and nothing here carries a price.
  */
 export async function listTaskRequests() {
   await requireTeam();
-  const [waiting, decided] = await Promise.all([
+  const [waiting, decided, waitingTotal] = await Promise.all([
     prisma.milestone.findMany({
       where: OPEN_REQUEST,
       orderBy: { createdAt: "asc" },
@@ -51,8 +52,9 @@ export async function listTaskRequests() {
         milestone: { select: { id: true, stage: true, archivedAt: true } },
       },
     }),
+    prisma.milestone.count({ where: OPEN_REQUEST }),
   ]);
-  return { waiting, decided };
+  return { waiting, decided, waitingTotal };
 }
 
 /**

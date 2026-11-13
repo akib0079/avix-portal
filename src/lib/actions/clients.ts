@@ -131,7 +131,17 @@ export async function deleteClient(id: string): Promise<ActionResult> {
         "This client has invoices on record. Deactivate the account instead of deleting it.",
     };
   }
-  await prisma.user.delete({ where: { id } });
+  // The client's waiting requests go with them (cascade), but each one's
+  // Requested item would stay behind with no request to decide: archive those
+  // first, as a decline does. Not through rejectTaskRequest, which would
+  // notify the user being deleted.
+  await prisma.$transaction([
+    prisma.milestone.updateMany({
+      where: { stage: "REQUESTED", archivedAt: null, sourceTaskRequest: { clientId: id } },
+      data: { archivedAt: new Date() },
+    }),
+    prisma.user.delete({ where: { id } }),
+  ]);
   revalidatePath("/admin/clients");
   return { ok: true };
 }

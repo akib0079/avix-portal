@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { DeliverableRow } from "@/lib/dal/deliverables";
 import { reviewDeliverable } from "@/lib/actions/deliverables";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,7 +22,6 @@ import { toneText } from "@/lib/tone";
 
 /** Client-facing deliverables: download/open, then approve or ask for changes. */
 export function DeliverablesList({ deliverables }: { deliverables: DeliverableRow[] }) {
-  const router = useRouter();
   const [openNoteFor, setOpenNoteFor] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -44,7 +42,7 @@ export function DeliverablesList({ deliverables }: { deliverables: DeliverableRo
       );
       setOpenNoteFor(null);
       setNote("");
-      router.refresh();
+      // No router.refresh(): the action revalidates this page itself.
     });
   }
 

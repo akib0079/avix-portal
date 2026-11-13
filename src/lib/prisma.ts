@@ -48,7 +48,11 @@ function createClient() {
       onPoolError: (err) => console.warn("[db] idle connection dropped:", err.message),
     },
   );
-  return new PrismaClient({ adapter });
+  // Interactive transactions default to 5 s, and with a driver adapter that
+  // clock also runs while waiting for a pool connection. A dozen statements at
+  // ~228 ms each (signing a proposal) leaves little room: 20 s covers the
+  // pool's 15 s connect timeout plus the body, like the explicit ones do.
+  return new PrismaClient({ adapter, transactionOptions: { timeout: 20_000 } });
 }
 
 export const prisma = globalForPrisma.prisma ?? createClient();
