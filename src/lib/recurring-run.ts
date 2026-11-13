@@ -14,11 +14,13 @@ import { richTextToLines } from "@/lib/rich-text";
 import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
 import {
   MAX_RUNS_PER_PASS,
+  addDays,
   addMonths,
   advanceRun,
   dateToDay,
   dayIn,
   dayToDate,
+  daysBetweenWeeks,
   legacyNextRunDay,
   longDay,
   monthsBetween,
@@ -148,14 +150,21 @@ function buildRunInput(
     // The template names its own period; every month it mentions moves on by
     // the distance from that period to this one. An issue date is a calendar
     // day stored at midnight UTC, so it is read as one, not in a time zone.
-    const from =
-      template.retainerId === plan.id && /^\d{4}-\d{2}$/.test(template.retainerPeriod ?? "")
-        ? template.retainerPeriod!
-        : periodKey(dateToDay(template.issueDate), "MONTH");
-    // Weekly plans too: a "November 2026" in a template issued in November
-    // reads "December 2026" on a run in December.
-    const offset = monthsBetween(from, day);
-    const text = (value: string) => renderPeriodTags(shiftMonths(value, offset), vars);
+    const own = template.retainerId === plan.id ? (template.retainerPeriod ?? "") : "";
+    const issued = dateToDay(template.issueDate);
+    let offset: number;
+    let days = 0;
+    if (plan.frequency === "WEEK") {
+      // A weekly plan's dates move by whole weeks, since its weeks don't line
+      // up with the months: "2 – 8 Nov 2026" reads "9 – 15 Nov 2026" a week
+      // on. Its months follow the template's run day in its own week, so a
+      // "November 2026" reads "December 2026" on a run in December.
+      days = daysBetweenWeeks(/^\d{4}-W\d{2}$/.test(own) ? own : issued, day);
+      offset = monthsBetween(addDays(day, -days), day);
+    } else {
+      offset = monthsBetween(/^\d{4}-\d{2}$/.test(own) ? own : periodKey(issued, "MONTH"), day);
+    }
+    const text = (value: string) => renderPeriodTags(shiftMonths(value, offset, days), vars);
     input = {
       ...copy.input,
       clientId: plan.clientId,
@@ -167,7 +176,7 @@ function buildRunInput(
       notes: clip(text(copy.input.notes ?? ""), 2000),
       items: (copy.input.items ?? []).map((item) => {
         const rich = item.descriptionRich
-          ? renderPeriodTagsInDoc(shiftMonthsInDoc(item.descriptionRich, offset), vars)
+          ? renderPeriodTagsInDoc(shiftMonthsInDoc(item.descriptionRich, offset, days), vars)
           : null;
         // The plain text is re-derived from the document, as the form does,
         // so the two can't disagree.

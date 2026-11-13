@@ -128,6 +128,23 @@ export function isoWeek(day: Day): { year: number; week: number } {
   return { year: date.getUTCFullYear(), week };
 }
 
+function mondayOf(day: Day): Day {
+  const { y, m, d } = parts(day);
+  return addDays(day, 1 - (new Date(Date.UTC(y, m - 1, d)).getUTCDay() || 7));
+}
+
+/**
+ * Days from one week to another, in whole weeks: `from` is a week's period
+ * key ("2026-W45") or any day in it. How far a weekly plan's template dates
+ * move for a run on `to`.
+ */
+export function daysBetweenWeeks(from: string, to: Day): number {
+  const key = /^(\d{4})-W(\d{2})$/.exec(from);
+  // Week 1 is the week of 4 January.
+  const start = key ? addDays(mondayOf(`${key[1]}-01-04`), 7 * (Number(key[2]) - 1)) : mondayOf(from);
+  return Math.round((dayToDate(mondayOf(to)).getTime() - dayToDate(start).getTime()) / 86_400_000);
+}
+
 /**
  * Which period a run on `day` bills: its month ("2026-11") for a monthly
  * plan, its ISO week ("2026-W45") for a weekly one. Invoice.retainerPeriod
@@ -451,10 +468,78 @@ export function periodVars(day: Day, schedule: Schedule): PeriodVars {
 
 // "May" is left out of standalone names: on its own it is usually the verb.
 const STANDALONE: readonly string[] = MONTHS.filter((name) => name !== "May");
-const MONTH_WORD = new RegExp(
-  `\\b(${[...MONTHS, "Sept", ...SHORT_MONTHS].join("|")})(\\.?)(\\s+(\\d{4}))?\\b`,
+const MONTH_NAME = [...MONTHS, "Sept", ...SHORT_MONTHS].join("|");
+const DAY_NUM = String.raw`\d{1,2}(?:st|nd|rd|th)?(?!\d)`;
+const DAY_SEP = String.raw`\s*[–—-]\s*`;
+const YEAR_AFTER = String.raw`,?\s+\d{4}(?!\d)`;
+/**
+ * A month as a template writes it, with the days and year around it:
+ * "1 Jan 2027", "2 – 8 Nov 2026", "15th December" (day first), or
+ * "December 1–31, 2026", "Nov. 2026", "November" (month first).
+ */
+const MONTH_DATE = new RegExp(
+  String.raw`\b(?<d1>${DAY_NUM})(?:(?<sep>${DAY_SEP})(?<d2>${DAY_NUM}))?\s+(?<name>${MONTH_NAME})(?<dot>\.?)(?![A-Za-z])(?<year>${YEAR_AFTER})?` +
+    "|" +
+    String.raw`\b(?<uName>${MONTH_NAME})(?<uDot>\.?)(?![A-Za-z])(?:\s+(?<ud1>${DAY_NUM})(?:(?<uSep>${DAY_SEP})(?<ud2>${DAY_NUM}))?)?(?<uYear>${YEAR_AFTER})?`,
   "g",
 );
+/** What joins two months into one span: "Oct–Dec 2026", "May to June 2026". */
+const MONTH_JOIN = /^(?:\s*[–—/-]\s*|\s+to\s+)$/;
+/** A year for the arithmetic of a date written without one. */
+const NO_YEAR = 2001;
+
+type MonthMention = {
+  start: number;
+  end: number;
+  dayFirst: boolean;
+  index: number;
+  short: boolean;
+  dot: string;
+  days: { n: number; ordinal: boolean }[];
+  sep: string;
+  /** What comes before the year, as written: " " or ", ". */
+  yearGap: string | null;
+  year: number | null;
+  /** A year taken from the month it is joined to ("Oct" in "Oct–Dec 2026"). */
+  borrowed: boolean;
+};
+
+function readMention(m: RegExpMatchArray): MonthMention | null {
+  const g = m.groups!;
+  const dayFirst = g.d1 !== undefined;
+  const name = dayFirst ? g.name : g.uName;
+  const full = MONTHS.indexOf(name as (typeof MONTHS)[number]);
+  const index = full >= 0 ? full : SHORT_MONTHS.indexOf(name === "Sept" ? "Sep" : name);
+  if (index < 0) return null;
+  const day = (raw: string | undefined) =>
+    raw === undefined ? [] : [{ n: parseInt(raw, 10), ordinal: /\D$/.test(raw) }];
+  const yearRaw = dayFirst ? g.year : g.uYear;
+  return {
+    start: m.index!,
+    end: m.index! + m[0].length,
+    dayFirst,
+    index,
+    short: full < 0,
+    dot: (dayFirst ? g.dot : g.uDot) ?? "",
+    days: dayFirst ? [...day(g.d1), ...day(g.d2)] : [...day(g.ud1), ...day(g.ud2)],
+    sep: (dayFirst ? g.sep : g.uSep) ?? "",
+    yearGap: yearRaw ? yearRaw.slice(0, yearRaw.length - 4) : null,
+    year: yearRaw ? Number(yearRaw.slice(-4)) : null,
+    borrowed: false,
+  };
+}
+
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return "th";
+  return ["th", "st", "nd", "rd"][n % 10] ?? "th";
+}
+
+/** A day of a month moved to another: the last day stays the last day. */
+function moveDay(n: number, from: { y: number; m: number }, to: { y: number; m: number }): number {
+  const last = daysInMonth(to.y, to.m);
+  return n === daysInMonth(from.y, from.m) ? last : Math.min(n, last);
+}
 
 /**
  * Moves every month a text mentions on by `offset` months, so a copy of
@@ -462,39 +547,114 @@ const MONTH_WORD = new RegExp(
  *
  * A template is a real invoice the client has had, so it can't carry
  * {{month}} tags in its own title without showing them. Instead its months
- * move with the period: a month with a year ("November 2026", "Nov 2026")
- * always, a full month name on its own ("November") too. A short name on its
- * own, and "May" on its own, are left alone; they are too often something
- * else. The style is kept: short stays short, a year rolls over with it.
+ * move with the period: a month with a day or a year ("November 2026",
+ * "Nov 2026", "December 1–31, 2026", "1 Jan 2027") always, a full month name
+ * on its own ("November") too. A short name on its own, and "May" on its
+ * own, are left alone; they are too often something else, and so is a year
+ * that isn't a month's ("© 2026").
+ *
+ * The style is kept: short stays short, a year written with the month rolls
+ * over with it, a month's last day stays its last day ("Jan 1–31" becomes
+ * "Feb 1–28"), and a month joined to a dated one ("Oct–Dec 2026") takes its
+ * year. With `days` (a weekly plan), a mention with a day moves by that many
+ * days instead, since its weeks don't line up with the months.
  */
-export function shiftMonths(text: string, offset: number): string {
-  if (!offset || !text) return text;
-  return text.replace(MONTH_WORD, (match, name: string, dot: string, yearPart?: string, year?: string) => {
-    const full = MONTHS.indexOf(name as (typeof MONTHS)[number]);
-    const index = full >= 0 ? full : SHORT_MONTHS.indexOf(name === "Sept" ? "Sep" : name);
-    if (index < 0) return match;
-    if (!year && !STANDALONE.includes(name)) return match;
-    const total = (year ? Number(year) : 0) * 12 + index + offset;
-    const month = ((total % 12) + 12) % 12;
-    const label = full >= 0 ? MONTHS[month] : SHORT_MONTHS[month];
-    if (!year) return `${label}${dot}`;
-    return `${label}${dot}${yearPart!.slice(0, yearPart!.length - year.length)}${Math.floor(total / 12)}`;
+export function shiftMonths(text: string, offset: number, days = 0): string {
+  if ((!offset && !days) || !text) return text;
+  const mentions = [...text.matchAll(MONTH_DATE)].map(readMention);
+  // Right to left, so a chain like "Oct–Nov–Dec 2026" passes the year along.
+  for (let i = mentions.length - 2; i >= 0; i--) {
+    const a = mentions[i];
+    const b = mentions[i + 1];
+    if (!a || !b || a.year !== null || b.year === null) continue;
+    if (!MONTH_JOIN.test(text.slice(a.end, b.start))) continue;
+    a.year = b.index < a.index ? b.year - 1 : b.year;
+    a.borrowed = true;
+  }
+
+  type Moved = { y: number; m: number; d: number[] }[];
+  const moved: (Moved | null)[] = mentions.map((mention) => {
+    if (!mention) return null;
+    const { days: ds, index, year } = mention;
+    if (year === null && !ds.length && (mention.short || !STANDALONE.includes(MONTHS[index]))) {
+      return null;
+    }
+    const from = { y: year ?? NO_YEAR, m: index + 1 };
+    if (days && ds.length) {
+      // Each day on its own: a week can start in one month and end in the next.
+      return ds.map(({ n }) => {
+        const p = parts(addDays(format(from.y, from.m, Math.min(n, daysInMonth(from.y, from.m))), days));
+        return { y: p.y, m: p.m, d: [p.d] };
+      });
+    }
+    const total = from.y * 12 + index + offset;
+    const to = { y: Math.floor(total / 12), m: (((total % 12) + 12) % 12) + 1 };
+    return [{ ...to, d: ds.map(({ n }) => moveDay(n, from, to)) }];
   });
+
+  let out = "";
+  let at = 0;
+  mentions.forEach((mention, i) => {
+    const dates = moved[i];
+    if (!mention || !dates) return;
+    const label = (m: number) => `${(mention.short ? SHORT_MONTHS : MONTHS)[m - 1]}${mention.dot}`;
+    const dayText = (n: number, k: number) => `${n}${mention.days[k]?.ordinal ? ordinal(n) : ""}`;
+    const yearOf = (y: number, gap: string | null) => (gap === null ? "" : `${gap}${y}`);
+    const first = dates[0];
+    const last = dates[dates.length - 1];
+    // A borrowed year is shown only once its month lands in another year
+    // than the month it is joined to.
+    const next = moved[i + 1]?.[0];
+    const gap = mention.borrowed
+      ? next && next.y !== last.y
+        ? mention.days.length && !mention.dayFirst ? ", " : " "
+        : null
+      : mention.year === null
+        ? null
+        : mention.yearGap;
+    let written: string;
+    if (dates.length === 2 && (first.y !== last.y || first.m !== last.m)) {
+      // A day range that now runs into the next month names both months,
+      // and both years when it runs into the next year.
+      const crossYear = first.y !== last.y && mention.year !== null;
+      const yearGap = mention.dayFirst ? " " : ", ";
+      const firstYear = crossYear ? `${yearGap}${first.y}` : "";
+      const lastYear = yearOf(last.y, crossYear && gap === null ? yearGap : gap);
+      written = mention.dayFirst
+        ? `${dayText(first.d[0], 0)} ${label(first.m)}${firstYear}${mention.sep}${dayText(last.d[0], 1)} ${label(last.m)}${lastYear}`
+        : `${label(first.m)} ${dayText(first.d[0], 0)}${firstYear}${mention.sep}${label(last.m)} ${dayText(last.d[0], 1)}${lastYear}`;
+    } else {
+      const ds = dates.flatMap((date) => date.d).map(dayText);
+      const dayPart = ds.join(mention.sep);
+      written = mention.dayFirst
+        ? `${dayPart} ${label(last.m)}${yearOf(last.y, gap)}`
+        : `${label(last.m)}${dayPart ? ` ${dayPart}` : ""}${yearOf(last.y, gap)}`;
+    }
+    out += text.slice(at, mention.start) + written;
+    at = mention.end;
+  });
+  return out + text.slice(at);
 }
 
 type DocNode = { text?: string; content?: DocNode[]; [key: string]: unknown };
 
 /** shiftMonths over every text node of a Tiptap document, returning a new one. */
-export function shiftMonthsInDoc(doc: unknown, offset: number): unknown {
-  if (!offset || doc == null || typeof doc !== "object") return doc;
+export function shiftMonthsInDoc(doc: unknown, offset: number, days = 0): unknown {
+  if ((!offset && !days) || doc == null || typeof doc !== "object") return doc;
   const walk = (node: DocNode): DocNode => {
     const next: DocNode = { ...node };
-    if (typeof next.text === "string") next.text = shiftMonths(next.text, offset);
+    if (typeof next.text === "string") next.text = shiftMonths(next.text, offset, days);
     if (Array.isArray(next.content)) next.content = next.content.map(walk);
     return next;
   };
   return Array.isArray(doc) ? (doc as DocNode[]).map(walk) : walk(doc as DocNode);
 }
+
+/** A month name, and the year written after it. */
+const MONTH_WORD = new RegExp(
+  `\\b(${[...MONTHS, "Sept", ...SHORT_MONTHS].join("|")})(\\.?)(\\s+(\\d{4}))?\\b`,
+  "g",
+);
 
 /** Text with its month mentions taken out, for a plan named after an invoice. */
 export function withoutMonths(text: string): string {

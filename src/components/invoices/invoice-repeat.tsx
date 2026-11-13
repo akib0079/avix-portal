@@ -12,8 +12,11 @@ import {
 } from "@/lib/actions/retainers";
 import { repeatSchema } from "@/lib/validation/retainer";
 import {
+  addDays,
   cadenceLabel,
+  daysBetweenWeeks,
   defaultFirstRun,
+  isDay,
   longDay,
   monthsBetween,
   periodVars,
@@ -89,16 +92,25 @@ type InvoiceFacts = {
   cancelled: boolean;
 };
 
-/** "dadad — November 2026" copied for the period of `day`. */
-function nextTitle(title: string | null, fromPeriod: string | null, draft: ScheduleDraft): string | null {
-  if (!title || !fromPeriod || draft.interval === "" || !draft.nextDate) return null;
-  const offset = /^\d{4}-\d{2}$/.test(fromPeriod) ? monthsBetween(fromPeriod, draft.nextDate) : 0;
+/**
+ * "dadad — November 2026" copied for the period of `day`. `from` is the
+ * template's month ("2026-11") or its issue day; from a day, a weekly plan's
+ * dates move by whole weeks, as the run moves them.
+ */
+function nextTitle(title: string | null, from: string | null, draft: ScheduleDraft): string | null {
+  if (!title || !from || draft.interval === "" || !draft.nextDate) return null;
+  const days = draft.frequency === "WEEK" && isDay(from) ? daysBetweenWeeks(from, draft.nextDate) : 0;
+  const offset = days
+    ? monthsBetween(addDays(draft.nextDate, -days), draft.nextDate)
+    : /^\d{4}-\d{2}/.test(from)
+      ? monthsBetween(from, draft.nextDate)
+      : 0;
   const vars = periodVars(draft.nextDate, {
     frequency: draft.frequency,
     interval: draft.interval,
     dayOfMonth: Number(draft.nextDate.slice(8, 10)),
   });
-  return renderPeriodTags(shiftMonths(title, offset), vars);
+  return renderPeriodTags(shiftMonths(title, offset, days), vars);
 }
 
 /**
@@ -353,7 +365,7 @@ function RepeatDialog({
 
   const preview = editing
     ? nextTitle(plan.templateTitle, plan.templatePeriod, schedule)
-    : nextTitle(invoice.title, invoice.issueDay.slice(0, 7), schedule);
+    : nextTitle(invoice.title, invoice.issueDay, schedule);
 
   async function save() {
     const parsed = repeatSchema.safeParse({ title, schedule: scheduleInput(schedule) });
@@ -390,7 +402,7 @@ function RepeatDialog({
           <DialogDescription>
             {editing
               ? "Changes apply to the invoices still to come."
-              : "Each new invoice copies this one: its lines, tax, notes and bank details, with its dates and months moved on to the new period."}
+              : "Each new invoice copies this one: its lines, tax, notes and bank details. The months and dates it names move on to the new period; a year on its own stays as written."}
           </DialogDescription>
         </DialogHeader>
 

@@ -7,6 +7,7 @@ import {
   cadenceLabel,
   cadenceSuffix,
   dayIn,
+  daysBetweenWeeks,
   defaultFirstRun,
   isDay,
   isoWeek,
@@ -278,6 +279,49 @@ test("a template's months move on with the period", () => {
     content: [{ type: "paragraph", content: [{ type: "text", text: "Work in November 2026" }] }],
   });
   assert.equal(doc.content[0].content[0].text, "Work in October 2026");
+});
+
+test("a template's dates move with their month and year", () => {
+  // A year after the month, or after its day, rolls over with it.
+  assert.equal(shiftMonths("Services for December 1–31, 2026", 1), "Services for January 1–31, 2027");
+  assert.equal(shiftMonths("Care (paid by December 15, 2026)", 1), "Care (paid by January 15, 2027)");
+  // A month's last day stays its last day; other days fit the new month.
+  assert.equal(shiftMonths("Hosting 1 Jan 2027 – 31 Jan 2027", 1), "Hosting 1 Feb 2027 – 28 Feb 2027");
+  assert.equal(shiftMonths("Feb 1–28, 2027", 1), "Mar 1–31, 2027");
+  assert.equal(shiftMonths("Due 30 January 2027", 1), "Due 28 February 2027");
+  assert.equal(shiftMonths("Retainer for the 31st January", 1), "Retainer for the 28th February");
+  assert.equal(shiftMonths("On the 2nd December", 1), "On the 2nd January");
+  // Dates make even a short name or "May" a month.
+  assert.equal(shiftMonths("May 15, 2026", 1), "June 15, 2026");
+  // A month joined to a dated one takes its year.
+  assert.equal(shiftMonths("Support Oct–Dec 2026", 3), "Support Jan–Mar 2027");
+  assert.equal(shiftMonths("Nov–Dec 2026", 1), "Dec 2026–Jan 2027");
+  assert.equal(shiftMonths("Dec–Jan 2027", 1), "Jan–Feb 2027");
+  assert.equal(shiftMonths("May to June 2026", 1), "June to July 2026");
+  // Years that aren't a month's stay as written.
+  assert.equal(shiftMonths("Annual hosting 2026", 12), "Annual hosting 2026");
+  assert.equal(shiftMonths("© 2026, 2000 page views, November", 1), "© 2026, 2000 page views, December");
+});
+
+test("a weekly template's dates move by whole weeks", () => {
+  assert.equal(daysBetweenWeeks("2026-11-04", "2026-11-11"), 7);
+  assert.equal(daysBetweenWeeks("2026-W45", "2026-11-11"), 7);
+  assert.equal(daysBetweenWeeks("2026-W53", "2027-01-04"), 7);
+  assert.equal(daysBetweenWeeks("2026-11-08", "2026-11-02"), 0);
+  assert.equal(shiftMonths("Work 2 – 8 Nov 2026", 0, 7), "Work 9 – 15 Nov 2026");
+  assert.equal(shiftMonths("Work 2 – 8 Nov 2026", 1, 28), "Work 30 Nov – 6 Dec 2026");
+  assert.equal(shiftMonths("Week of 22 Dec – 28 Dec 2026", 1, 7), "Week of 29 Dec 2026 – 4 Jan 2027");
+  assert.equal(shiftMonths("Work Dec 22 – 28, 2026", 1, 7), "Work Dec 29, 2026 – Jan 4, 2027");
+  // Months without a day still move by months.
+  assert.equal(
+    shiftMonths("Support — November 2026, from 2 Nov", 1, 28),
+    "Support — December 2026, from 30 Nov",
+  );
+  const doc = { type: "doc", content: [{ type: "text", text: "2 – 8 Nov 2026" }] };
+  assert.deepEqual(shiftMonthsInDoc(doc, 0, 7), {
+    type: "doc",
+    content: [{ type: "text", text: "9 – 15 Nov 2026" }],
+  });
 });
 
 test("a plan named after an invoice drops the month", () => {
