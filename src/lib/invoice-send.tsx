@@ -10,7 +10,10 @@ import { appUrl } from "@/lib/app-url";
 import { sendBlocker } from "@/lib/invoice-rules";
 import { isSecureLink } from "@/lib/validation/invoice";
 
-export type SendResult = { ok: true } | { ok: false; error: string };
+export type SendResult =
+  | { ok: true }
+  /** `emailed`: the client has the email, only the bookkeeping failed. */
+  | { ok: false; error: string; emailed?: true };
 
 /**
  * Emails an invoice to its client and marks it sent.
@@ -91,17 +94,27 @@ export async function sendInvoiceCore(id: string): Promise<SendResult> {
     return { ok: false, error: "Email failed to send — check the Resend configuration." };
   }
 
-  await prisma.invoice.update({
-    where: { id },
-    data: {
-      sentAt: new Date(),
-      // A draft or an unsent invoice is now with the client. Don't regress
-      // a further-along status back to SENT.
-      ...(invoice.status === "DRAFT" || invoice.status === "ASSIGNED"
-        ? { status: "SENT" as const }
-        : {}),
-    },
-  });
+  try {
+    await prisma.invoice.update({
+      where: { id },
+      data: {
+        sentAt: new Date(),
+        // A draft or an unsent invoice is now with the client. Don't regress
+        // a further-along status back to SENT.
+        ...(invoice.status === "DRAFT" || invoice.status === "ASSIGNED"
+          ? { status: "SENT" as const }
+          : {}),
+      },
+    });
+  } catch (err) {
+    // The client has the email already: sending again would email them twice.
+    console.error(`[invoices] ${invoice.invoiceNumber} emailed but not marked sent:`, (err as Error).message);
+    return {
+      ok: false,
+      emailed: true,
+      error: "The email went out, but the invoice couldn't be marked as sent. Mark it Sent instead of sending it again.",
+    };
+  }
 
   after(() =>
     Promise.all([

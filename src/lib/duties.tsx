@@ -198,9 +198,18 @@ async function generateScheduledInvoices(now: Date): Promise<void> {
 
   const results = [];
   for (const plan of plans) {
-    results.push(await processDuePlan(plan, now, booking.agencyTimezone));
+    // One plan failing must not cost the others their run or their summary.
+    try {
+      results.push(await processDuePlan(plan, now, booking.agencyTimezone));
+    } catch (err) {
+      console.error(`[duties] plan ${plan.id} failed:`, (err as Error).message);
+    }
   }
-  await summarisePlanResults(results);
+  try {
+    await summarisePlanResults(results);
+  } catch (err) {
+    console.error("[duties] plan summary failed:", (err as Error).message);
+  }
 }
 
 /**
@@ -693,12 +702,23 @@ export async function runDueDuties(): Promise<void> {
       update: { value: now.toISOString() },
     });
 
-    await sendMeetingReminders(now);
-    await generateScheduledInvoices(now);
-    await chaseOverdueInvoices(now);
-    await drainCampaigns(now);
-    await generateSystemTasks(now);
-    await runProposalDuties(now);
+    // Each on its own, so one failing duty can't skip the rest for the
+    // 15 minutes the stamp already holds them off.
+    const duties: [string, (now: Date) => Promise<unknown>][] = [
+      ["meeting reminders", sendMeetingReminders],
+      ["recurring invoices", generateScheduledInvoices],
+      ["payment reminders", chaseOverdueInvoices],
+      ["campaigns", drainCampaigns],
+      ["system tasks", generateSystemTasks],
+      ["proposals", runProposalDuties],
+    ];
+    for (const [name, duty] of duties) {
+      try {
+        await duty(now);
+      } catch (err) {
+        console.error(`[duties] ${name} failed:`, (err as Error).message);
+      }
+    }
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
   }

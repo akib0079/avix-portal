@@ -8,7 +8,7 @@ import { dueDateFromTerms } from "@/lib/invoice-totals";
 import { invoiceCopySourceSelect, toInvoiceCopySource } from "@/lib/dal/invoices";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
 import { logActivity } from "@/lib/dal/activity";
-import { sendInvoiceCore } from "@/lib/invoice-send";
+import { sendInvoiceCore, type SendResult } from "@/lib/invoice-send";
 import { renderPeriodTags, renderPeriodTagsInDoc } from "@/lib/merge-tags";
 import { richTextToLines } from "@/lib/rich-text";
 import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
@@ -459,12 +459,24 @@ async function autoSend(pass: PlanPass): Promise<"sent" | "failed" | null> {
   const { plan } = pass;
   if (!plan.autoSend || pass.catchUp || pass.created.length !== 1) return null;
   const invoice = pass.created[0];
-  const result =
-    plan.client.status === "ACTIVE"
-      ? await sendInvoiceCore(invoice.id)
-      : { ok: false as const, error: "The client's account is inactive." };
+  let result: SendResult;
+  if (plan.client.status !== "ACTIVE") {
+    result = { ok: false, error: "The client's account is inactive." };
+  } else {
+    try {
+      result = await sendInvoiceCore(invoice.id);
+    } catch (err) {
+      // A throw can come after the email went out, so say nothing about
+      // where it stands beyond what is known.
+      console.error(`[recurring] plan ${plan.id} auto-send failed:`, (err as Error).message);
+      pass.error = `${invoice.invoiceNumber} wasn't sent automatically: sending failed unexpectedly. Check whether the client received it before sending it again.`;
+      return "failed";
+    }
+  }
   if (result.ok) return "sent";
-  pass.error = `${invoice.invoiceNumber} wasn't sent automatically: ${result.error} It's waiting as a draft.`;
+  pass.error = result.emailed
+    ? `${invoice.invoiceNumber}: ${result.error}`
+    : `${invoice.invoiceNumber} wasn't sent automatically: ${result.error} It's waiting as a draft.`;
   return "failed";
 }
 
@@ -519,7 +531,8 @@ export async function processDuePlan(
   }
   const sent = (await autoSend(pass)) === "sent";
 
-  await Promise.all([
+  // Settled, so a failed record can't stop the rest of the batch.
+  const recorded = await Promise.allSettled([
     ...pass.created.map((invoice) =>
       logActivity({
         type: "invoice.drafted",
@@ -540,6 +553,11 @@ export async function processDuePlan(
         )
       : null,
   ]);
+  for (const r of recorded) {
+    if (r.status === "rejected") {
+      console.error(`[recurring] plan ${plan.id} record failed:`, (r.reason as Error)?.message);
+    }
+  }
   return { ...pass, sent };
 }
 
