@@ -151,9 +151,11 @@ export function invoiceCopyDefaults(
       currency: source.currency,
       items,
       amount: total,
-      // A dollar invoice is worth its own total; any other currency waits for
-      // the value it settles at.
-      amountUsd: source.currency === "USD" ? total : null,
+      // Never carried: a dollar copy is worth its own total once saved
+      // (usdToStore), and seeded here it stayed as the USD value of a copy
+      // switched to another currency. Any other currency waits for the value
+      // it settles at.
+      amountUsd: null,
       discount: source.discount,
       taxRate: source.taxRate,
       taxLabel: source.taxLabel ?? "",

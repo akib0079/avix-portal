@@ -11,7 +11,7 @@ import {
   settleStatus,
   unsettledStatus,
 } from "@/lib/invoice-totals";
-import { draftBlocker } from "@/lib/invoice-rules";
+import { draftBlocker, restoreBlock, type RestoreBlock } from "@/lib/invoice-rules";
 import type { InvoiceInput } from "@/lib/validation/invoice";
 
 /**
@@ -59,6 +59,31 @@ export function itemRows(
     rate: i.rate,
     sortOrder: index,
   }));
+}
+
+/**
+ * Rewrites saved lines of one invoice in place (text, formatting, amounts,
+ * position), however many, in one statement: an UPDATE per line cost a
+ * round trip each, which on a long Bill work invoice took seconds.
+ */
+export function updateLines(
+  db: Prisma.TransactionClient,
+  invoiceId: string,
+  lines: ({ id: string } & ReturnType<typeof itemRows>[number])[],
+) {
+  // One JSON parameter. A line with no formatting comes out NULL, and reads back null.
+  return db.$executeRaw`
+    UPDATE "invoice_items" AS i
+    SET "description" = v."description",
+        "descriptionRich" = v."descriptionRich",
+        "qty" = v."qty",
+        "rate" = v."rate",
+        "sortOrder" = v."sortOrder"
+    FROM jsonb_to_recordset(${JSON.stringify(lines)}::jsonb) AS v(
+      "id" text, "description" text, "descriptionRich" jsonb,
+      "qty" numeric, "rate" numeric, "sortOrder" int
+    )
+    WHERE i."id" = v."id" AND i."invoiceId" = ${invoiceId}`;
 }
 
 /** What a save resolved from the form before writing anything. */
@@ -222,7 +247,8 @@ export function settledStatus(
  * The status a form save writes. The form's status select says what the owner
  * means; the payments say what happened. PAID with a balance left records that
  * balance as a payment, so amountPaid agrees with the badge. A draft can't hide
- * an invoice the client already has. Anything else settles against what has
+ * an invoice the client already has, and cancelling one would show it to them,
+ * so a draft is deleted instead. Anything else settles against what has
  * been paid and credited, so editing the amount of a paid invoice upward turns
  * it back into part paid instead of leaving it PAID with money owing.
  *
@@ -244,6 +270,15 @@ export function formStatus(
     }
     const blocked = draftBlocker({ sentAt: invoice.sentAt, amountPaid: paid });
     if (blocked) return { error: blocked };
+  }
+  // The client sees every invoice but a draft, a cancelled one included, so
+  // cancelling one that was never issued would publish it to them.
+  if (requested === "CANCELLED" && (!invoice || invoice.status === "DRAFT")) {
+    return {
+      error: invoice
+        ? "This draft was never sent, so there's nothing to cancel. Delete it, or leave it as a draft: the client can't see it."
+        : "A new invoice can't start cancelled. Save it as a draft instead: the client can't see a draft.",
+    };
   }
   if (requested === "PAID" && !invoice?.creditNoteForId) {
     const balance = balanceDue(total, paid, credited);
@@ -303,6 +338,97 @@ export async function settleIfRaced(
   if (status !== written) {
     await prisma.invoice.update({ where: { id: invoice.id }, data: { status } });
   }
+}
+
+/** A cancelled invoice's work, billed again meanwhile. */
+class Rebilled extends Error {
+  constructor(readonly block: RestoreBlock) {
+    super("Rebilled");
+  }
+}
+
+/**
+ * Brings a cancelled invoice back with `write`, unless its work was billed
+ * again meanwhile. Cancelling frees the work an invoice bills, so Bill work
+ * can put the same fixed piece of work on a new invoice and move the hours
+ * onto it; restoring the old one as well bills that work twice.
+ *
+ * `write` runs under the Bill work lock of every project whose work the
+ * invoice's lines bill, so no bill lands in between, and it is rolled back if
+ * another live invoice now bills one of those lines' work (a fixed line's),
+ * or if one of its hourly lines has lost its hours. Hours that moved stay
+ * moved, whatever happened to the invoice that took them: if it was cancelled
+ * too, they count as unbilled again, so a restored line with nothing behind
+ * it would charge them a second time. An hourly line that still has its hours is
+ * left alone, since later hours of the same work are rightly on other
+ * invoices. Returns why it was refused, or null when it was restored.
+ */
+export async function restoreCancelled(
+  invoiceId: string,
+  write: (tx: Prisma.TransactionClient) => Promise<unknown>,
+): Promise<RestoreBlock | null> {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
+          SELECT pg_advisory_xact_lock(hashtext('bill-work:' || w."projectId"))
+          FROM (
+            SELECT DISTINCT m."projectId" FROM "invoice_items" AS ii
+            JOIN "milestones" AS m ON m."id" = ii."milestoneId"
+            WHERE ii."invoiceId" = ${invoiceId}
+            ORDER BY 1
+          ) AS w`;
+        await write(tx);
+        // Read after the write, so lines the same edit removed don't count.
+        // One statement: the other live invoices billing this one's work, and
+        // this invoice itself when an hourly line of it has lost its hours.
+        const found = await tx.invoice.findMany({
+          where: {
+            OR: [
+              {
+                id: { not: invoiceId },
+                status: { not: "CANCELLED" },
+                items: {
+                  some: {
+                    milestone: {
+                      invoiceItems: { some: { invoiceId, timeEntries: { none: {} } } },
+                    },
+                  },
+                },
+              },
+              {
+                id: invoiceId,
+                items: {
+                  some: { milestone: { pricingType: "HOURLY" }, timeEntries: { none: {} } },
+                },
+              },
+            ],
+          },
+          orderBy: { invoiceNumber: "asc" },
+          select: { id: true, invoiceNumber: true },
+        });
+        const block = restoreBlock(invoiceId, found);
+        if (block) throw new Rebilled(block);
+      },
+      { maxWait: 10_000, timeout: 20_000 },
+    );
+    return null;
+  } catch (err) {
+    if (err instanceof Rebilled) return err.block;
+    throw err;
+  }
+}
+
+/**
+ * A plan's period invoice stopped counting (deleted, or detached from the
+ * plan), so the plan's count of invoices made drops by one, and an "ends
+ * after N" plan can still bill N periods. Never below zero.
+ */
+export function uncountRun(db: Prisma.TransactionClient, retainerId: string) {
+  return db.retainer.updateMany({
+    where: { id: retainerId, runCount: { gt: 0 } },
+    data: { runCount: { decrement: 1 } },
+  });
 }
 
 export type PreparedInvoice = {

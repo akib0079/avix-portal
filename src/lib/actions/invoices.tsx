@@ -8,7 +8,7 @@ import { requireAdmin } from "@/lib/dal/session";
 import { parseInvoiceForm } from "@/lib/invoice-form-data";
 import { createWithNextNumber } from "@/lib/invoice-number";
 import { creditedTotal, dueDateFromTerms, invoiceTotals } from "@/lib/invoice-totals";
-import { canDeleteInvoice, paymentBlocker } from "@/lib/invoice-rules";
+import { canDeleteInvoice, paymentBlocker, restoreRefusal } from "@/lib/invoice-rules";
 import {
   MARKED_PAID,
   addPayment,
@@ -21,14 +21,16 @@ import {
   parseDate,
   prepareInvoice,
   resolveRefs,
+  restoreCancelled,
   settleIfRaced,
   settledStatus,
+  uncountRun,
+  updateLines,
 } from "@/lib/invoice-write";
 import {
   contractInvoiceSelect,
   getBillableWorkToInvoice,
   toContractInvoice,
-  unbilledHours,
 } from "@/lib/dal/billable";
 import { contractInvoiced } from "@/lib/billable-lines";
 import { todayIn } from "@/lib/invoice-copy";
@@ -38,7 +40,7 @@ import { logActivity } from "@/lib/dal/activity";
 import { sendInvoiceCore } from "@/lib/invoice-send";
 import { formatCurrency } from "@/lib/currency";
 import { getBookingConfig } from "@/lib/dal/availability";
-import { itemWrites } from "@/lib/invoice-items";
+import { itemWrites, lineChanged } from "@/lib/invoice-items";
 import { repeatSchema, type RepeatInput } from "@/lib/validation/retainer";
 import {
   dayIn,
@@ -49,7 +51,7 @@ import {
 } from "@/lib/recurring";
 import { runPlanIfDue } from "@/lib/recurring-run";
 import type { PlanSeed } from "@/lib/invoice-write";
-import type { InvoiceStatus } from "@prisma/client";
+import type { InvoiceStatus, Prisma } from "@prisma/client";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -228,9 +230,19 @@ export async function updateInvoice(
         dueDate: true,
         retainer: { select: { title: true } },
         retainerTemplateFor: { select: { title: true } },
-        // Which lines bill tracked work, so the edit keeps them (lib/invoice-items).
+        // Which lines bill tracked work, so the edit keeps them (lib/invoice-items),
+        // and what they say, so only the kept lines that changed are written.
         items: {
-          select: { id: true, milestoneId: true, _count: { select: { timeEntries: true } } },
+          select: {
+            id: true,
+            milestoneId: true,
+            description: true,
+            descriptionRich: true,
+            qty: true,
+            rate: true,
+            sortOrder: true,
+            _count: { select: { timeEntries: true } },
+          },
         },
       },
     }),
@@ -254,8 +266,35 @@ export async function updateInvoice(
       };
     }
   }
-  const columns = formColumns(data, refs);
-  const next = formStatus(invoice, data.status, columns.amount);
+  // A save that posts no lines (an Upload or Link save from the form before
+  // it sent them) leaves the saved lines as they are, and they still price
+  // the invoice. Read as "no lines", it deleted every one, freeing the work
+  // they bill, and took the amount, already the total, as the subtotal, so
+  // the discount and tax were applied a second time.
+  const keepLines = data.items === undefined && invoice.items.length > 0;
+  const columns = formColumns(
+    keepLines
+      ? {
+          ...data,
+          items: invoice.items.map((i) => ({
+            description: "",
+            qty: Number(i.qty),
+            rate: Number(i.rate),
+          })),
+        }
+      : data,
+    refs,
+  );
+  // The status select speaks for the owner only once they move it. Left
+  // alone it still holds the status the form loaded, and saving that undid
+  // whatever happened since: a payment the client reported was cleared as if
+  // rejected, a cleared claim was put back in review. An untouched select
+  // keeps the invoice where it stands, settled against the new total. A form
+  // that doesn't say what it loaded (an older bundle) is taken at its word.
+  const touched = formData.get("statusWas") !== data.status;
+  const next = touched
+    ? formStatus(invoice, data.status, columns.amount)
+    : { status: settledStatus(invoice, { total: columns.amount }), markPaid: 0, clearClaim: false };
   if ("error" in next) return { ok: false, error: next.error };
 
   const pdf = await handlePdf(formData);
@@ -266,26 +305,35 @@ export async function updateInvoice(
   const dueMoved = (columns.dueDate?.getTime() ?? null) !== (invoice.dueDate?.getTime() ?? null);
 
   // Lines that bill tracked work are kept in place, with their links; the
-  // rest are replaced. A linked line the edit dropped frees its work.
+  // rest are replaced. A linked line the edit dropped frees its work. Of the
+  // kept lines, only the ones the edit changed are written, in one statement.
   const linked = new Set(
     invoice.items.filter((i) => i.milestoneId || i._count.timeEntries > 0).map((i) => i.id),
   );
-  const lines = itemWrites(data.items ?? [], linked);
+  const lines = keepLines ? null : itemWrites(data.items ?? [], linked);
   const rows = itemRows(data.items);
+  const saved = new Map(invoice.items.map((i) => [i.id, i]));
+  const changed = (lines?.update ?? []).flatMap(({ id: lineId, index }) => {
+    const was = saved.get(lineId);
+    return was && lineChanged(was, rows[index]) ? [{ id: lineId, ...rows[index] }] : [];
+  });
 
   // Batched rather than interactive: none of these writes needs another's
-  // result. amountPaid moves in place, as it does for any other payment.
-  await prisma.$transaction([
-    prisma.invoiceItem.deleteMany({
-      where: {
-        invoiceId: id,
-        ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
-      },
-    }),
-    ...lines.update.map((line) =>
-      prisma.invoiceItem.update({ where: { id: line.id }, data: rows[line.index] }),
-    ),
-    prisma.invoice.update({
+  // result (only a restore from Cancelled runs them in a transaction of its
+  // own). amountPaid moves in place, as it does for any other payment.
+  const writes = (db: Prisma.TransactionClient) => [
+    ...(lines
+      ? [
+          db.invoiceItem.deleteMany({
+            where: {
+              invoiceId: id,
+              ...(lines.keepIds.length > 0 ? { id: { notIn: lines.keepIds } } : {}),
+            },
+          }),
+        ]
+      : []),
+    ...(changed.length > 0 ? [updateLines(db, id, changed)] : []),
+    db.invoice.update({
       where: { id },
       data: {
         // A blank number field keeps the current number.
@@ -298,12 +346,12 @@ export async function updateInvoice(
         ...(pdf.fileName
           ? { pdfPath: pdf.fileName, pdfOriginalName: pdf.originalName }
           : {}),
-        items: { create: lines.create.map((line) => rows[line.index]) },
+        ...(lines ? { items: { create: lines.create.map((line) => rows[line.index]) } } : {}),
       },
     }),
     ...(next.markPaid > 0
       ? [
-          prisma.invoicePayment.create({
+          db.invoicePayment.create({
             data: { invoiceId: id, amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID },
           }),
         ]
@@ -313,7 +361,7 @@ export async function updateInvoice(
     // plan's own, unless the currency changed under it.
     ...(invoice.retainerTemplateFor.length > 0
       ? [
-          prisma.retainer.updateMany({
+          db.retainer.updateMany({
             where: { templateInvoiceId: id },
             data: {
               amount: columns.amount,
@@ -328,7 +376,25 @@ export async function updateInvoice(
           }),
         ]
       : []),
-  ]);
+  ];
+
+  const restoring =
+    invoice.status === "CANCELLED" &&
+    next.status !== "CANCELLED" &&
+    invoice.items.some((i) => i.milestoneId);
+  if (restoring) {
+    // Brought back from Cancelled: refused if its work was billed again since.
+    const blocked = await restoreCancelled(id, async (tx) => {
+      for (const write of writes(tx)) await write;
+    });
+    if (blocked) {
+      const stored = pdf.fileName;
+      if (stored) after(() => deleteUpload("invoices", stored));
+      return { ok: false, error: restoreRefusal(blocked) };
+    }
+  } else {
+    await prisma.$transaction(writes(prisma));
+  }
 
   await resettleCredited(invoice.creditNoteForId);
 
@@ -360,7 +426,15 @@ export async function setInvoiceStatus(
   status: InvoiceStatus,
 ): Promise<ActionResult> {
   await requireAdmin();
-  const invoice = await prisma.invoice.findUnique({ where: { id }, select: moneySelect });
+  const invoice = await prisma.invoice.findUnique({
+    where: { id },
+    select: {
+      ...moneySelect,
+      // Whether it bills tracked work, which a cancelled invoice can't bring
+      // back once that work is billed again (restoreCancelled).
+      items: { where: { milestoneId: { not: null } }, select: { id: true }, take: 1 },
+    },
+  });
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if (status === invoice.status) return { ok: true };
 
@@ -368,7 +442,27 @@ export async function setInvoiceStatus(
   if ("error" in next) return { ok: false, error: next.error };
   if (next.status !== status) return { ok: false, error: statusConflict(status, next.status) };
 
-  if (next.markPaid > 0) {
+  if (invoice.status === "CANCELLED" && invoice.items.length > 0) {
+    // Mark paid's payment goes in with the status, as addPayment writes it.
+    const blocked = await restoreCancelled(id, async (tx) => {
+      if (next.markPaid > 0) {
+        await tx.invoicePayment.create({
+          data: { invoiceId: id, amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID },
+          select: { id: true },
+        });
+      }
+      await tx.invoice.update({
+        where: { id },
+        data: {
+          status,
+          ...(next.markPaid > 0 ? { amountPaid: { increment: next.markPaid } } : {}),
+          ...(next.clearClaim ? { paymentClaimedAt: null } : {}),
+        },
+        select: { id: true },
+      });
+    });
+    if (blocked) return { ok: false, error: restoreRefusal(blocked) };
+  } else if (next.markPaid > 0) {
     await addPayment(
       invoice,
       { amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID, note: null },
@@ -537,18 +631,25 @@ export async function createInvoiceFromWork(
             select: { id: true, invoiceNumber: true, items: { select: { id: true, sortOrder: true } } },
           });
 
-          // The hours rolled into each hourly line point at it. Every one has
-          // to be still unbilled, or another invoice got there first.
-          for (const [index, line] of lines.entries()) {
-            if (line.source !== "milestone-hourly" || !line.milestoneId) continue;
-            const ids = entries[line.milestoneId] ?? [];
+          // The hours rolled into each hourly line point at it, every line's
+          // in one statement (one per line held the lock a round trip each).
+          // Every entry has to be still unbilled (unbilledHours), or another
+          // invoice got there first. An entry is on one line only, so one
+          // count covers them all.
+          const pairs = lines.flatMap((line, index) => {
+            if (line.source !== "milestone-hourly" || !line.milestoneId) return [];
             const item = created.items.find((i) => i.sortOrder === index);
-            if (!item || ids.length === 0) continue;
-            const linked = await tx.timeEntry.updateMany({
-              where: { id: { in: ids }, ...unbilledHours },
-              data: { invoiceItemId: item.id },
-            });
-            if (linked.count !== ids.length) throw new BilledMeanwhile();
+            return item ? (entries[line.milestoneId] ?? []).map((entry) => [entry, item.id]) : [];
+          });
+          if (pairs.length > 0) {
+            const linked = await tx.$executeRaw`
+              UPDATE "time_entries" AS t SET "invoiceItemId" = v."item"
+              FROM unnest(${pairs.map((p) => p[0])}::text[], ${pairs.map((p) => p[1])}::text[]) AS v("id", "item")
+              WHERE t."id" = v."id"
+                AND (t."invoiceItemId" IS NULL OR EXISTS (
+                  SELECT 1 FROM "invoice_items" AS ii JOIN "invoices" AS i ON i."id" = ii."invoiceId"
+                  WHERE ii."id" = t."invoiceItemId" AND i."status" = 'CANCELLED'))`;
+            if (linked !== pairs.length) throw new BilledMeanwhile();
           }
           return { id: created.id, invoiceNumber: created.invoiceNumber };
         },
@@ -774,8 +875,8 @@ export async function createCreditNote(
  * The owner checked and the payment the client reported hasn't arrived:
  * clear the claim. A claimed invoice is never chased, so without this one
  * mistaken "I've paid" silenced its reminders for good. An invoice that was
- * In review because of the claim goes back to where its money puts it, and
- * the client can report the payment again.
+ * In review because of the claim goes back to Sent, or to where its money
+ * puts it, and the client can report the payment again.
  */
 export async function clearPaymentClaim(id: string): Promise<ActionResult> {
   await requireAdmin();
@@ -783,10 +884,11 @@ export async function clearPaymentClaim(id: string): Promise<ActionResult> {
   if (!invoice) return { ok: false, error: "Invoice not found." };
   if (!invoice.paymentClaimedAt && invoice.status !== "IN_REVIEW") return { ok: true };
 
+  // Back to Sent, not guessed from sentAt: the client reported paying from
+  // the portal, so they have it, and an invoice marked Sent by hand has no
+  // sentAt. Assigned is never chased, so reminders silently stayed off.
   const status =
-    invoice.status === "IN_REVIEW"
-      ? settledStatus(invoice, { status: invoice.sentAt ? "SENT" : "ASSIGNED" })
-      : invoice.status;
+    invoice.status === "IN_REVIEW" ? settledStatus(invoice, { status: "SENT" }) : invoice.status;
   await prisma.invoice.update({ where: { id }, data: { paymentClaimedAt: null, status } });
 
   after(() =>
@@ -846,6 +948,7 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
       paymentClaimedAt: true,
       creditNoteForId: true,
       retainerId: true,
+      retainerPeriod: true,
       _count: { select: { payments: true, creditNotes: true } },
       retainerTemplateFor: {
         select: { id: true, title: true, _count: { select: { invoices: true } } },
@@ -884,14 +987,23 @@ export async function deleteInvoice(id: string): Promise<ActionResult> {
     };
   }
 
-  if (plans.length > 0) {
-    await prisma.$transaction([
-      prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } }),
-      prisma.invoice.delete({ where: { id } }),
-    ]);
-  } else {
-    await prisma.invoice.delete({ where: { id } });
-  }
+  // One of a plan's own period invoices no longer counts toward its end
+  // ("ends after N"): the plan can bill that period again (Generate now), and
+  // counting both ended the plan a period early. The decrement follows the
+  // delete in one batch, so a second click's failed delete can't repeat it.
+  const uncount =
+    invoice.retainerId && invoice.retainerPeriod && !plans.some((p) => p.id === invoice.retainerId)
+      ? [uncountRun(prisma, invoice.retainerId)]
+      : [];
+  const writes = [
+    ...(plans.length > 0
+      ? [prisma.retainer.deleteMany({ where: { id: { in: plans.map((p) => p.id) } } })]
+      : []),
+    prisma.invoice.delete({ where: { id } }),
+    ...uncount,
+  ];
+  if (writes.length > 1) await prisma.$transaction(writes);
+  else await writes[0];
   const file = invoice.pdfPath;
   if (file) after(() => deleteUpload("invoices", file));
   await resettleCredited(invoice.creditNoteForId);

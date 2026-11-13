@@ -268,7 +268,13 @@ export default async function InvoiceDetailPage({
               id: invoice.id,
               clientId: invoice.clientId,
               projectId: invoice.projectId ?? "none",
-              amount: Number(invoice.amount),
+              // With no lines the amount is what discount and tax apply to,
+              // so it reopens as the subtotal: the stored amount is the total
+              // after them, and each save taxed it again.
+              amount:
+                invoice.items.length === 0 && invoice.subtotal != null
+                  ? Number(invoice.subtotal)
+                  : Number(invoice.amount),
               discount: Number(invoice.discount ?? 0),
               taxRate: invoice.taxRate == null ? null : Number(invoice.taxRate),
               taxLabel: invoice.taxLabel ?? "",
@@ -284,8 +290,13 @@ export default async function InvoiceDetailPage({
               title: invoice.title ?? "",
               currency: invoice.currency,
               // Without it every save of a EUR or GBP invoice wiped the USD
-              // value the owner had entered.
-              amountUsd: invoice.amountUsd == null ? null : Number(invoice.amountUsd),
+              // value the owner had entered. A dollar invoice's is only its
+              // total (a save re-mirrors it), and switched to another
+              // currency it would have stood as that invoice's USD value.
+              amountUsd:
+                invoice.currency === "USD" || invoice.amountUsd == null
+                  ? null
+                  : Number(invoice.amountUsd),
               paymentAccountId: invoice.paymentAccountId ?? "none",
               billToCompany: invoice.billToCompany ?? "",
               billToAddress: invoice.billToAddress ?? "",

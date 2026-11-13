@@ -243,6 +243,21 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
   const edited = editedSchedule(existing, data.schedule, timeZone, taken);
   if ("error" in edited) return { ok: false, error: edited.error };
 
+  // Turning a paused plan on here is a Resume (setRetainerActive): it picks
+  // up at the first run from today, and the periods it was paused for stay
+  // unbilled. Kept at the date the form pre-filled, it drafted, and could
+  // send, an invoice for every one of them.
+  let columns = edited.columns;
+  let nextDay = data.schedule.nextDate;
+  const today = dayIn(new Date(), timeZone);
+  if (!existing.active && data.active && nextDay < today) {
+    nextDay = rollForward(nextDay, scheduleOf(columns), today);
+    if (!runAllowed(nextDay, planEnd({ ...columns, runCount: existing.runCount }))) {
+      return { ok: false, error: "This plan has ended. Set a later end, and it starts again." };
+    }
+    columns = { ...columns, nextRunAt: runInstant(nextDay, timeZone) };
+  }
+
   const money = template
     ? {
         amount: template.amount,
@@ -269,10 +284,10 @@ export async function updateRetainer(id: string, input: RetainerInput): Promise<
       ...money,
       notes: data.notes || null,
       active: data.active,
-      ...edited.columns,
+      ...columns,
     },
   });
-  if (data.active && dueNow(data.schedule.nextDate, timeZone)) {
+  if (data.active && dueNow(nextDay, timeZone)) {
     after(() => runPlanIfDue(id, timeZone));
   }
   revalidatePlans();
@@ -646,15 +661,29 @@ export async function attachInvoiceToRetainer(
 
 /**
  * Unlink an invoice from its plan (the invoice itself is untouched). Its
- * period goes too, so that period can be invoiced by the plan again.
+ * period goes too, so that period can be invoiced by the plan again, and so
+ * it stops counting toward the plan's end, as a deleted one does: counted twice, an
+ * "ends after N" plan ended a period early. An attached invoice (no period)
+ * was never counted. One statement: the row lock makes a second click find
+ * the invoice already detached, so the count can't drop twice.
  */
 export async function detachInvoiceFromRetainer(invoiceId: string): Promise<ActionResult> {
   await requireAdmin();
-  const detached = await prisma.invoice.updateMany({
-    where: { id: invoiceId },
-    data: { retainerId: null, retainerPeriod: null },
-  });
-  if (detached.count === 0) return { ok: false, error: "Invoice not found." };
+  const detached = await prisma.$queryRaw<unknown[]>`
+    WITH detached AS (
+      UPDATE "invoices" AS i SET "retainerId" = NULL, "retainerPeriod" = NULL, "updatedAt" = now()
+      FROM (
+        SELECT "id", "retainerId", "retainerPeriod" FROM "invoices" WHERE "id" = ${invoiceId} FOR UPDATE
+      ) AS was
+      WHERE i."id" = was."id"
+      RETURNING was."retainerId", was."retainerPeriod"
+    ), uncounted AS (
+      UPDATE "retainers" SET "runCount" = "runCount" - 1, "updatedAt" = now()
+      WHERE "runCount" > 0
+        AND "id" = (SELECT "retainerId" FROM detached WHERE "retainerPeriod" IS NOT NULL)
+    )
+    SELECT 1 FROM detached`;
+  if (detached.length === 0) return { ok: false, error: "Invoice not found." };
   revalidatePlans();
   return { ok: true };
 }

@@ -37,3 +37,48 @@ export function itemWrites<T extends { id?: string }>(
   });
   return { update, create, keepIds: [...kept] };
 }
+
+/** A kept line as it is saved, or as the edit has it now. */
+type LineState = {
+  description: string;
+  descriptionRich?: unknown;
+  qty: number | { toString(): string };
+  rate: number | { toString(): string };
+  sortOrder: number;
+};
+
+/**
+ * Whether an edit changes a kept line. Only changed lines are written, so a
+ * save that leaves them alone (a note, a date, the status) doesn't rewrite
+ * every line of an invoice made by Bill work. Amounts compare to the cent, as
+ * they are stored, and the formatting key by key: jsonb doesn't keep the
+ * order the editor wrote its keys in.
+ */
+export function lineChanged(saved: LineState, next: LineState): boolean {
+  return (
+    saved.description !== next.description ||
+    saved.sortOrder !== next.sortOrder ||
+    inCents(saved.qty) !== inCents(next.qty) ||
+    inCents(saved.rate) !== inCents(next.rate) ||
+    canonicalJson(saved.descriptionRich) !== canonicalJson(next.descriptionRich)
+  );
+}
+
+function inCents(value: number | { toString(): string }): number {
+  return Math.round(Number(value) * 100);
+}
+
+/** JSON with every object's keys sorted, so equal documents read the same. */
+function canonicalJson(value: unknown): string {
+  const sorted = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(sorted);
+    if (!node || typeof node !== "object") return node;
+    const record = node as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, sorted(record[key])]),
+    );
+  };
+  return JSON.stringify(sorted(value ?? null));
+}

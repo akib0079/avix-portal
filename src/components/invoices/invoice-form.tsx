@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   invoiceSchema,
@@ -96,10 +96,15 @@ export function InvoiceForm({
   const router = useRouter();
   const { track } = useActivity();
   const isEdit = !!invoice;
+  const canCancel = !!invoice && invoice.status !== "DRAFT";
   // Edit reads the saved invoice; a prefilled create reads its starting values.
   const start: Partial<InvoiceInput> | undefined = invoice ?? initial;
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  // What the status select held when it last matched the server, so a save
+  // can say whether the owner moved it (lib/actions/invoices updateInvoice).
+  // The page's invoice can't say it: a claim made elsewhere doesn't reach it.
+  const statusWas = useRef<string>(invoice?.status ?? "");
 
   // How this invoice's document is produced. Existing invoices reopen in the
   // mode that matches whatever they already have.
@@ -171,9 +176,19 @@ export function InvoiceForm({
   const clientProjects = projectsByClient[selectedClient] ?? [];
 
   function pickClient(clientId: string, onChange: (value: string) => void) {
+    const moved = clientId !== form.getValues("clientId");
     onChange(clientId);
     // A project belongs to one client, so it can't follow the invoice to another.
     form.setValue("projectId", "none");
+    // Nor can the billed-to details: a duplicate moved to another client
+    // printed the first one's company, address and email on its PDF. Back on
+    // the client the form opened with, they are as it opened.
+    if (moved) {
+      const own = !!clientId && clientId === start?.clientId;
+      form.setValue("billToCompany", own ? (start?.billToCompany ?? "") : "");
+      form.setValue("billToAddress", own ? (start?.billToAddress ?? "") : "");
+      form.setValue("billToEmail", own ? (start?.billToEmail ?? "") : "");
+    }
     if (!clientId || projectsByClient[clientId]) return;
     startLoadingProjects(async () => {
       const list = await listInvoiceProjects(clientId);
@@ -229,26 +244,34 @@ export function InvoiceForm({
     if (derived) form.setValue("dueDate", derived);
   }
 
+  // The lines are checked in every mode but only Generate PDF shows them, so
+  // a problem with one opens it there instead of the save doing nothing.
+  function revealLines(errors: FieldErrors<InvoiceInput>) {
+    if (!errors.items || docMode === "generate") return;
+    setDocMode("generate");
+    toast.error("Check the line items: they make the invoice's total.");
+  }
+
   async function onSubmit(values: InvoiceInput) {
-    // Only the chosen document mode's data is submitted, so switching modes
-    // clears the others rather than leaving a stale link/upload behind.
+    // Only the chosen document mode's link or file is submitted, so switching
+    // modes clears the other rather than leaving a stale link/upload behind.
     // serializeInvoiceForm writes every field the schema knows; the server
     // reads them back with the same table (lib/invoice-form-data).
     const formData = serializeInvoiceForm({
       ...values,
       pdfExternalUrl: docMode === "link" ? values.pdfExternalUrl : "",
+      // The lines go in every mode: the mode only decides which document the
+      // client gets. Left out of an Upload or Link save, every line was
+      // deleted, with the work it billed, and the total was taxed again.
       // descriptionRich is the source of truth; the plain text is derived here
       // rather than trusted from form state, so what is stored can never drift
       // from what was typed even if a field failed to register.
-      items:
-        docMode === "generate"
-          ? values.items?.map((item) => ({
-              ...item,
-              description: item.descriptionRich
-                ? richTextToLines(item.descriptionRich)
-                : item.description,
-            }))
-          : undefined,
+      items: values.items?.map((item) => ({
+        ...item,
+        description: item.descriptionRich
+          ? richTextToLines(item.descriptionRich)
+          : item.description,
+      })),
     });
     const file = docMode === "upload" ? fileRef.current?.files?.[0] : undefined;
     if (file) formData.append("pdf", file);
@@ -275,8 +298,10 @@ export function InvoiceForm({
     // pages, so the fresh page arrives with the action's own response, and a
     // refresh on top rendered the whole page a second time.
     if (isEdit) {
+      formData.append("statusWas", statusWas.current);
       const result = await track(updateInvoice(invoice.id, formData), label);
       if (!result.ok) return void toast.error(result.error);
+      statusWas.current = values.status;
       toast.success("Invoice updated.");
     } else {
       const result = await track(createInvoice(formData), label);
@@ -292,7 +317,7 @@ export function InvoiceForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+      <form onSubmit={form.handleSubmit(onSubmit, revealLines)} className="space-y-5">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -496,11 +521,15 @@ export function InvoiceForm({
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {Object.entries(invoiceStatusLabels).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
+                    {Object.entries(invoiceStatusLabels)
+                      // A draft, or an invoice not saved yet, is deleted rather
+                      // than cancelled: cancelling would show it to the client.
+                      .filter(([value]) => value !== "CANCELLED" || canCancel)
+                      .map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
@@ -573,6 +602,13 @@ export function InvoiceForm({
             ))}
           </div>
 
+          {docMode !== "generate" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              The line items still make the total ({money(totals.total)}) and stay on the
+              invoice. Edit them under Generate PDF.
+            </p>
+          )}
+
           {docMode === "generate" && (
             <div className="mt-4 space-y-4">
               <FormField
@@ -620,7 +656,18 @@ export function InvoiceForm({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Currency</FormLabel>
-                      <Select value={field.value ?? "USD"} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value ?? "USD"}
+                        onValueChange={(next) => {
+                          // A dollar invoice's USD value is its own total, not
+                          // a value someone entered: it doesn't follow it into
+                          // another currency. A EUR to GBP fix keeps the typed one.
+                          if ((field.value ?? "USD") === "USD" && next !== "USD") {
+                            form.setValue("amountUsd", null);
+                          }
+                          field.onChange(next);
+                        }}
+                      >
                         <FormControl>
                           <SelectTrigger className="w-full">
                             <SelectValue />

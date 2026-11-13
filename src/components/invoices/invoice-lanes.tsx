@@ -92,7 +92,7 @@ function laneUsd(status: InvoiceStatus, rows: InvoiceListRow[]) {
  * Dragging a card is the same action as the status menu in the list. A drop
  * on Paid or Part paid with money owing opens the payment dialog (onPay), so
  * the board books the payment rather than just the label; Cancelled asks
- * first. One stray drop should not book revenue.
+ * first, and turns a draft away. One stray drop should not book revenue.
  */
 export function InvoiceLanes({
   invoices,
@@ -158,6 +158,13 @@ export function InvoiceLanes({
     if (!row || !to || row.status === to || !LANES.some((l) => l.status === to)) return;
     if ((to === "PAID" || to === "PARTIALLY_PAID") && rowBalance(row) > 0) {
       onPay(row, to === "PAID" ? "balance" : "none");
+      return;
+    }
+    if (to === "CANCELLED" && row.status === "DRAFT") {
+      // Cancelled invoices show in the client's portal; a draft never reached it.
+      toast.error(
+        `${row.invoiceNumber} is a draft the client can't see, so there's nothing to cancel. Delete it instead.`,
+      );
       return;
     }
     if (to === "CANCELLED") {
