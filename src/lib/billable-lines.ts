@@ -65,22 +65,39 @@ function round(value: number): number {
  * What a contract project has been invoiced so far, in USD: every invoice
  * that isn't cancelled (a draft is on its way to the client, so it counts),
  * less the credit notes issued against them. An invoice with no USD value
- * can't be counted, and is reported as missing.
+ * can't be counted, and is reported as missing. A credit note with none is
+ * worth its share of its invoice's, once that has one: a note issued before
+ * the invoice was valued keeps no value of its own. Until then it is the
+ * invoice that is missing, so the note never counts as missing itself.
  */
 export function contractInvoiced(
   invoices: {
+    id?: string;
+    /** In the invoice's own currency; needed to value a credit note pro rata. */
+    amount?: number;
     usd: number | null;
     creditNote: boolean;
+    creditNoteForId?: string | null;
     status: string;
   }[],
 ): { usd: number; missing: number } {
+  const byId = new Map(invoices.flatMap((i) => (i.id ? [[i.id, i] as const] : [])));
   let usd = 0;
   let missing = 0;
   for (const invoice of invoices) {
     if (invoice.status === "CANCELLED") continue;
-    if (invoice.usd == null) missing++;
-    else if (!invoice.creditNote) usd += invoice.usd;
-    else if (invoice.status !== "DRAFT") usd -= invoice.usd;
+    if (!invoice.creditNote) {
+      if (invoice.usd == null) missing++;
+      else usd += invoice.usd;
+      continue;
+    }
+    if (invoice.status === "DRAFT") continue;
+    let value = invoice.usd;
+    const parent = invoice.creditNoteForId ? byId.get(invoice.creditNoteForId) : undefined;
+    if (value == null && parent?.usd != null && parent.amount && invoice.amount != null) {
+      value = (parent.usd * invoice.amount) / parent.amount;
+    }
+    if (value != null) usd -= value;
   }
   return { usd: round(usd), missing };
 }

@@ -145,6 +145,15 @@ test("a contract counts drafts and issued invoices, less issued credit notes", (
   );
 });
 
+test("a credit note with no USD value takes its share of its invoice's, or waits on it", () => {
+  // £1,000 invoice credited £250 before anyone valued it; then valued at $1,300.
+  const invoice = { id: "inv", amount: 1000, creditNote: false, status: "SENT" };
+  const note = { id: "cn", amount: 250, usd: null, creditNote: true, creditNoteForId: "inv", status: "SENT" };
+  assert.deepEqual(contractInvoiced([{ ...invoice, usd: 1300 }, note]), { usd: 975, missing: 0 });
+  // Not valued yet: the invoice is what's missing, and only it is counted.
+  assert.deepEqual(contractInvoiced([{ ...invoice, usd: null }, note]), { usd: 0, missing: 1 });
+});
+
 test("only old invoices that link no work count as maybe billing it already", () => {
   const cutover = new Date("2026-11-02T08:00:00Z");
   const before = new Date("2026-09-10T00:00:00Z");

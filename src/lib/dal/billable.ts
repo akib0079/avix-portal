@@ -34,6 +34,7 @@ export type BillableWork = {
 
 /** A project invoice as contractInvoiced reads it. */
 export function toContractInvoice(invoice: {
+  id: string;
   amount: Prisma.Decimal;
   currency: string;
   amountUsd: Prisma.Decimal | null;
@@ -41,18 +42,22 @@ export function toContractInvoice(invoice: {
   status: string;
 }) {
   return {
+    id: invoice.id,
+    amount: Number(invoice.amount),
     usd: usdValue({
       amount: Number(invoice.amount),
       currency: invoice.currency,
       amountUsd: invoice.amountUsd == null ? null : Number(invoice.amountUsd),
     }),
     creditNote: !!invoice.creditNoteForId,
+    creditNoteForId: invoice.creditNoteForId,
     status: invoice.status,
   };
 }
 
 /** The columns toContractInvoice reads. */
 export const contractInvoiceSelect = {
+  id: true,
   amount: true,
   currency: true,
   amountUsd: true,
