@@ -15,12 +15,11 @@ import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
 import {
   MAX_RUNS_PER_PASS,
   addDays,
-  addMonths,
   advanceRun,
   dateToDay,
   dayIn,
-  dayToDate,
   daysBetweenWeeks,
+  legacyMonthWindow,
   legacyNextRunDay,
   longDay,
   monthsBetween,
@@ -274,8 +273,8 @@ async function createRunInvoice(
   const period = periodKey(day, plan.frequency);
   // The pre-v49 code billed a month without a retainerPeriod, which the
   // unique index can't see. It stamped lastGeneratedPeriod and created the
-  // invoice in that (UTC) month, so a month at or before the stamp with such
-  // an invoice is taken. Checked before a number is used up.
+  // invoice in that month, so a month at or before the stamp with such an
+  // invoice is taken. Checked before a number is used up.
   const stamp = ctx.state.lastGeneratedPeriod;
   if (plan.frequency === "MONTH" && stamp && /^\d{4}-\d{2}$/.test(stamp) && period <= stamp) {
     const legacy = await prisma.invoice.findFirst({
@@ -283,7 +282,7 @@ async function createRunInvoice(
         retainerId: plan.id,
         retainerPeriod: null,
         creditNoteForId: null,
-        createdAt: { gte: dayToDate(`${period}-01`), lt: dayToDate(addMonths(`${period}-01`, 1)) },
+        createdAt: legacyMonthWindow(period),
       },
       select: { id: true },
     });

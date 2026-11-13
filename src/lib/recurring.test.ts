@@ -11,6 +11,7 @@ import {
   defaultFirstRun,
   isDay,
   isoWeek,
+  legacyMonthWindow,
   legacyNextRunDay,
   monthlyFactor,
   monthlyUsd,
@@ -322,6 +323,12 @@ test("a weekly template's dates move by whole weeks", () => {
     type: "doc",
     content: [{ type: "text", text: "9 – 15 Nov 2026" }],
   });
+});
+
+test("the old code's month is the server's own month", () => {
+  const { gte, lt } = legacyMonthWindow("2026-12");
+  assert.deepEqual([gte.getFullYear(), gte.getMonth(), gte.getDate(), gte.getHours()], [2026, 11, 1, 0]);
+  assert.deepEqual([lt.getFullYear(), lt.getMonth(), lt.getDate(), lt.getHours()], [2027, 0, 1, 0]);
 });
 
 test("a plan named after an invoice drops the month", () => {

@@ -223,6 +223,18 @@ export function remainingRuns(start: Day | null, schedule: Schedule, end: PlanEn
 }
 
 /**
+ * When the pre-v49 code made the invoices it stamped `period` ("2026-11"): it
+ * took the month from the server's own clock (getMonth), not UTC, so its
+ * month runs from local midnight on the 1st. This build runs on the same
+ * server, so its local time is the old one's.
+ */
+export function legacyMonthWindow(period: string): { gte: Date; lt: Date } {
+  const y = Number(period.slice(0, 4));
+  const m = Number(period.slice(5, 7));
+  return { gte: new Date(y, m - 1, 1), lt: new Date(y, m, 1) };
+}
+
+/**
  * Where a plan made before schedules existed (no nextRunAt) picks up: its
  * bill day in the month after the last one it drafted, but never before the
  * current month. Months it missed while the old code was in charge stay
