@@ -145,7 +145,11 @@ export async function cancelMeeting(id: string): Promise<ActionResult> {
     },
   });
   if (!meeting) return { ok: false, error: "Meeting not found." };
-  if (meeting.status === "CANCELLED") return { ok: true };
+  if (meeting.status === "CANCELLED") {
+    // Cancelled elsewhere meanwhile: the calendar the button was on is stale.
+    revalidatePath("/admin/calendar");
+    return { ok: true };
+  }
 
   await prisma.meeting.update({ where: { id }, data: { status: "CANCELLED" } });
 
