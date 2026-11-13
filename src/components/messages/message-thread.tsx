@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { richTextToPlain } from "@/lib/rich-text";
 import { SwipeToReply } from "./message-actions";
 import { initials } from "@/lib/format";
+import { shouldMarkRead } from "@/lib/message-read";
 import {
   Loader2,
   ChevronUp,
@@ -69,7 +70,8 @@ export function MessageThread({
   initialHasMore = false,
   variant = "inline",
   canWriteInternal = false,
-  onActivity,
+  onRead,
+  onSent,
 }: {
   /** null = the client's general thread (no project) */
   projectId?: string | null;
@@ -88,12 +90,14 @@ export function MessageThread({
   /** Team viewers can write internal notes; clients never see the control. */
   canWriteInternal?: boolean;
   /**
-   * Called after a send or a read, for screens that list threads and need
-   * their previews and badges refreshed. The project dock passes nothing: the
-   * old router.refresh() here re-rendered the whole project page — board,
-   * milestones and all — every time a message was opened or sent.
+   * Called after a read that marked something, or after a send, for screens
+   * that list threads and need their previews and badges refreshed. The
+   * project dock passes neither: the old router.refresh() here re-rendered the
+   * whole project page — board, milestones and all — every time a message was
+   * opened or sent.
    */
-  onActivity?: () => void;
+  onRead?: () => void;
+  onSent?: () => void;
 }) {
   const router = useRouter();
   const { mutate: globalMutate } = useSWRConfig();
@@ -200,21 +204,26 @@ export function MessageThread({
     },
   );
 
-  // Held in a ref: callers pass an inline arrow, and a markRead that changed
+  // Held in refs: callers pass inline arrows, and a markRead that changed
   // identity on every render re-ran the mark-on-mount effect after each
   // refresh it triggered — mark, refresh, mark, refresh, forever.
-  const onActivityRef = useRef(onActivity);
+  const onReadRef = useRef(onRead);
+  const onSentRef = useRef(onSent);
   useEffect(() => {
-    onActivityRef.current = onActivity;
-  }, [onActivity]);
+    onReadRef.current = onRead;
+    onSentRef.current = onSent;
+  }, [onRead, onSent]);
 
   /** Reading a thread that's on screen clears its unread badge. */
   const markRead = useCallback(() => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-    void markThreadRead({ clientId, projectId }).then(() => {
+    void markThreadRead({ clientId, projectId }).then((res) => {
+      // Nothing was unread: no badge, preview or list changed, so opening an
+      // already-read thread costs no badge refetch and no page render.
+      if (!res.ok || !res.data?.marked) return;
       // The sidebar badge reads this key; refresh it, not the page.
       void globalMutate("/api/notifications");
-      onActivityRef.current?.();
+      onReadRef.current?.();
     });
   }, [clientId, projectId, globalMutate]);
 
@@ -222,15 +231,19 @@ export function MessageThread({
     markRead();
   }, [markRead]);
 
-  // Incoming messages while the tab is open are read as they land.
-  const confirmedCount = confirmed.length;
-  const lastMarked = useRef(confirmedCount);
+  // Incoming messages while the tab is open are read as they land. Only the
+  // other side's unread ones count: your own send, swapped in from the
+  // optimistic entry, has nothing to mark.
+  const knownIds = useRef<Set<string> | null>(null);
   useEffect(() => {
-    if (confirmedCount !== lastMarked.current) {
-      lastMarked.current = confirmedCount;
-      markRead();
-    }
-  }, [confirmedCount, markRead]);
+    const confirmedNow = messages.filter((m) => !m.id.startsWith(OPTIMISTIC_PREFIX));
+    const known = knownIds.current;
+    knownIds.current = new Set(confirmedNow.map((m) => m.id));
+    // The first pass is the mount, which the effect above already marks.
+    if (!known) return;
+    const fresh = confirmedNow.filter((m) => !known.has(m.id));
+    if (shouldMarkRead(fresh, viewerRole)) markRead();
+  }, [messages, viewerRole, markRead]);
 
   // Follow the conversation, but never yank someone out of the history they
   // scrolled up to read.
@@ -325,7 +338,7 @@ export function MessageThread({
         : current.filter((m) => m.id !== tempId),
     );
     void mutate();
-    onActivityRef.current?.();
+    onSentRef.current?.();
   }
 
   function startWith(text: string) {

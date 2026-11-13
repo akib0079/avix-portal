@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -64,7 +63,6 @@ export function PaymentAccountFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const isEdit = !!account;
 
   const form = useForm<PaymentAccountInput>({
@@ -103,7 +101,6 @@ export function PaymentAccountFormDialog({
     if (!result.ok) return void toast.error(result.error);
     toast.success(isEdit ? "Payment account updated." : "Payment account added.");
     onOpenChange(false);
-    router.refresh();
   }
 
   return (

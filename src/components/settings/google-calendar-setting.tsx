@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { disconnectGoogleCalendar, syncGoogleCalendar } from "@/lib/actions/google-calendar";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -14,7 +13,6 @@ export function GoogleCalendarSetting({
   connected: boolean;
   email: string | null;
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   function disconnect() {
@@ -22,7 +20,6 @@ export function GoogleCalendarSetting({
       const res = await disconnectGoogleCalendar();
       if (res.ok) {
         toast.success("Google Calendar disconnected.");
-        router.refresh();
       } else toast.error(res.error);
     });
   }
@@ -36,7 +33,6 @@ export function GoogleCalendarSetting({
             ? `Synced — ${res.data.cancelled} meeting(s) cancelled from Google.`
             : "Synced — everything is up to date.",
         );
-        router.refresh();
       } else toast.error(res.error);
     });
   }

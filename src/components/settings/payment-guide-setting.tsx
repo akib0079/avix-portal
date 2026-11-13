@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { updatePaymentGuideUrl } from "@/lib/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,6 @@ import { toast } from "sonner";
 import { Loader2, Save, ExternalLink } from "lucide-react";
 
 export function PaymentGuideSetting({ initialUrl }: { initialUrl: string | null }) {
-  const router = useRouter();
   const [url, setUrl] = useState(initialUrl ?? "");
   const [saving, setSaving] = useState(false);
 
@@ -19,7 +17,6 @@ export function PaymentGuideSetting({ initialUrl }: { initialUrl: string | null 
     setSaving(false);
     if (!result.ok) return void toast.error(result.error);
     toast.success(url.trim() ? "Payment guide link saved." : "Payment guide hidden.");
-    router.refresh();
   }
 
   return (

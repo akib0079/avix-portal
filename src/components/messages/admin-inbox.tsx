@@ -408,7 +408,10 @@ export function AdminInbox({
                   initialHasMore={page.hasMore}
                   variant="fill"
                   canWriteInternal
-                  onActivity={() => router.refresh()}
+                  // A read clears the unread count; a send moves the preview
+                  // and the order. Both show in the list.
+                  onRead={() => router.refresh()}
+                  onSent={() => router.refresh()}
                 />
               )}
             </div>

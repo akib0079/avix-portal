@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { updateInvoiceFooter } from "@/lib/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,7 +8,6 @@ import { toast } from "sonner";
 import { Loader2, Save, Receipt } from "lucide-react";
 
 export function InvoiceFooterSetting({ initial }: { initial: string }) {
-  const router = useRouter();
   const [text, setText] = useState(initial);
   const [saving, setSaving] = useState(false);
 
@@ -19,7 +17,6 @@ export function InvoiceFooterSetting({ initial }: { initial: string }) {
     setSaving(false);
     if (!res.ok) return void toast.error(res.error);
     toast.success("Invoice footer saved.");
-    router.refresh();
   }
 
   return (

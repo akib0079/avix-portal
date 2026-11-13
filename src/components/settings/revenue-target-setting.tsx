@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { updateRevenueTarget } from "@/lib/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,6 @@ import { toast } from "sonner";
 import { Loader2, Save, Target } from "lucide-react";
 
 export function RevenueTargetSetting({ initial }: { initial: number }) {
-  const router = useRouter();
   const [value, setValue] = useState(initial > 0 ? String(initial) : "");
   const [saving, setSaving] = useState(false);
 
@@ -19,7 +17,6 @@ export function RevenueTargetSetting({ initial }: { initial: number }) {
     setSaving(false);
     if (!res.ok) return void toast.error(res.error);
     toast.success("Monthly target saved.");
-    router.refresh();
   }
 
   return (

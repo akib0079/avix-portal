@@ -1,6 +1,14 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { appUrl } from "@/lib/app-url";
+import {
+  GCAL_EMAIL_KEY,
+  GCAL_ID_KEY,
+  GCAL_KEYS,
+  GCAL_REFRESH_KEY,
+  calendarStatusFrom,
+  type CalendarStatus,
+} from "@/lib/setting-rows";
 
 /**
  * Google Calendar sync (v20) — deliberately ISOLATED from better-auth's Google
@@ -10,9 +18,7 @@ import { appUrl } from "@/lib/app-url";
  * Uses the Calendar REST API over fetch — no heavy client library.
  */
 
-export const GCAL_REFRESH_KEY = "googleCalRefreshToken";
-export const GCAL_ID_KEY = "googleCalId";
-export const GCAL_EMAIL_KEY = "googleCalEmail";
+export { GCAL_REFRESH_KEY, GCAL_ID_KEY, GCAL_EMAIL_KEY, calendarStatusFrom } from "@/lib/setting-rows";
 const SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
 function creds() {
@@ -31,13 +37,10 @@ async function setting(key: string): Promise<string | null> {
   return row?.value || null;
 }
 
-export async function calendarStatus(): Promise<{ connected: boolean; email: string | null; calendarId: string }> {
-  const [refresh, email, cal] = await Promise.all([
-    setting(GCAL_REFRESH_KEY),
-    setting(GCAL_EMAIL_KEY),
-    setting(GCAL_ID_KEY),
-  ]);
-  return { connected: !!refresh, email, calendarId: cal || "primary" };
+/** One statement for the three keys; it used to be three in parallel. */
+export async function calendarStatus(): Promise<CalendarStatus> {
+  const rows = await prisma.appSetting.findMany({ where: { key: { in: [...GCAL_KEYS] } } });
+  return calendarStatusFrom(rows);
 }
 
 /** The consent URL to start connecting a calendar. `state` is a CSRF nonce. */

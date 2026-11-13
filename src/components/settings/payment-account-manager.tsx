@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import type { PaymentAccountView } from "@/lib/dal/settings";
 import { paymentRegionLabels } from "@/lib/validation/payment";
 import { deletePaymentAccount } from "@/lib/actions/settings";
@@ -23,7 +22,6 @@ export function PaymentAccountManager({
 }: {
   accounts: PaymentAccountView[];
 }) {
-  const router = useRouter();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PaymentAccountView | null>(null);
   const [deleting, setDeleting] = useState<PaymentAccountView | null>(null);
@@ -137,7 +135,6 @@ export function PaymentAccountManager({
                 if (!result.ok) return void toast.error(result.error);
                 toast.success("Payment account deleted.");
                 setDeleting(null);
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />}
