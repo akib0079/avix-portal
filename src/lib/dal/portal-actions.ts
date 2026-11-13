@@ -157,13 +157,13 @@ export async function getClientActionItems(clientId: string) {
       projectId: r.project.id,
       projectName: r.project.projectName,
     })),
-    /** Which groups have more rows than they show. Invoices go by the rows read. */
+    /** Which groups have more rows than they show. Invoices count only those still owed. */
     more: {
       reviews: rev.more,
       questions: ask.more,
       toRate: rate.more,
       deliverables: files.more,
-      invoices: invoices.length > GROUP_CAP,
+      invoices: toPay.length > GROUP_CAP,
     },
   };
 }
