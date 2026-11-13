@@ -2,6 +2,8 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireTeam } from "@/lib/dal/session";
 import { usdValue } from "@/lib/invoice-usd";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
+import { clientMoney } from "@/lib/client-money";
 import { OPEN_REQUEST } from "@/lib/work-scope";
 
 export type ClientHealth = "green" | "amber" | "red";
@@ -40,6 +42,7 @@ export async function listClients() {
         amountPaid: true,
         currency: true,
         amountUsd: true,
+        creditNotes: { select: { amount: true, status: true } },
       },
     }),
     prisma.project.findMany({
@@ -54,13 +57,16 @@ export async function listClients() {
   const anyOverdue = new Set<string>();
   const owed = new Map<string, { usd: number; missing: number }>();
   for (const inv of openInvoices) {
+    const amount = Number(inv.amount);
+    // Credit notes come off it, as on the invoice itself. Nothing left to pay
+    // is neither owed nor overdue: one credited in full before credits
+    // re-settled their invoice is still SENT.
+    const balance = balanceDue(amount, Number(inv.amountPaid), creditedTotal(inv.creditNotes));
+    if (balance <= 0) continue;
     if (inv.dueDate && inv.dueDate < now) {
       anyOverdue.add(inv.clientId);
       if (inv.dueDate < sevenDaysAgo) badlyOverdue.add(inv.clientId);
     }
-    const amount = Number(inv.amount);
-    const balance = Math.max(amount - Number(inv.amountPaid), 0);
-    if (balance <= 0) continue;
     const entry = owed.get(inv.clientId) ?? { usd: 0, missing: 0 };
     // In USD at the invoice's own recorded value — EUR 1,400 is not $1,400.
     const worth = usdValue({
@@ -193,7 +199,15 @@ export async function getClientSnapshot(clientId: string) {
     await Promise.all([
       prisma.invoice.findMany({
         where: { clientId, status: { notIn: ["CANCELLED", "DRAFT"] }, creditNoteForId: null },
-        select: { amount: true, amountPaid: true, dueDate: true, status: true },
+        select: {
+          amount: true,
+          amountPaid: true,
+          dueDate: true,
+          status: true,
+          currency: true,
+          amountUsd: true,
+          creditNotes: { select: { amount: true, status: true } },
+        },
       }),
       prisma.project.findMany({
         where: { clientId },
@@ -217,20 +231,24 @@ export async function getClientSnapshot(clientId: string) {
       }),
     ]);
 
-  const billed = invoices.reduce((sum, i) => sum + Number(i.amount), 0);
-  const collected = invoices.reduce((sum, i) => sum + Number(i.amountPaid), 0);
-  const outstanding = Math.max(billed - collected, 0);
-  const overdue = invoices
-    .filter((i) => i.dueDate && i.dueDate < now && Number(i.amountPaid) < Number(i.amount))
-    .reduce((sum, i) => sum + (Number(i.amount) - Number(i.amountPaid)), 0);
+  // In USD per invoice, net of credit notes (see client-money.ts).
+  const money = clientMoney(
+    invoices.map((i) => ({
+      amount: Number(i.amount),
+      amountPaid: Number(i.amountPaid),
+      currency: i.currency,
+      amountUsd: i.amountUsd == null ? null : Number(i.amountUsd),
+      status: i.status,
+      dueDate: i.dueDate,
+      credited: creditedTotal(i.creditNotes),
+    })),
+    now,
+  );
 
   const thumbsUp = ratings.filter((r) => r.clientRating === 1).length;
 
   return {
-    billed: Math.round(billed * 100) / 100,
-    collected: Math.round(collected * 100) / 100,
-    outstanding: Math.round(outstanding * 100) / 100,
-    overdue: Math.round(overdue * 100) / 100,
+    ...money,
     activeProjects: projects.filter((p) => p.status !== "COMPLETED").length,
     totalProjects: projects.length,
     /** Share of rated milestones that got a 👍, or null when nothing is rated. */

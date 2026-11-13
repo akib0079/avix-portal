@@ -77,6 +77,8 @@ export function ActionCenter({
   const toRate = live("rate", items.toRate);
   const deliverables = live("file", items.deliverables);
   const invoices = live("invoice", items.invoices);
+  // A capped group says so ("50+"), so the header never undercounts the badge.
+  const shown = (list: unknown[], more: boolean) => (more ? `${list.length}+` : list.length);
   const remaining = reviews.length + questions.length + toRate.length + deliverables.length + invoices.length;
 
   return (
@@ -95,7 +97,7 @@ export function ActionCenter({
       ) : (
         <>
           {questions.length > 0 && (
-            <Group icon={LifeBuoy} title="Questions from the team" count={questions.length} color={HUE.red}>
+            <Group icon={LifeBuoy} title="Questions from the team" count={shown(questions, items.more.questions)} color={HUE.red}>
               {questions.map((q) => (
                 <Row
                   key={q.id}
@@ -115,7 +117,7 @@ export function ActionCenter({
           )}
 
           {reviews.length > 0 && (
-            <Group icon={Eye} title="Ready for your review" count={reviews.length} color={COLUMN_BY_ID.REVIEW.color}>
+            <Group icon={Eye} title="Ready for your review" count={shown(reviews, items.more.reviews)} color={COLUMN_BY_ID.REVIEW.color}>
               {reviews.map((m) => {
                 const key = `review:${m.id}`;
                 return (
@@ -150,17 +152,17 @@ export function ActionCenter({
           )}
 
           {invoices.length > 0 && (
-            <Group icon={Receipt} title="Invoices to pay" count={invoices.length} color={HUE.blue}>
+            <Group icon={Receipt} title="Invoices to pay" count={shown(invoices, items.more.invoices)} color={HUE.blue}>
               {invoices.map((i) => {
                 const key = `invoice:${i.id}`;
                 return (
                   <Row
                     key={i.id}
-                    title={`${i.invoiceNumber} · ${formatCurrency(i.balance, i.currency)}${i.partlyPaid ? " left" : ""}`}
+                    title={`${i.invoiceNumber} · ${formatCurrency(i.balance, i.currency)}${i.balance < i.amount ? " left" : ""}`}
                     meta={
                       <>
                         {i.projectName ? `${i.projectName} · ` : ""}
-                        {i.partlyPaid ? `of ${formatCurrency(i.amount, i.currency)} · ` : ""}
+                        {i.balance < i.amount ? `of ${formatCurrency(i.amount, i.currency)} · ` : ""}
                         <span className={cn(i.overdue && "font-medium text-red-600 dark:text-red-400")}>
                           {i.dueDate ? `${i.overdue ? "was due" : "due"} ${formatDate(i.dueDate)}` : "no due date"}
                         </span>
@@ -192,7 +194,7 @@ export function ActionCenter({
           )}
 
           {deliverables.length > 0 && (
-            <Group icon={Package} title="Files to check" count={deliverables.length} color={HUE.violet}>
+            <Group icon={Package} title="Files to check" count={shown(deliverables, items.more.deliverables)} color={HUE.violet}>
               {deliverables.map((d) => {
                 const key = `file:${d.id}`;
                 return (
@@ -229,7 +231,7 @@ export function ActionCenter({
           )}
 
           {toRate.length > 0 && (
-            <Group icon={ThumbsUp} title="How did it go?" count={toRate.length} color={COLUMN_BY_ID.DONE.color}>
+            <Group icon={ThumbsUp} title="How did it go?" count={shown(toRate, items.more.toRate)} color={COLUMN_BY_ID.DONE.color}>
               {toRate.map((m) => (
                 <Row
                   key={m.id}
@@ -310,7 +312,7 @@ function Group({
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
-  count?: number;
+  count?: number | string;
   color: string;
   hint?: string;
   children: ReactNode;

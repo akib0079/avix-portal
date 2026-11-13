@@ -157,6 +157,21 @@ test("pending work reads the same rules", () => {
   });
 });
 
+test("the project page's invoices to pay match the Action Centre's", () => {
+  const pending = pendingWork({
+    milestones: [],
+    deliverables: [],
+    invoices: [
+      // Part-paid, then reported paid for the rest: it waits on us now.
+      { status: "PARTIALLY_PAID", amount: 1000, amountPaid: 400, paymentClaimedAt: "2026-11-01T00:00:00Z", credited: 0 },
+      // Credited in full but never re-settled: nothing to pay.
+      { status: "SENT", amount: 1000, amountPaid: 0, paymentClaimedAt: null, credited: 1000 },
+      { status: "SENT", amount: 1000, amountPaid: 0, paymentClaimedAt: null, credited: 300 },
+    ],
+  });
+  assert.equal(pending.invoicesToPay, 1);
+});
+
 test("an invoice is the client's to pay once it's sent and until they report paying it", () => {
   assert.deepEqual(INVOICE_TO_PAY, {
     status: { in: ["SENT", "PARTIALLY_PAID"] },
@@ -183,5 +198,20 @@ test("an invoice is the client's to pay once it's sent and until they report pay
     isInvoiceToPay({ status: "SENT", creditNoteForId: "inv_1" }),
     false,
     "a credit note is money back, not a bill",
+  );
+  assert.equal(
+    isInvoiceToPay({ status: "SENT", amount: 1000, amountPaid: 0, credited: 300 }),
+    true,
+    "a part credit leaves a balance",
+  );
+  assert.equal(
+    isInvoiceToPay({ status: "SENT", amount: 1000, amountPaid: 0, credited: 1000 }),
+    false,
+    "credited in full before re-settling existed: still SENT, but nothing to pay",
+  );
+  assert.equal(
+    isInvoiceToPay({ status: "PARTIALLY_PAID", amount: 1000, amountPaid: 700, credited: 300 }),
+    false,
+    "paid and credit together cover it",
   );
 });
