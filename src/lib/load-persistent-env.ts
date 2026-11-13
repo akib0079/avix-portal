@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import os from "os";
 import path from "path";
+import { isLocalHost } from "@/lib/app-url";
 
 /**
  * Reads a persistent secrets file and returns its KEY=value pairs.
@@ -55,13 +56,30 @@ function parseEnv(contents: string): Secrets {
   return out;
 }
 
+/**
+ * A local production run (next build && next start, or a script) whose own
+ * env says it is on a developer machine: its BETTER_AUTH_URL host is local.
+ * The file would otherwise swap in the production app URL, database and
+ * Resend key, and the run would mail real clients from a laptop. Host-only
+ * on purpose (not "plain http"): on the host a misread here would drop the
+ * very override the file exists for.
+ */
+function isLocalProcess(): boolean {
+  try {
+    const url = process.env.BETTER_AUTH_URL;
+    return !!url && isLocalHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** Parsed secrets (memoized). Empty object when no file is found. */
 export function getPersistentSecrets(): Secrets {
   if (cache) return cache;
   // The override exists purely for the production host. In local dev the
   // developer's ~/portal-secrets.env (kept for deploys) must NOT hijack
   // DATABASE_URL — that points dev at the production database.
-  if (process.env.NODE_ENV === "development") {
+  if (process.env.NODE_ENV === "development" || isLocalProcess()) {
     cache = {};
     return cache;
   }
