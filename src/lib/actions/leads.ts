@@ -123,7 +123,12 @@ export async function setLeadStage(
   const session = await requireAdmin();
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return { ok: false, error: "Lead not found." };
-  if (lead.stage === stage) return { ok: true };
+  if (lead.stage === stage) {
+    // Moved there elsewhere meanwhile: the page the picker was on is stale.
+    revalidatePath("/admin/leads");
+    revalidatePath(`/admin/leads/${id}`);
+    return { ok: true };
+  }
 
   // Losing a lead without saying why makes the pipeline unlearnable.
   const reason = lostReason?.trim().slice(0, 1000) || null;
