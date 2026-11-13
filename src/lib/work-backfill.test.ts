@@ -34,7 +34,7 @@ test("the steps that link old invoice lines to work stop at the first boot pass"
   assert.deepEqual(cut, [16, 17]);
 });
 
-function fakeDb(last: string | null) {
+function fakeDb(last: string | null, linked = false) {
   const calls = {
     executed: [] as { sql: string; values: unknown[] }[],
     created: [] as unknown[],
@@ -46,7 +46,10 @@ function fakeDb(last: string | null) {
       return 0;
     },
     appSetting: {
-      findUnique: async () => (last == null ? null : { value: last }),
+      findMany: async () => [
+        ...(last == null ? [] : [{ key: "workBackfill:v49", value: last }]),
+        ...(linked ? [{ key: "workBackfill:v49:linked", value: last ?? "" }] : []),
+      ],
       createMany: async (args: unknown) => void calls.created.push(args),
       upsert: async (args: unknown) => void calls.stored.push(args),
     },
@@ -56,13 +59,17 @@ function fakeDb(last: string | null) {
 
 test("the first boot pass copies everything and records when it started", async () => {
   const before = Date.now();
+  const bootedAt = new Date(before - 30_000);
   const { db, calls } = fakeDb(null);
-  await backfillWorkItemsOnBoot(db);
+  await backfillWorkItemsOnBoot(db, { bootedAt });
   const [stored] = calls.stored as { create: { key: string; value: string } }[];
   const started = stored.create.value;
   assert.ok(Date.parse(started) >= before && Date.parse(started) <= Date.now());
+  // The cutover is the boot, not the (delayed) pass: the new code wrote
+  // whatever came in between.
   assert.deepEqual(calls.created, [
-    { data: [{ key: FIRST_PASS_KEY, value: started }], skipDuplicates: true },
+    { data: [{ key: FIRST_PASS_KEY, value: bootedAt.toISOString() }], skipDuplicates: true },
+    { data: [{ key: "workBackfill:v49:linked", value: started }], skipDuplicates: true },
   ]);
   assert.equal(calls.executed.length, WORK_BACKFILL_SQL.length);
   for (const { sql, values } of calls.executed) {
@@ -80,9 +87,31 @@ test("a later pass picks up where the last one started", async () => {
     [[new Date(last)], [new Date(last)]],
   );
   // The first pass's time is only ever written once: this insert skips an existing row.
-  assert.deepEqual(calls.created, [
-    { data: [{ key: FIRST_PASS_KEY, value: last }], skipDuplicates: true },
-  ]);
+  assert.deepEqual(calls.created[0], {
+    data: [{ key: FIRST_PASS_KEY, value: last }],
+    skipDuplicates: true,
+  });
+});
+
+test("once a pass has linked old invoice lines, later passes leave the links alone", async () => {
+  const last = "2026-11-02T08:00:00.000Z";
+  const { db, calls } = fakeDb(last, true);
+  const counts = await backfillWorkItemsOnBoot(db);
+  assert.equal(counts.length, WORK_BACKFILL_SQL.length);
+  assert.equal(calls.executed.length, WORK_BACKFILL_SQL.length - 2);
+  assert.ok(calls.executed.every(({ sql }) => !sql.includes(`'${FIRST_PASS_KEY}'`)));
+  // Nothing more to mark.
+  assert.equal(calls.created.length, 1);
+});
+
+test("a pass that fails before the end links again next time", async () => {
+  const { db, calls } = fakeDb("2026-11-02T08:00:00.000Z");
+  db.$executeRawUnsafe = async () => {
+    throw new Error("connection lost");
+  };
+  await assert.rejects(backfillWorkItemsOnBoot(db));
+  assert.equal(calls.created.length, 1);
+  assert.equal(calls.stored.length, 0);
 });
 
 test("stage and status stay in step", () => {
