@@ -1,12 +1,34 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
+import { getCookieCache } from "better-auth/cookies";
+import { auth } from "@/lib/auth";
 import { getSession } from "@/lib/dal/session";
 import { getClientPoll, getNotificationsForUser } from "@/lib/dal/notifications";
 import { countPendingTaskRequests } from "@/lib/dal/task-requests";
 import { countWaiting } from "@/lib/work-scope";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
-  const session = await getSession();
+/**
+ * The session cookie cache lives 5 minutes. Past 4, the poll renews it from
+ * the database (one statement, here in the background), so a visible tab
+ * never lets it lapse and its next page load never pays the session lookup.
+ */
+const COOKIE_RENEW_AFTER_MS = 240_000;
+
+async function pollSession(request: Request) {
+  const baseUrl = process.env.BETTER_AUTH_URL;
+  const cached = await getCookieCache(request, {
+    // The same rule better-auth names its cookies by.
+    isSecure: baseUrl ? baseUrl.startsWith("https://") : undefined,
+    secret: process.env.BETTER_AUTH_SECRET,
+  }).catch(() => null);
+  if (cached && Date.now() - cached.updatedAt < COOKIE_RENEW_AFTER_MS) return getSession();
+  // nextCookies writes the fresh session_data cookie onto this response.
+  return auth.api.getSession({ headers: await headers(), query: { disableCookieCache: true } });
+}
+
+export async function GET(request: Request) {
+  const session = await pollSession(request);
   if (!session || session.user.status === "INACTIVE") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
