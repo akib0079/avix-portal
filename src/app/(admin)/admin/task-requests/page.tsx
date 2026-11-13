@@ -15,7 +15,7 @@ export const metadata = { title: "Requests" };
  * admin's (the accept action enforces it).
  */
 export default async function TaskRequestsPage() {
-  const [viewer, { waiting, decided }] = await Promise.all([requireTeam(), listTaskRequests()]);
+  const [viewer, { waiting, decided, waitingTotal }] = await Promise.all([requireTeam(), listTaskRequests()]);
   // Server-rendered timestamp: "waiting N days" must not drift per render.
   const renderedAt = serverNow();
 
@@ -55,7 +55,12 @@ export default async function TaskRequestsPage() {
         description="What clients have asked for, across every project — accept each into the plan or decline it with a note."
       />
 
-      <RequestBoard requests={requests} now={renderedAt} role={viewer.role === "ADMIN" ? "ADMIN" : "STAFF"} />
+      <RequestBoard
+        requests={requests}
+        waitingTotal={waitingTotal}
+        now={renderedAt}
+        role={viewer.role === "ADMIN" ? "ADMIN" : "STAFF"}
+      />
     </div>
   );
 }
