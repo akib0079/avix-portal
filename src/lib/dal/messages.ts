@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { JSONContent } from "@tiptap/react";
-import type { MessageSenderRole, MessageVisibility, Prisma, Role } from "@prisma/client";
+import type { MessageSenderRole, MessageVisibility, Role } from "@prisma/client";
 import { clipPreview, richTextPreview } from "@/lib/rich-text";
 
 export type MessageView = {
@@ -158,43 +158,47 @@ export type ConversationSummary = {
  * Admin inbox: one row per thread (client × project|general), newest first,
  * with a count of client messages the admin hasn't read yet.
  *
- * Three bounded queries rather than one unbounded scan: group to find the
- * latest activity per thread, fetch only those latest rows, then group the
- * unread counts. The old version pulled every message in the database and
- * folded it in JS.
+ * One wave: the latest message per thread (DISTINCT ON over the
+ * (clientId, projectId, createdAt) index, with the client and project names
+ * joined on) runs beside the unread counts. It used to be a groupBy for the
+ * latest timestamps, then the rows behind them: two round trips per load.
  */
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const groups = await prisma.message.groupBy({
-    by: ["clientId", "projectId"],
-    _max: { createdAt: true },
-    orderBy: { _max: { createdAt: "desc" } },
-    take: INBOX_PAGE_SIZE,
-  });
-  if (groups.length === 0) return [];
-
-  // One OR-clause per thread, each hitting (clientId, projectId, createdAt).
-  const latestFilters: Prisma.MessageWhereInput[] = groups.flatMap((g) =>
-    g._max.createdAt
-      ? [{ clientId: g.clientId, projectId: g.projectId, createdAt: g._max.createdAt }]
-      : [],
-  );
-
   const [latest, unreadGroups] = await Promise.all([
-    prisma.message.findMany({
-      where: { OR: latestFilters },
-      select: {
-        clientId: true,
-        projectId: true,
-        senderRole: true,
-        body: true,
-        bodyText: true,
-        createdAt: true,
-        client: {
-          select: { id: true, firstName: true, lastName: true, company: true, timezone: true },
-        },
-        project: { select: { id: true, projectName: true } },
-      },
-    }),
+    prisma.$queryRaw<
+      {
+        clientId: string;
+        projectId: string | null;
+        senderRole: MessageSenderRole;
+        body: unknown;
+        bodyText: string | null;
+        // A timestamp column, so a Date in UTC; never routed through json.
+        createdAt: Date;
+        firstName: string;
+        lastName: string;
+        company: string | null;
+        timezone: string | null;
+        projectName: string | null;
+      }[]
+    >`
+      SELECT m."clientId", m."projectId", m."senderRole"::text AS "senderRole",
+             m.body, m."bodyText", m."createdAt",
+             c."firstName", c."lastName", c.company, c.timezone,
+             p."projectName"
+      FROM (
+        SELECT id, "createdAt" FROM (
+          -- Two messages can share the exact latest timestamp; one wins.
+          SELECT DISTINCT ON ("clientId", "projectId") id, "createdAt"
+          FROM messages
+          ORDER BY "clientId", "projectId", "createdAt" DESC, id DESC
+        ) per_thread
+        ORDER BY "createdAt" DESC, id DESC
+        LIMIT ${INBOX_PAGE_SIZE}
+      ) latest
+      JOIN messages m ON m.id = latest.id
+      JOIN users c ON c.id = m."clientId"
+      LEFT JOIN projects p ON p.id = m."projectId"
+      ORDER BY latest."createdAt" DESC, latest.id DESC`,
     prisma.message.groupBy({
       by: ["clientId", "projectId"],
       where: { senderRole: "CLIENT", readByAdminAt: null },
@@ -209,30 +213,20 @@ export async function listConversations(): Promise<ConversationSummary[]> {
     unreadGroups.map((g) => [threadKey(g.clientId, g.projectId), g._count._all]),
   );
 
-  const summaries = new Map<string, ConversationSummary>();
-  for (const m of latest) {
-    const key = threadKey(m.clientId, m.projectId);
-    // Two messages can share the exact latest timestamp; first one wins.
-    if (summaries.has(key)) continue;
-    summaries.set(key, {
-      clientId: m.clientId,
-      clientName: `${m.client.firstName} ${m.client.lastName}`.trim() || "Client",
-      company: m.client.company,
-      timezone: m.client.timezone,
-      projectId: m.projectId,
-      projectName: m.project?.projectName ?? null,
-      lastMessageAt: m.createdAt.toISOString(),
-      preview: `${m.senderRole === "ADMIN" ? "You: " : ""}${
-        m.bodyText ? clipPreview(m.bodyText) : richTextPreview(m.body)
-      }`,
-      unread: unreadByThread.get(key) ?? 0,
-      lastFrom: m.senderRole,
-    });
-  }
-
-  return [...summaries.values()].sort(
-    (a, b) => Date.parse(b.lastMessageAt) - Date.parse(a.lastMessageAt),
-  );
+  return latest.map((m) => ({
+    clientId: m.clientId,
+    clientName: `${m.firstName} ${m.lastName}`.trim() || "Client",
+    company: m.company,
+    timezone: m.timezone,
+    projectId: m.projectId,
+    projectName: m.projectName,
+    lastMessageAt: m.createdAt.toISOString(),
+    preview: `${m.senderRole === "ADMIN" ? "You: " : ""}${
+      m.bodyText ? clipPreview(m.bodyText) : richTextPreview(m.body)
+    }`,
+    unread: unreadByThread.get(threadKey(m.clientId, m.projectId)) ?? 0,
+    lastFrom: m.senderRole,
+  }));
 }
 
 /** Client's thread list: General + one per project, each with unread counts. */
@@ -245,7 +239,9 @@ export async function listMyThreads(clientId: string) {
     }),
     prisma.message.groupBy({
       by: ["projectId"],
-      where: { clientId, senderRole: "ADMIN", readByClientAt: null },
+      // Internal notes are team-side and never shown here, so they never
+      // count as unread for the client.
+      where: { clientId, senderRole: "ADMIN", visibility: "PUBLIC", readByClientAt: null },
       _count: { _all: true },
     }),
   ]);
