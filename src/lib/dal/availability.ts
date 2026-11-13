@@ -1,31 +1,25 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { zonedWallTimeToUtc } from "@/lib/tz";
+import { BOOKING_KEYS, bookingConfigFrom, type BookingConfig } from "@/lib/setting-rows";
 
-export const AGENCY_TZ_KEY = "agencyTimezone";
-export const SLOT_MIN_KEY = "bookingSlotMinutes";
-export const BOOKING_URL_KEY = "bookingLocationUrl";
+export {
+  AGENCY_TZ_KEY,
+  SLOT_MIN_KEY,
+  BOOKING_URL_KEY,
+  bookingConfigFrom,
+  type BookingConfig,
+} from "@/lib/setting-rows";
 
-const DEFAULT_TZ = "America/New_York";
-const DEFAULT_SLOT = 30;
-
-export type BookingConfig = {
-  agencyTimezone: string;
-  slotMinutes: number;
-  bookingUrl: string | null;
-};
-
+/**
+ * Never cached: the agency zone feeds recurring-plan periods and invoice
+ * writes, and a stale zone could break the per-period dedupe.
+ */
 export async function getBookingConfig(): Promise<BookingConfig> {
   const rows = await prisma.appSetting.findMany({
-    where: { key: { in: [AGENCY_TZ_KEY, SLOT_MIN_KEY, BOOKING_URL_KEY] } },
+    where: { key: { in: [...BOOKING_KEYS] } },
   });
-  const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  const slot = Number(map[SLOT_MIN_KEY]);
-  return {
-    agencyTimezone: map[AGENCY_TZ_KEY] || DEFAULT_TZ,
-    slotMinutes: Number.isFinite(slot) && slot > 0 ? slot : DEFAULT_SLOT,
-    bookingUrl: map[BOOKING_URL_KEY] || null,
-  };
+  return bookingConfigFrom(rows);
 }
 
 export async function listAvailabilityWindows() {

@@ -18,8 +18,13 @@ import { GoogleCalendarSetting } from "@/components/settings/google-calendar-set
 import { ProposalTermsSetting } from "@/components/settings/proposal-terms-setting";
 import { DEFAULT_PROPOSAL_TERMS, getProposalDefaultTerms } from "@/lib/dal/settings";
 import { listStaff } from "@/lib/dal/users";
-import { listAvailabilityWindows, getBookingConfig } from "@/lib/dal/availability";
-import { calendarStatus } from "@/lib/google-calendar";
+import { listAvailabilityWindows } from "@/lib/dal/availability";
+import {
+  BOOKING_KEYS,
+  GCAL_KEYS,
+  bookingConfigFrom,
+  calendarStatusFrom,
+} from "@/lib/setting-rows";
 import { Card, CardContent } from "@/components/ui/card";
 import { requireAdmin } from "@/lib/dal/session";
 import { prisma } from "@/lib/prisma";
@@ -32,13 +37,13 @@ export default async function SettingsPage({
   searchParams: Promise<{ gcal?: string }>;
 }) {
   await requireAdmin();
-  // One wave: the calendar status and revenue target used to be awaited one
-  // after the other once everything else had arrived.
+  // One wave of four uncached statements. The booking config, calendar status
+  // and revenue target share one keys read: as five statements of their own
+  // they made eight against a pool of five, so the page took two waves.
   const [
     { gcal: gcalResult },
-    [accounts, whatsappUrl, branding, staff, availWindows, bookingConfig, invoiceFooter, paymentGuideUrl],
-    gcal,
-    targetRow,
+    [accounts, whatsappUrl, branding, staff, availWindows, invoiceFooter, paymentGuideUrl],
+    settingRows,
     proposalTerms,
   ] = await Promise.all([
     searchParams,
@@ -48,14 +53,17 @@ export default async function SettingsPage({
       getBranding(),
       listStaff(),
       listAvailabilityWindows(),
-      getBookingConfig(),
       getInvoiceFooter(),
       getPaymentGuideUrl(),
     ]),
-    calendarStatus(),
-    prisma.appSetting.findUnique({ where: { key: "monthlyRevenueTarget" } }),
+    prisma.appSetting.findMany({
+      where: { key: { in: [...BOOKING_KEYS, ...GCAL_KEYS, "monthlyRevenueTarget"] } },
+    }),
     getProposalDefaultTerms(),
   ]);
+  const bookingConfig = bookingConfigFrom(settingRows);
+  const gcal = calendarStatusFrom(settingRows);
+  const targetRow = settingRows.find((r) => r.key === "monthlyRevenueTarget");
   const revenueTarget = Number(targetRow?.value ?? 0) || 0;
 
   const gcalBanner =
