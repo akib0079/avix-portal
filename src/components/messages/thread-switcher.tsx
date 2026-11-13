@@ -191,7 +191,9 @@ export function ThreadSwitcher({
               initialMessages={page.messages}
               initialHasMore={page.hasMore}
               variant="fill"
-              onActivity={() => router.refresh()}
+              // Only a read changes the list (its unread badges). It shows no
+              // preview or order, so the client's own send refreshes nothing.
+              onRead={() => router.refresh()}
             />
           )}
         </div>

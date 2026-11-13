@@ -24,7 +24,7 @@ export type ActionResult<T = undefined> =
 export async function markThreadRead(input: {
   clientId?: string;
   projectId?: string | null;
-}): Promise<ActionResult> {
+}): Promise<ActionResult<{ marked: number }>> {
   const user = await requireUser();
   const isTeam = user.role === "ADMIN" || user.role === "STAFF";
   const clientId = isTeam ? input.clientId : user.id;
@@ -41,7 +41,7 @@ export async function markThreadRead(input: {
   }
 
   const field = isTeam ? "readByAdminAt" : "readByClientAt";
-  await prisma.message.updateMany({
+  const { count } = await prisma.message.updateMany({
     where: {
       clientId,
       projectId,
@@ -51,7 +51,9 @@ export async function markThreadRead(input: {
     },
     data: { [field]: new Date() },
   });
-  return { ok: true };
+  // The count tells the thread whether anything changed: 0 means no badge,
+  // preview or list moved, so it skips its refreshes.
+  return { ok: true, data: { marked: count } };
 }
 
 /** How long a thread stays "already notified" before we email again. */
@@ -289,7 +291,7 @@ export async function sendMessage(
   // page (board, milestones, everything) on every message sent from the dock.
   // Nothing needs it: the thread swaps its optimistic entry for the row
   // returned below, open threads poll, and the Messages pages refresh their
-  // own lists (MessageThread's onActivity).
+  // own lists (MessageThread's onSent).
   //
   // Handing the saved row back lets the composer swap its optimistic entry for
   // the real one, instead of waiting for the next poll.
