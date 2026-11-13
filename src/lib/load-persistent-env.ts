@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import os from "os";
 import path from "path";
-import { isLocalHost } from "@/lib/app-url";
+import { isDeveloperPlatform } from "@/lib/dev-machine";
 
 /**
  * Reads a persistent secrets file and returns its KEY=value pairs.
@@ -56,30 +56,27 @@ function parseEnv(contents: string): Secrets {
   return out;
 }
 
-/**
- * A local production run (next build && next start, or a script) whose own
- * env says it is on a developer machine: its BETTER_AUTH_URL host is local.
- * The file would otherwise swap in the production app URL, database and
- * Resend key, and the run would mail real clients from a laptop. Host-only
- * on purpose (not "plain http"): on the host a misread here would drop the
- * very override the file exists for.
- */
-function isLocalProcess(): boolean {
-  try {
-    const url = process.env.BETTER_AUTH_URL;
-    return !!url && isLocalHost(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-}
-
 /** Parsed secrets (memoized). Empty object when no file is found. */
 export function getPersistentSecrets(): Secrets {
   if (cache) return cache;
   // The override exists purely for the production host. In local dev the
   // developer's ~/portal-secrets.env (kept for deploys) must NOT hijack
   // DATABASE_URL — that points dev at the production database.
-  if (process.env.NODE_ENV === "development" || isLocalProcess()) {
+  if (process.env.NODE_ENV === "development") {
+    cache = {};
+    return cache;
+  }
+  // A local production run (next build && next start, or a script) on the
+  // developer's computer: the file would swap in the production database,
+  // app URL and Resend key, and the run would mail real clients from a
+  // laptop. Decided by the OS, never by the app URL: a local .env may have
+  // none or an https tunnel, and on the host a stale panel URL must not be
+  // able to switch the file off. Said out loud, once, so a skip is never a
+  // mystery.
+  if (isDeveloperPlatform()) {
+    console.warn(
+      "[env] developer machine: not loading the persistent secrets file; this run uses its own env.",
+    );
     cache = {};
     return cache;
   }
