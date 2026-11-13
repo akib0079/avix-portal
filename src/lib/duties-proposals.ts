@@ -78,6 +78,7 @@ async function sendProposalReminders(now: Date): Promise<void> {
       sentAt: true,
       lastReminderAt: true,
       linkVersion: true,
+      convertedClientId: true,
       recipientName: true,
       recipientEmail: true,
       recipientCompany: true,
@@ -86,39 +87,71 @@ async function sendProposalReminders(now: Date): Promise<void> {
     },
   });
 
-  let sent = 0;
-  for (const p of candidates) {
-    if (sent >= REMINDER_BATCH) break;
-    const due = dueProposalReminder(p, now);
+  const due = candidates.flatMap((p) => {
+    const reminder = dueProposalReminder(p, now);
     const contact = proposalContact(p);
-    if (!due || !contact.email || !p.expiresAt) continue;
+    return reminder && contact.email && p.expiresAt
+      ? [{ p, reminder, email: contact.email, name: contact.name, expiresAt: p.expiresAt }]
+      : [];
+  });
+  // The account a sent proposal was provisioned for. Mailing the lead's newer
+  // address would split the client in two, so shareProposal refuses it and
+  // so does this. One read, and only when it can matter.
+  const accountIds = [...new Set(due.flatMap(({ p }) => (p.convertedClientId ? [p.convertedClientId] : [])))];
+  const accounts = accountIds.length
+    ? new Map(
+        (
+          await prisma.user.findMany({
+            where: { id: { in: accountIds } },
+            select: { id: true, email: true },
+          })
+        ).map((u) => [u.id, u.email]),
+      )
+    : new Map<string, string>();
 
-    // Stamp first, and only if nobody else has since the read: a failed send
-    // must not retry every 15 minutes, and two runs must not both mail.
+  let sent = 0;
+  for (const { p, reminder, email, name, expiresAt } of due) {
+    if (sent >= REMINDER_BATCH) break;
+    const account = p.convertedClientId ? accounts.get(p.convertedClientId) : undefined;
+    if (account && account.toLowerCase() !== email.toLowerCase()) continue;
+
+    // Paced before the claim, so each row is claimed right before its email.
+    if (sent > 0) await sleep(SEND_GAP_MS);
+    // Stamp first, and only if the row is still as it was read: a failed send
+    // must not retry every 15 minutes, two runs must not both mail, and a
+    // resend, extend, archive or pause since (each moves linkVersion, or the
+    // fields here) must not get the old link mailed.
     const claimed = await prisma.proposal.updateMany({
-      where: { id: p.id, status: "SENT", lastReminderAt: p.lastReminderAt },
+      where: {
+        id: p.id,
+        status: "SENT",
+        archivedAt: null,
+        remindersEnabled: true,
+        linkVersion: p.linkVersion,
+        expiresAt,
+        lastReminderAt: p.lastReminderAt,
+      },
       data: { lastReminderAt: now },
     });
     if (claimed.count === 0) continue;
 
-    if (sent > 0) await sleep(SEND_GAP_MS);
     sent++;
     await emailProposalReminder({
-      to: contact.email,
-      recipientName: contact.name,
+      to: email,
+      recipientName: name,
       title: p.title,
       total: p.items.reduce((sum, i) => sum + Number(i.amount), 0),
       currency: p.currency,
-      timeLeftText: timeLeftText(p.expiresAt, now),
-      expiresAt: p.expiresAt,
-      url: proposalUrl({ id: p.id, expiresAt: p.expiresAt, linkVersion: p.linkVersion }),
+      timeLeftText: timeLeftText(expiresAt, now),
+      expiresAt,
+      url: proposalUrl({ id: p.id, expiresAt, linkVersion: p.linkVersion }),
     });
     await prisma.proposalEvent.create({
       data: {
         proposalId: p.id,
         type: "REMINDED",
         createdAt: now,
-        meta: { daysBefore: due.daysBefore },
+        meta: { daysBefore: reminder.daysBefore },
       },
     });
   }
