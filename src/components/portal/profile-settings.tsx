@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { updateMyProfile } from "@/lib/actions/profile";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -22,7 +21,6 @@ export type ClientProfile = {
 };
 
 export function ProfileSettings({ profile }: { profile: ClientProfile }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   const [firstName, setFirstName] = useState(profile.firstName);
@@ -48,8 +46,8 @@ export function ProfileSettings({ profile }: { profile: ClientProfile }) {
         marketingOptOut: optOut,
       });
       if (!res.ok) return void toast.error(res.error);
+      // updateMyProfile revalidates this page; its response carries the render.
       toast.success("Profile saved.");
-      router.refresh();
     });
   }
 

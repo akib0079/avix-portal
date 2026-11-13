@@ -120,8 +120,8 @@ export function SlotPicker({
       const res = await bookMeeting(selected, note);
       if (res.ok) {
         setDone(true);
+        // bookMeeting revalidates this page; its response carries the render.
         toast.success("Meeting booked — check your email for the details.");
-        router.refresh();
       } else {
         toast.error(res.error);
         setSelected(null);
