@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { updateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/dal/session";
 import {
@@ -10,6 +10,13 @@ import {
 import type { Prisma } from "@prisma/client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
+
+// Every save ends in updateTag(SETTINGS_CACHE_TAG). It expires the cached
+// settings at once rather than serving the old value while it refetches, so
+// the page this action re-renders, and the next reader, see the new value. It
+// also re-renders the current page in the action response and clears the
+// browser's router cache, which is what the revalidatePath calls were for, so
+// the settings forms don't router.refresh() after it.
 
 function normalize(input: PaymentAccountInput) {
   return {
@@ -36,8 +43,7 @@ export async function createPaymentAccount(
   await prisma.paymentAccount.create({
     data: { ...normalize(parsed.data), position: (last._max.position ?? -1) + 1 },
   });
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -56,8 +62,7 @@ export async function updatePaymentAccount(
     where: { id },
     data: normalize(parsed.data),
   });
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -66,8 +71,7 @@ export async function deletePaymentAccount(id: string): Promise<ActionResult> {
   const existing = await prisma.paymentAccount.findUnique({ where: { id } });
   if (!existing) return { ok: false, error: "Payment account not found." };
   await prisma.paymentAccount.delete({ where: { id } });
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -85,8 +89,7 @@ export async function reorderPaymentAccounts(
       prisma.paymentAccount.update({ where: { id }, data: { position: index } }),
     ),
   );
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -101,8 +104,7 @@ export async function updateWhatsappSupportUrl(url: string): Promise<ActionResul
     create: { key: "whatsappSupportUrl", value: trimmed },
     update: { value: trimmed },
   });
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -117,9 +119,7 @@ export async function updatePaymentGuideUrl(url: string): Promise<ActionResult> 
     create: { key: "paymentGuideUrl", value: trimmed },
     update: { value: trimmed },
   });
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
-  revalidatePath("/portal/payment");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -142,8 +142,7 @@ export async function updateBrandColor(color: string): Promise<ActionResult> {
     return { ok: false, error: "Enter a 6-digit hex color like #F65D0B (or empty to reset)." };
   }
   await setSetting(BRAND_KEYS.color, trimmed);
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/", "layout");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -151,8 +150,7 @@ export async function updateBrandColor(color: string): Promise<ActionResult> {
 export async function updateInvoiceFooter(text: string): Promise<ActionResult> {
   await requireAdmin();
   await setSetting(INVOICE_FOOTER_KEY, text.trim().slice(0, 300));
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -164,10 +162,7 @@ export async function updateRevenueTarget(value: string): Promise<ActionResult> 
     return { ok: false, error: "Enter a whole amount like 10000 (or empty to clear)." };
   }
   await setSetting("monthlyRevenueTarget", value.trim() === "" ? "" : String(n));
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin");
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -205,11 +200,7 @@ export async function uploadBrandingFile(
   await setSetting(key, saved.fileName);
   if (old) await deleteUpload("branding", old);
 
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-
-  revalidatePath("/", "layout");
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -236,10 +227,7 @@ export async function clearBrandingFile(
           : current.invoiceLogoFile;
   await setSetting(key, "");
   if (old) await deleteUpload("branding", old);
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/", "layout");
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }
 
@@ -254,7 +242,6 @@ export async function updateProposalDefaultTerms(text: string): Promise<ActionRe
     return { ok: false, error: "Keep the terms under 10,000 characters." };
   }
   await setSetting(PROPOSAL_TERMS_KEY, trimmed);
-  revalidateTag(SETTINGS_CACHE_TAG, "max");
-  revalidatePath("/admin/settings");
+  updateTag(SETTINGS_CACHE_TAG);
   return { ok: true };
 }

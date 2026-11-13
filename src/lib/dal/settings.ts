@@ -11,8 +11,8 @@ import type { PaymentAccount } from "@prisma/client";
  *
  * These are read on EVERY page render (branding sits in both layouts) and
  * change a few times a year, so they were costing one database round trip per
- * navigation for nothing. Cached across requests and busted explicitly by the
- * settings actions — see revalidateSettings().
+ * navigation for nothing. Cached across requests and expired explicitly by the
+ * settings actions with updateTag().
  */
 export const SETTINGS_CACHE_TAG = "app-settings";
 

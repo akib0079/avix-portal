@@ -20,5 +20,7 @@ export async function syncGoogleCalendar(): Promise<ActionResult<{ cancelled: nu
   const res = await reconcileFromGoogle();
   if (!res.ok) return { ok: false, error: res.error ?? "Sync failed." };
   revalidatePath("/admin/calendar");
+  // The button sits on the settings page, which is the page re-rendered here.
+  revalidatePath("/admin/settings");
   return { ok: true, data: { cancelled: res.cancelled } };
 }
