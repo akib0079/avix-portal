@@ -34,7 +34,16 @@ import { runProposalDuties } from "@/lib/duties-proposals";
  * plan's nextRunAt claimed by compare-and-set, make re-runs no-ops).
  */
 
-const THROTTLE_KEY = "dutiesLastRunAt";
+const THROTTLE_KEY = "dutiesLastRunAt:v49";
+/**
+ * The stamp builds before v49 throttle on. v49 parks it in the far future,
+ * so an old build serving again (a rollback, or an old worker after the
+ * restart) always finds "ran just now" and runs no duties: its retainer duty
+ * would bill plans v49 scheduled by rules it doesn't know. To let an old
+ * build run its duties again, delete this setting.
+ */
+const LEGACY_THROTTLE_KEY = "dutiesLastRunAt";
+const LEGACY_PARKED = "9999-12-31T00:00:00.000Z";
 const THROTTLE_MS = 15 * 60 * 1000;
 
 function sleep(ms: number) {
@@ -693,14 +702,30 @@ export async function runDueDuties(): Promise<void> {
   nextCheckAt = nowMs + 60_000;
   try {
     const now = new Date();
-    const stamp = await prisma.appSetting.findUnique({ where: { key: THROTTLE_KEY } });
-    if (stamp && now.getTime() - Date.parse(stamp.value) < THROTTLE_MS) return;
-
-    await prisma.appSetting.upsert({
-      where: { key: THROTTLE_KEY },
-      create: { key: THROTTLE_KEY, value: now.toISOString() },
-      update: { value: now.toISOString() },
+    const stamps = await prisma.appSetting.findMany({
+      where: { key: { in: [THROTTLE_KEY, LEGACY_THROTTLE_KEY] } },
     });
+    // The old build's stamp still counts while it is a real time (during the
+    // switch-over), so the two builds never run duties at once; parked, it is
+    // ignored.
+    const recent = stamps.some((stamp) => {
+      const age = now.getTime() - Date.parse(stamp.value);
+      return age >= 0 && age < THROTTLE_MS;
+    });
+    if (recent) return;
+
+    await Promise.all([
+      prisma.appSetting.upsert({
+        where: { key: THROTTLE_KEY },
+        create: { key: THROTTLE_KEY, value: now.toISOString() },
+        update: { value: now.toISOString() },
+      }),
+      prisma.appSetting.upsert({
+        where: { key: LEGACY_THROTTLE_KEY },
+        create: { key: LEGACY_THROTTLE_KEY, value: LEGACY_PARKED },
+        update: { value: LEGACY_PARKED },
+      }),
+    ]);
 
     // Each on its own, so one failing duty can't skip the rest for the
     // 15 minutes the stamp already holds them off.
