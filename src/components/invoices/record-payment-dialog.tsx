@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { localDay } from "@/lib/calendar-days";
 
 /** The invoice a payment is being recorded against. */
 export type PaymentTarget = {
@@ -30,8 +31,9 @@ export type PaymentTarget = {
   balance: number;
 };
 
+/** The viewer's today, not the UTC day (a day off near midnight far from UTC). */
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return localDay();
 }
 
 /**

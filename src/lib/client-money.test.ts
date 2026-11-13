@@ -52,3 +52,8 @@ test("an overpayment on one invoice doesn't pay another", () => {
   assert.equal(money.outstanding, 1000);
   assert.equal(money.overdue, 1000);
 });
+
+test("an invoice for nothing is $0, not unconverted", () => {
+  const money = clientMoney([inv(), inv({ amount: 0 }), inv({ amount: 0, currency: "EUR" })], now);
+  assert.deepEqual(money, { billed: 1000, collected: 0, outstanding: 1000, overdue: 0, unconverted: 0 });
+});

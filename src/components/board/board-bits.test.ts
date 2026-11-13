@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
-import { useToday } from "./board-bits";
+import { useDayOf, useToday } from "./board-bits";
 
 function Today({ renderedAt }: { renderedAt: number }) {
   return createElement("span", null, useToday(renderedAt));
@@ -16,6 +16,27 @@ test("the server renders today as the UTC day of renderedAt, the same day hydrat
     for (const zone of ["America/New_York", "Asia/Dhaka", "UTC"]) {
       process.env.TZ = zone;
       assert.equal(renderToString(createElement(Today, { renderedAt })), "<span>2026-11-03</span>", zone);
+    }
+  } finally {
+    if (was === undefined) delete process.env.TZ;
+    else process.env.TZ = was;
+  }
+});
+
+function Asked({ iso }: { iso: string }) {
+  return createElement("span", null, useDayOf()(iso));
+}
+
+test("the server and hydration show an instant's UTC day, so both renders agree", () => {
+  const was = process.env.TZ;
+  try {
+    for (const zone of ["America/New_York", "Asia/Dhaka"]) {
+      process.env.TZ = zone;
+      assert.equal(
+        renderToString(createElement(Asked, { iso: "2026-11-03T02:00:00.000Z" })),
+        "<span>2026-11-03</span>",
+        zone,
+      );
     }
   } finally {
     if (was === undefined) delete process.env.TZ;

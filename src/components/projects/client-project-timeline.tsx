@@ -6,7 +6,7 @@ import { formatPricing } from "@/lib/format";
 import { formatHours, phaseProgress, planTree } from "@/lib/work-list";
 import { projectHealth } from "@/lib/project-health";
 import { useWork } from "@/components/board/work-store";
-import { formatDay } from "@/components/board/board-bits";
+import { formatDay, useDayOf } from "@/components/board/board-bits";
 import { RateMilestone } from "@/components/portal/rate-milestone";
 import { ItemDetails } from "@/components/milestones/item-details";
 import { SoftPill } from "@/components/ui/status-pill";
@@ -75,6 +75,7 @@ export function ClientWorkList({ switcher }: { switcher?: ReactNode }) {
 /** Their asks the team hasn't decided yet. Their own ones they can still change or withdraw. */
 function Waiting({ items }: { items: WorkItem[] }) {
   const work = useWork();
+  const dayOf = useDayOf();
   const color = COLUMN_BY_ID.REQUESTED.color;
   return (
     <section
@@ -94,7 +95,7 @@ function Waiting({ items }: { items: WorkItem[] }) {
               <button type="button" onClick={() => work.open(item.id)} className="min-w-0 flex-1 text-left">
                 <span className="block text-sm font-medium [overflow-wrap:anywhere] hover:text-primary">{item.title}</span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Asked {formatDay(item.createdAt.slice(0, 10), work.today)} — the team will accept it into
+                  Asked {formatDay(dayOf(item.createdAt), work.today)} — the team will accept it into
                   the plan or get back to you.
                 </span>
               </button>

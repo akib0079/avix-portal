@@ -44,7 +44,7 @@ import {
 } from "@/lib/work-list";
 import { useLocalChoice, useLocalSet } from "@/lib/use-local-pref";
 import { useWork, type WorkStore } from "@/components/board/work-store";
-import { DueChip, HoursBar, PersonAvatar, PriorityFlag, formatDay } from "@/components/board/board-bits";
+import { DueChip, HoursBar, PersonAvatar, PriorityFlag, formatDay, useDayOf } from "@/components/board/board-bits";
 import { LanePill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import {
@@ -224,6 +224,7 @@ export function MilestoneList({ switcher }: { switcher?: ReactNode }) {
 function RequestedSection({ items, work }: { items: WorkItem[]; work: WorkStore }) {
   const color = COLUMN_BY_ID.REQUESTED.color;
   const clientName = work.people.find((p) => p.role === "CLIENT")?.name ?? "The client";
+  const dayOf = useDayOf();
   return (
     <section
       aria-label="Requested"
@@ -250,7 +251,7 @@ function RequestedSection({ items, work }: { items: WorkItem[]; work: WorkStore 
             >
               <span className="block text-sm font-medium [overflow-wrap:anywhere] hover:text-primary">{item.title}</span>
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                {item.creatorName ?? clientName} · asked {formatDay(item.createdAt.slice(0, 10), work.today)}
+                {item.creatorName ?? clientName} · asked {formatDay(dayOf(item.createdAt), work.today)}
                 {item.commentCount > 0 ? ` · ${item.commentCount} comment${item.commentCount === 1 ? "" : "s"}` : ""}
               </span>
             </button>

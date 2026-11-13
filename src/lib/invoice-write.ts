@@ -358,8 +358,8 @@ class Rebilled extends Error {
  * another live invoice now bills one of those lines' work (a fixed line's),
  * or if one of its hourly lines has lost its hours. Hours that moved stay
  * moved, whatever happened to the invoice that took them: if it was cancelled
- * too, they count as unbilled again, so a restored line with nothing behind
- * it would charge them a second time. An hourly line that still has its hours is
+ * or deleted, or its line removed, they count as unbilled again, so a restored
+ * line with nothing behind it would charge them a second time. An hourly line that still has its hours is
  * left alone, since later hours of the same work are rightly on other
  * invoices. Returns why it was refused, or null when it was restored.
  */
@@ -381,32 +381,39 @@ export async function restoreCancelled(
         await write(tx);
         // Read after the write, so lines the same edit removed don't count.
         // One statement: the other live invoices billing this one's work, and
-        // this invoice itself when an hourly line of it has lost its hours.
-        const found = await tx.invoice.findMany({
-          where: {
-            OR: [
-              {
-                id: { not: invoiceId },
-                status: { not: "CANCELLED" },
-                items: {
-                  some: {
-                    milestone: {
-                      invoiceItems: { some: { invoiceId, timeEntries: { none: {} } } },
-                    },
-                  },
-                },
-              },
-              {
-                id: invoiceId,
-                items: {
-                  some: { milestone: { pricingType: "HOURLY" }, timeEntries: { none: {} } },
-                },
-              },
-            ],
-          },
-          orderBy: { invoiceNumber: "asc" },
-          select: { id: true, invoiceNumber: true },
-        });
+        // this invoice itself when a line of it has lost its hours: a line
+        // with no hours, while hours of its work logged before this invoice
+        // was made sit on a later invoice, or (hourly work only, as only that
+        // bills hours) sit on none, freed when the draft that took them was
+        // deleted or its line removed. Bill work rolls in every unbilled hour,
+        // so those were this line's. The later invoice is matched whatever
+        // its work's pricing is now, which can change after billing.
+        const found = await tx.$queryRaw<{ id: string; invoiceNumber: string }[]>`
+          SELECT i."id", i."invoiceNumber" FROM "invoices" AS i
+          WHERE (
+            i."id" <> ${invoiceId} AND i."status" <> 'CANCELLED' AND EXISTS (
+              SELECT 1 FROM "invoice_items" AS o
+              JOIN "invoice_items" AS mine ON mine."milestoneId" = o."milestoneId"
+              WHERE o."invoiceId" = i."id" AND mine."invoiceId" = ${invoiceId}
+                AND NOT EXISTS (SELECT 1 FROM "time_entries" AS own WHERE own."invoiceItemId" = mine."id")
+            )
+          ) OR (
+            i."id" = ${invoiceId} AND EXISTS (
+              SELECT 1 FROM "invoice_items" AS mine
+              JOIN "milestones" AS m ON m."id" = mine."milestoneId"
+              JOIN "time_entries" AS t ON t."milestoneId" = mine."milestoneId"
+              LEFT JOIN "invoice_items" AS took ON took."id" = t."invoiceItemId"
+              LEFT JOIN "invoices" AS later ON later."id" = took."invoiceId"
+              WHERE mine."invoiceId" = i."id"
+                AND NOT EXISTS (SELECT 1 FROM "time_entries" AS own WHERE own."invoiceItemId" = mine."id")
+                AND t."createdAt" < i."createdAt"
+                AND (
+                  (t."invoiceItemId" IS NULL AND m."pricingType" = 'HOURLY')
+                  OR (later."id" <> i."id" AND later."createdAt" > i."createdAt")
+                )
+            )
+          )
+          ORDER BY i."invoiceNumber" ASC`;
         const block = restoreBlock(invoiceId, found);
         if (block) throw new Rebilled(block);
       },

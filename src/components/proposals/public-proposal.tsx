@@ -187,7 +187,7 @@ export function ProposalSignPanel({
 
   const errorLine = error && (
     <div role="alert" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-red-600 dark:text-red-300">
-      <span>{error.message}</span>
+      <span id="sign-error">{error.message}</span>
       {error.reload && (
         <button
           type="button"
@@ -280,6 +280,7 @@ export function ProposalSignPanel({
             data-lpignore="true"
             required
             aria-invalid={error?.field === "name" || undefined}
+            aria-describedby={error?.field === "name" ? "sign-error" : undefined}
             disabled={preview}
             className={inputClass}
           />
@@ -299,7 +300,7 @@ export function ProposalSignPanel({
             autoComplete="email"
             required
             aria-invalid={error?.field === "email" || undefined}
-            aria-describedby="signer-email-hint"
+            aria-describedby={error?.field === "email" ? "signer-email-hint sign-error" : "signer-email-hint"}
             disabled={preview}
             className={inputClass}
           />
@@ -390,8 +391,12 @@ export function ProposalSignPanel({
         </Tabs>
       </div>
 
-      <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm has-[:disabled]:cursor-not-allowed">
+      <label
+        htmlFor="signer-consent"
+        className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm has-[:disabled]:cursor-not-allowed"
+      >
         <input
+          id="signer-consent"
           ref={consentRef}
           type="checkbox"
           checked={consent}
@@ -400,6 +405,7 @@ export function ProposalSignPanel({
             if (e.target.checked && error?.field === "consent") setError(null);
           }}
           aria-invalid={error?.field === "consent" || undefined}
+          aria-describedby={error?.field === "consent" ? "sign-error" : undefined}
           disabled={preview}
           className="mt-1 size-4 shrink-0 accent-[#F65D0B]"
         />

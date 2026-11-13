@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { FIRST_PASS_KEY, WORK_BACKFILL_SQL, backfillWorkItemsOnBoot } from "./work-backfill";
+import { FIRST_PASS_KEY, WORK_BACKFILL_SQL, backfillWorkItemsOnBoot, markFirstBoot } from "./work-backfill";
 import { stageToStatus, stageWrite, statusToStage } from "./work-stage";
 
 const MIGRATIONS = [
@@ -130,4 +130,15 @@ test("completedAt is stamped on finishing, kept between review and done, cleared
   assert.deepEqual(review, { stage: "REVIEW", status: "COMPLETED", completedAt: t0 });
   assert.equal(stageWrite("DONE", review, t1).completedAt, t0);
   assert.equal(stageWrite("TODO", review, t1).completedAt, null);
+});
+
+test("the first boot is recorded at once, keeping an earlier pass's time", async () => {
+  const { db, calls } = fakeDb(null);
+  const bootedAt = new Date("2026-11-03T10:00:00.000Z");
+  await markFirstBoot(db, bootedAt);
+  assert.equal(calls.executed.length, 1);
+  const [{ sql, values }] = calls.executed;
+  assert.match(sql, /ON CONFLICT \("key"\) DO NOTHING/);
+  assert.ok(sql.includes(`'${FIRST_PASS_KEY}'`) && sql.includes(`"key" = 'workBackfill:v49'`));
+  assert.deepEqual(values, [bootedAt.toISOString()]);
 });
