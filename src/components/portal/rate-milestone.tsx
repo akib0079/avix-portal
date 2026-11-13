@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSWRConfig } from "swr";
 import { rateMilestone } from "@/lib/actions/portal";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +22,7 @@ export function RateMilestone({
   const [pendingChoice, setPendingChoice] = useState<1 | -1 | null>(null);
   const [noteText, setNoteText] = useState("");
   const [busy, setBusy] = useState(false);
+  const { mutate } = useSWRConfig();
 
   // Already rated → compact confirmation (with the note, if any).
   if (current !== null && pendingChoice === null) {
@@ -46,7 +48,9 @@ export function RateMilestone({
     }
     setCurrent(choice);
     setPendingChoice(null);
-    // rateMilestone revalidates this page; no router.refresh() needed.
+    // rateMilestone revalidates this page; no router.refresh() needed. The
+    // nav and bell badges count unrated items, so they re-read at once.
+    void mutate("/api/notifications");
     toast.success("Thanks for your feedback!");
   }
 
