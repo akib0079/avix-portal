@@ -14,9 +14,11 @@ import { richTextToLines } from "@/lib/rich-text";
 import { invoiceSchema, type InvoiceInput } from "@/lib/validation/invoice";
 import {
   MAX_RUNS_PER_PASS,
+  addMonths,
   advanceRun,
   dateToDay,
   dayIn,
+  dayToDate,
   legacyNextRunDay,
   longDay,
   monthsBetween,
@@ -260,10 +262,27 @@ async function createRunInvoice(
   claim: Claim,
   ctx: { timeZone: string; now: Date; issueDay: Day; state: RunState },
 ): Promise<RunOutcome> {
+  const period = periodKey(day, plan.frequency);
+  // The pre-v49 code billed a month without a retainerPeriod, which the
+  // unique index can't see. It stamped lastGeneratedPeriod and created the
+  // invoice in that (UTC) month, so a month at or before the stamp with such
+  // an invoice is taken. Checked before a number is used up.
+  const stamp = ctx.state.lastGeneratedPeriod;
+  if (plan.frequency === "MONTH" && stamp && /^\d{4}-\d{2}$/.test(stamp) && period <= stamp) {
+    const legacy = await prisma.invoice.findFirst({
+      where: {
+        retainerId: plan.id,
+        retainerPeriod: null,
+        creditNoteForId: null,
+        createdAt: { gte: dayToDate(`${period}-01`), lt: dayToDate(addMonths(`${period}-01`, 1)) },
+      },
+      select: { id: true },
+    });
+    if (legacy) return { kind: "exists" };
+  }
   const built = buildRunInput(plan, day, ctx.issueDay);
   if ("error" in built) return { kind: "invalid", error: built.error };
   const columns = formColumns(built.input, built.refs);
-  const period = periodKey(day, plan.frequency);
   const nextDay = nextRunDay(day, scheduleOf(plan));
   const after = { ...planEnd(plan), runCount: ctx.state.runCount + 1 };
   // A scheduled run ends the plan when the run after it is not allowed; a
