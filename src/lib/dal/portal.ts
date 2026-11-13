@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { getBookingConfig } from "@/lib/dal/availability";
 import { PLAN_ITEM } from "@/lib/work-scope";
+import { creditedTotal } from "@/lib/invoice-totals";
 
 /**
  * Every query here is scoped to the signed-in client's own id, taken from the
@@ -18,8 +19,11 @@ import { PLAN_ITEM } from "@/lib/work-scope";
  */
 const shownToClient = { not: "DRAFT" } as const;
 
-/** What a credit note takes off its invoice, for the balance the client sees. */
-const creditNotesShown = {
+/**
+ * What a credit note takes off its invoice, for the balance the client sees.
+ * The Action Centre (portal-actions.ts) uses it too, so the two agree.
+ */
+export const creditNotesShown = {
   where: { status: { notIn: ["DRAFT", "CANCELLED"] } },
   select: { amount: true, status: true },
 } satisfies Prisma.Invoice$creditNotesArgs;
@@ -139,6 +143,11 @@ export async function getMyProjectExtras(projectId: string) {
         currency: true,
         status: true,
         creditNoteForId: true,
+        // The Action Centre's balance rules, so "Pay 1 invoice" here agrees
+        // with it: not once reported paid, and not once paid or credited off.
+        amountPaid: true,
+        paymentClaimedAt: true,
+        creditNotes: creditNotesShown,
       },
     }),
     prisma.meeting.findMany({
@@ -163,6 +172,9 @@ export async function getMyProjectExtras(projectId: string) {
       currency: i.currency,
       status: i.status,
       creditNoteForId: i.creditNoteForId,
+      amountPaid: Number(i.amountPaid),
+      paymentClaimedAt: i.paymentClaimedAt?.toISOString() ?? null,
+      credited: creditedTotal(i.creditNotes),
     })),
     meetings: meetings.map((m) => ({
       id: m.id,
