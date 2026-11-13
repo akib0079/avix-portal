@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   updateBrandColor,
   uploadBrandingFile,
@@ -28,7 +27,6 @@ function ImageUploader({
   /** Preview on a white chip (for dark invoice logos) instead of the dark sidebar chip. */
   lightPreview?: boolean;
 }) {
-  const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,7 +38,6 @@ function ImageUploader({
     setBusy(false);
     if (!result.ok) return void toast.error(result.error);
     toast.success(`${label} updated.`);
-    router.refresh();
   }
 
   async function onClear() {
@@ -49,7 +46,6 @@ function ImageUploader({
     setBusy(false);
     if (!result.ok) return void toast.error(result.error);
     toast.success(`${label} reset to default.`);
-    router.refresh();
   }
 
   return (
@@ -109,7 +105,6 @@ export function BrandingSetting({
   faviconUrl: string | null;
   invoiceLogoUrl: string | null;
 }) {
-  const router = useRouter();
   const [value, setValue] = useState(color ?? DEFAULT_COLOR);
   const [saving, setSaving] = useState(false);
 
@@ -119,7 +114,6 @@ export function BrandingSetting({
     setSaving(false);
     if (!result.ok) return void toast.error(result.error);
     toast.success("Brand color saved.");
-    router.refresh();
   }
 
   return (

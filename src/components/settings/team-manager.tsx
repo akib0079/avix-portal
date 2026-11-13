@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { staffSchema, type StaffInput } from "@/lib/validation/staff";
@@ -44,7 +43,6 @@ export type StaffMember = {
 };
 
 export function TeamManager({ staff }: { staff: StaffMember[] }) {
-  const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
   const [deleting, setDeleting] = useState<StaffMember | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -61,7 +59,6 @@ export function TeamManager({ staff }: { staff: StaffMember[] }) {
     toast.success("Invite sent — they set their own password.");
     form.reset({ firstName: "", lastName: "", email: "" });
     setAddOpen(false);
-    router.refresh();
   }
 
   async function onToggle(member: StaffMember) {
@@ -75,7 +72,6 @@ export function TeamManager({ staff }: { staff: StaffMember[] }) {
         ? "Access revoked — they've been signed out."
         : "Access restored.",
     );
-    router.refresh();
   }
 
   async function onResend(member: StaffMember) {
@@ -275,7 +271,6 @@ export function TeamManager({ staff }: { staff: StaffMember[] }) {
                 if (!result.ok) return void toast.error(result.error);
                 toast.success("Staff member removed.");
                 setDeleting(null);
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />}

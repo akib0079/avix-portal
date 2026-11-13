@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { saveAvailability } from "@/lib/actions/availability";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +40,6 @@ export function AvailabilityManager({
   bookingUrl: string | null;
   windows: { weekday: number; startMin: number; endMin: number }[];
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [tz, setTz] = useState(timezone);
   const [slot, setSlot] = useState(String(slotMinutes));
@@ -82,7 +80,6 @@ export function AvailabilityManager({
       });
       if (res.ok) {
         toast.success("Availability saved.");
-        router.refresh();
       } else {
         toast.error(res.error);
       }
