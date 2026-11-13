@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import type { JSONContent } from "@tiptap/react";
@@ -17,6 +17,7 @@ import {
   type BoardPerson,
   type BoardPhase,
   type WorkItem,
+  type WorkItemDetail,
   type WorkRole,
 } from "@/lib/board";
 import {
@@ -54,6 +55,7 @@ import { CommentComposer, type CommentDraft } from "./comment-composer";
 import { CommentText, HoursBar, PersonAvatar, PriorityFlag, dueState, formatDay } from "./board-bits";
 import { useWork, type BoardViewer } from "./work-store";
 import { useWorkItemDetail } from "./use-work-item-detail";
+import { useDetailSeed } from "./detail-seed";
 import {
   X,
   ChevronDown,
@@ -98,6 +100,30 @@ const TEMP = "temp-comment-";
  * it waits.
  */
 export function TaskDrawer({ itemId, onClose }: { itemId: string; onClose: () => void }) {
+  // A deep link's detail streams in with the page (detail-seed.tsx). Until it
+  // lands the panel paints from the live card, as it does while fetching.
+  const seed = useDetailSeed(itemId);
+  if (!seed) return <DrawerPanel itemId={itemId} onClose={onClose} />;
+  return (
+    <Suspense fallback={<DrawerPanel itemId={itemId} onClose={onClose} waiting />}>
+      <DrawerPanel itemId={itemId} onClose={onClose} seed={seed} />
+    </Suspense>
+  );
+}
+
+function DrawerPanel({
+  itemId,
+  onClose,
+  seed = null,
+  waiting = false,
+}: {
+  itemId: string;
+  onClose: () => void;
+  /** The streamed detail, read in place of the first fetch. */
+  seed?: Promise<WorkItemDetail | null> | null;
+  /** The seed hasn't landed: paint from the live card and fetch nothing. */
+  waiting?: boolean;
+}) {
   const work = useWork();
   const { viewer, people, phases, today, track } = work;
   const live = work.items.find((c) => c.id === itemId) ?? null;
@@ -105,7 +131,10 @@ export function TaskDrawer({ itemId, onClose }: { itemId: string; onClose: () =>
   // edit, logged hours). The slow interval only catches what the version
   // can't see: a time entry's note or date, an item archived or on another
   // project.
-  const { data, mutate, isLoading } = useWorkItemDetail(itemId, { refreshInterval: 60_000 });
+  const { data, mutate, isLoading } = useWorkItemDetail(waiting ? null : itemId, {
+    refreshInterval: 60_000,
+    seed,
+  });
   // The live copy paints at once; an archived item (opened from the archive
   // or an old link) isn't on the board, so it comes with the detail.
   const card = live ?? data?.item ?? null;

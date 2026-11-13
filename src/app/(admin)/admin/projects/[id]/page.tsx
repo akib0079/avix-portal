@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
-import { getProject, getProjectWorkspace } from "@/lib/dal/projects";
+import { headers } from "next/headers";
+import { getProjectActivity, getProjectPage } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
-import { listByProject } from "@/lib/dal/deliverables";
 import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
 import { ChatWidget } from "@/components/messages/chat-widget";
 import { toMilestoneView } from "@/components/milestones/milestone-types";
@@ -18,8 +18,9 @@ import { ChevronRight } from "lucide-react";
 import { requireTeam } from "@/lib/dal/session";
 import { listTeamOptions } from "@/lib/dal/users";
 import { getBillableWork } from "@/lib/dal/billable";
-import { getWorkItems, getWorkVersion, phasesOf } from "@/lib/dal/project-board";
+import { getWorkItemDetail, getWorkItems, getWorkVersion, phasesOf } from "@/lib/dal/project-board";
 import { WorkProvider } from "@/components/board/work-store";
+import { DetailSeed } from "@/components/board/detail-seed";
 import { WorkTab } from "@/components/board/work-tab";
 import { WORK_TAB, resolveWorkLink } from "@/lib/board";
 import { isPlanItem } from "@/lib/work-scope";
@@ -35,7 +36,7 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ id }, query] = await Promise.all([params, searchParams]);
+  const [{ id }, query, request] = await Promise.all([params, searchParams, headers()]);
   // ?tab=milestones&view=board&item=<id>, and the older shapes that
   // notifications already sent still carry (?tab=board&task=<id>, …).
   const link = resolveWorkLink({
@@ -45,18 +46,18 @@ export default async function ProjectDetailPage({
     },
   });
   // One round trip for everything the page needs — getBillableWork used to run
-  // after this block, adding a serial query to every load. The poll token is
-  // read before the rows go out, so it is never newer than the rows: a
+  // after this block, adding a serial query to every load. The project and
+  // everything its tabs show beyond the work is one statement. The poll token
+  // is read before the rows go out, so it is never newer than the rows: a
   // change landing between the two shows up on the next poll instead of
   // being taken as already seen.
   const versionRead = getWorkVersion(id);
-  const [viewer, project, messages, deliverables, workspace, team, billableOrNull, items, version] =
+  const [viewer, project, messages, activity, team, billableOrNull, items, version] =
     await Promise.all([
       requireTeam(),
-      getProject(id),
+      getProjectPage(id),
       getProjectMessages(id, { includeInternal: true }),
-      listByProject(id),
-      getProjectWorkspace(id),
+      getProjectActivity(id),
       listTeamOptions(),
       // Money-bearing: getBillableWork requires admin, so staff skip it.
       getBillableWork(id).catch(() => null),
@@ -66,6 +67,16 @@ export default async function ProjectDetailPage({
       versionRead,
     ]);
   if (!project) notFound();
+  const { deliverables } = project;
+  // A deep link to one item (?item=): its drawer's detail starts now and
+  // streams in with the page instead of being fetched after hydration. Only
+  // after the reads above, so it never pushes the work rows into a later wave.
+  // Not when an action re-renders the page: the open drawer keeps its own
+  // copy, and the read would only hold the action's response open.
+  const detail =
+    link.itemId && !request.has("next-action")
+      ? getWorkItemDetail(link.itemId).catch(() => null)
+      : null;
   // Read once: the board and the header's "due in N days" agree on what now is.
   const renderedAt = serverNow();
   // People are already loaded for this page; the board reuses them rather
@@ -169,7 +180,7 @@ export default async function ProjectDetailPage({
                   creditNoteForId: i.creditNoteForId,
                   credited: creditedTotal(i.creditNotes),
                 }))}
-                retainers={workspace.retainers}
+                retainers={project.retainers}
               />
             ),
           },
@@ -185,13 +196,13 @@ export default async function ProjectDetailPage({
         <div className="space-y-6">
           <ProjectRequests
             projectId={project.id}
-            requests={workspace.requests}
-            meetings={workspace.meetings}
+            requests={project.requests}
+            meetings={project.meetings}
           />
           <Card>
             <CardContent className="pt-6">
               <ActivityFeed
-                items={workspace.activity}
+                items={activity}
                 emptyLabel="Nothing recorded on this project yet."
               />
             </CardContent>
@@ -207,97 +218,99 @@ export default async function ProjectDetailPage({
     // The work is held once for the whole page: the header's ring and
     // counts, the attention strip, the list, the board and the item drawer
     // all read the same live items.
-    <WorkProvider
-      projectId={project.id}
-      viewer={{
-        id: viewer.id,
-        side: "ADMIN",
-        role: isAdmin ? "ADMIN" : "STAFF",
-        name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
-      }}
-      billingType={project.billingType}
-      initial={board}
-      renderedAt={renderedAt}
-      initialItemId={link.itemId}
-    >
-      <div className="space-y-5">
-        {/* Full width: the header is a band, and the workspace below it gets
-            the whole page — the board needs every column visible at once. */}
-        <ProjectHeader
-          project={{
-            id: project.id,
-            projectName: project.projectName,
-            status: project.status,
-            priority: project.priority,
-            type: project.type,
-            source: project.source,
-            startDate: project.startDate?.toISOString() ?? null,
-            dueDate: project.dueDate?.toISOString() ?? null,
-            ownerId: project.ownerId,
-            billingType: project.billingType,
-            contractPrice:
-              project.contractPrice == null ? null : Number(project.contractPrice),
-            autoAcceptClientTasks: project.autoAcceptClientTasks,
-            client: project.client
-              ? {
-                  id: project.client.id,
-                  firstName: project.client.firstName,
-                  lastName: project.client.lastName,
-                  company: project.client.company,
-                }
-              : null,
-          }}
-          // The plan only, and only what the progress line reads.
-          milestones={items
-            .filter(isPlanItem)
-            .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position }))}
-          team={team}
-          canEdit={isAdmin}
-          renderedAt={renderedAt}
-          stats={{
-            openTasks: openItems,
-            doneTasks: items.length - openItems,
-            helpRequests: clientHelp,
-            hoursLogged,
-            unbilled: isAdmin && billable ? billable.unbilled : null,
-          }}
-          attention={
-            <ProjectAttention
-              pending={pending}
-              projectId={project.id}
-              overdue={health.overdue}
-              boardHelp={clientHelp}
-            />
-          }
-          brief={
-            hasRichTextContent(project.description) ? (
-              <details className="group">
-                <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
-                  <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
-                  Project brief
-                </summary>
-                <div className="mt-2 rounded-xl border bg-card p-4">
-                  <RichTextViewer content={project.description} />
-                </div>
-              </details>
-            ) : null
-          }
-        />
-
-        <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
-
-        {project.client && (
-          <ChatWidget
-            projectId={project.id}
-            clientId={project.client.id}
-            clientTimezone={project.client.timezone}
-            viewerRole="ADMIN"
-            initialMessages={messages}
-            canWriteInternal
-            title={`Chat with ${project.client.firstName} ${project.client.lastName}`}
+    <DetailSeed itemId={link.itemId} promise={detail}>
+      <WorkProvider
+        projectId={project.id}
+        viewer={{
+          id: viewer.id,
+          side: "ADMIN",
+          role: isAdmin ? "ADMIN" : "STAFF",
+          name: `${viewer.firstName ?? ""} ${viewer.lastName ?? ""}`.trim() || viewer.name,
+        }}
+        billingType={project.billingType}
+        initial={board}
+        renderedAt={renderedAt}
+        initialItemId={link.itemId}
+      >
+        <div className="space-y-5">
+          {/* Full width: the header is a band, and the workspace below it gets
+              the whole page — the board needs every column visible at once. */}
+          <ProjectHeader
+            project={{
+              id: project.id,
+              projectName: project.projectName,
+              status: project.status,
+              priority: project.priority,
+              type: project.type,
+              source: project.source,
+              startDate: project.startDate?.toISOString() ?? null,
+              dueDate: project.dueDate?.toISOString() ?? null,
+              ownerId: project.ownerId,
+              billingType: project.billingType,
+              contractPrice:
+                project.contractPrice == null ? null : Number(project.contractPrice),
+              autoAcceptClientTasks: project.autoAcceptClientTasks,
+              client: project.client
+                ? {
+                    id: project.client.id,
+                    firstName: project.client.firstName,
+                    lastName: project.client.lastName,
+                    company: project.client.company,
+                  }
+                : null,
+            }}
+            // The plan only, and only what the progress line reads.
+            milestones={items
+              .filter(isPlanItem)
+              .map((i) => ({ id: i.id, title: i.title, status: i.status, position: i.position }))}
+            team={team}
+            canEdit={isAdmin}
+            renderedAt={renderedAt}
+            stats={{
+              openTasks: openItems,
+              doneTasks: items.length - openItems,
+              helpRequests: clientHelp,
+              hoursLogged,
+              unbilled: isAdmin && billable ? billable.unbilled : null,
+            }}
+            attention={
+              <ProjectAttention
+                pending={pending}
+                projectId={project.id}
+                overdue={health.overdue}
+                boardHelp={clientHelp}
+              />
+            }
+            brief={
+              hasRichTextContent(project.description) ? (
+                <details className="group">
+                  <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+                    <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+                    Project brief
+                  </summary>
+                  <div className="mt-2 rounded-xl border bg-card p-4">
+                    <RichTextViewer content={project.description} />
+                  </div>
+                </details>
+              ) : null
+            }
           />
-        )}
-      </div>
-    </WorkProvider>
+
+          <ProjectTabs tabs={tabs} defaultTab={WORK_TAB} initialTab={link.tab} />
+
+          {project.client && (
+            <ChatWidget
+              projectId={project.id}
+              clientId={project.client.id}
+              clientTimezone={project.client.timezone}
+              viewerRole="ADMIN"
+              initialMessages={messages}
+              canWriteInternal
+              title={`Chat with ${project.client.firstName} ${project.client.lastName}`}
+            />
+          )}
+        </div>
+      </WorkProvider>
+    </DetailSeed>
   );
 }

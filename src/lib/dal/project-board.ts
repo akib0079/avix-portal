@@ -18,12 +18,14 @@ import {
   type BoardPerson,
   type BoardPhase,
   type BoardSide,
-  type WorkBilling,
   type WorkItem,
   type WorkItemDetail,
   type WorkRole,
   type WorkVersionRow,
 } from "@/lib/board";
+import { extrasFromRows, type ItemExtras } from "@/lib/work-extras";
+
+export type { ItemExtras } from "@/lib/work-extras";
 
 /**
  * Reads for project work: the Milestones list, the board, the board's poll
@@ -179,6 +181,33 @@ const itemRelations = {
 
 export const itemSelect = { ...itemScalarSelect, ...itemRelations } satisfies Prisma.MilestoneSelect;
 
+/**
+ * The numbers a row shows from other tables (lib/work-extras), selected on
+ * the row itself so the rows and their numbers are one statement: unanswered
+ * help requests, and the hours (summed here from the item's entries).
+ */
+const extrasTeamSelect = {
+  comments: { where: { kind: "HELP", resolvedAt: null }, select: { authorRole: true } },
+  timeEntries: { select: { hours: true } },
+} satisfies Prisma.MilestoneSelect;
+
+/**
+ * The same plus the invoices each item is billed on. ADMIN only: reads pick
+ * this or the team's select by role, so billing is never selected for anyone
+ * else. A cancelled invoice frees the work again, so it doesn't count; a
+ * draft does (the line is already on an invoice being prepared).
+ */
+const extrasAdminSelect = {
+  ...extrasTeamSelect,
+  invoiceItems: {
+    where: { invoice: { status: { not: "CANCELLED" } } },
+    select: { invoice: { select: { id: true, invoiceNumber: true, status: true } } },
+  },
+} satisfies Prisma.MilestoneSelect;
+
+const itemListSelectTeam = { ...itemSelect, ...extrasTeamSelect } satisfies Prisma.MilestoneSelect;
+const itemListSelectAdmin = { ...itemSelect, ...extrasAdminSelect } satisfies Prisma.MilestoneSelect;
+
 export type ItemRow = Prisma.MilestoneGetPayload<{ select: typeof itemSelect }>;
 export type ItemScalarRow = Prisma.MilestoneGetPayload<{ select: typeof itemScalarSelect }>;
 type ItemRelations = Pick<ItemRow, "assignee" | "createdBy" | "_count">;
@@ -192,13 +221,6 @@ export function withRelations(row: ItemScalarRow, rel: ItemRelations): ItemRow {
 export function personOf(u: { firstName?: string | null; lastName?: string | null; name: string }) {
   return { firstName: u.firstName ?? "", lastName: u.lastName ?? "", name: u.name };
 }
-
-/** The per-item numbers that come from other tables. */
-export type ItemExtras = {
-  help: Map<string, { client: number; team: number }>;
-  hours: Map<string, number>;
-  billing: Map<string, WorkBilling[]>;
-};
 
 export function personName(u: { firstName?: string | null; lastName?: string | null; name: string }) {
   return `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.name;
@@ -255,74 +277,17 @@ export function toWorkItem(
   };
 }
 
-/** Unanswered help requests per item, by the side that asked. */
-async function openHelpFor(where: Prisma.MilestoneCommentWhereInput) {
-  const groups = await prisma.milestoneComment.groupBy({
-    by: ["milestoneId", "authorRole"],
-    where: { ...where, kind: "HELP", resolvedAt: null },
-    _count: { _all: true },
-  });
-  const map = new Map<string, { client: number; team: number }>();
-  for (const g of groups) {
-    const cur = map.get(g.milestoneId) ?? { client: 0, team: 0 };
-    if (g.authorRole === "CLIENT") cur.client += g._count._all;
-    else cur.team += g._count._all;
-    map.set(g.milestoneId, cur);
-  }
-  return map;
-}
-
-/** Logged hours per item, summed in the database rather than row by row. */
-async function hoursFor(where: Prisma.TimeEntryWhereInput) {
-  const groups = await prisma.timeEntry.groupBy({
-    by: ["milestoneId"],
-    where,
-    _sum: { hours: true },
-  });
-  return new Map(groups.map((g) => [g.milestoneId, Number(g._sum.hours ?? 0)]));
-}
-
-/**
- * The invoices each item is billed on. ADMIN only — callers never run this
- * for anyone else. A cancelled invoice frees the work again, so it doesn't
- * count; a draft does (the line is already on an invoice being prepared).
- */
-async function billingFor(where: Prisma.InvoiceItemWhereInput) {
-  const lines = await prisma.invoiceItem.findMany({
-    where: { ...where, milestoneId: { not: null }, invoice: { status: { not: "CANCELLED" } } },
-    select: {
-      milestoneId: true,
-      invoice: { select: { id: true, invoiceNumber: true, status: true } },
-    },
-  });
-  const map = new Map<string, WorkBilling[]>();
-  for (const line of lines) {
-    if (!line.milestoneId) continue;
-    const list = map.get(line.milestoneId) ?? [];
-    if (!list.some((b) => b.invoiceId === line.invoice.id)) {
-      list.push({
-        invoiceId: line.invoice.id,
-        invoiceNumber: line.invoice.invoiceNumber,
-        status: line.invoice.status,
-      });
-    }
-    map.set(line.milestoneId, list);
-  }
-  return map;
-}
-
 /**
  * The other-table numbers for one item, for an action that just wrote it.
  * Start it in the same Promise.all as the write: none of it depends on the
- * write, so it costs no extra round trip.
+ * write, so it costs no extra round trip. One statement.
  */
 export async function itemExtras(itemId: string, viewer: WorkViewer): Promise<ItemExtras> {
-  const [help, hours, billing] = await Promise.all([
-    openHelpFor({ milestoneId: itemId }),
-    hoursFor({ milestoneId: itemId }),
-    viewer.role === "ADMIN" ? billingFor({ milestoneId: itemId }) : new Map<string, WorkBilling[]>(),
-  ]);
-  return { help, hours, billing };
+  const where = { id: itemId };
+  const row = await (viewer.role === "ADMIN"
+    ? prisma.milestone.findUnique({ where, select: { id: true, ...extrasAdminSelect } })
+    : prisma.milestone.findUnique({ where, select: { id: true, ...extrasTeamSelect } }));
+  return row ? extrasFromRows([row]) : emptyExtras();
 }
 
 /** Extras for an item that has none yet (it was just created). */
@@ -354,24 +319,21 @@ export async function getWorkItems(
     projectId,
     archivedAt: opts.archived ? { not: null } : null,
   };
-  const [rows, help, hours, billing] = await Promise.all([
-    prisma.milestone.findMany({
-      // The client's scope is part of the query: someone else's project
-      // simply has no rows. The other reads are only joined to these.
-      where: who.role === "CLIENT" ? { ...live, project: { clientId: who.id } } : live,
-      orderBy: opts.archived
-        ? [{ archivedAt: "desc" }, { position: "asc" }]
-        : [{ position: "asc" }, { createdAt: "asc" }],
-      ...(opts.archived ? { take: 500 } : {}),
-      select: { ...itemSelect, project: { select: { billingType: true } } },
-    }),
-    openHelpFor({ milestone: live }),
-    hoursFor({ milestone: live }),
-    who.role === "ADMIN"
-      ? billingFor({ milestone: live })
-      : Promise.resolve(new Map<string, WorkBilling[]>()),
-  ]);
-  const extras = { help, hours, billing };
+  const args = {
+    // The client's scope is part of the query: someone else's project
+    // simply has no rows.
+    where: who.role === "CLIENT" ? { ...live, project: { clientId: who.id } } : live,
+    orderBy: opts.archived
+      ? [{ archivedAt: "desc" as const }, { position: "asc" as const }]
+      : [{ position: "asc" as const }, { createdAt: "asc" as const }],
+    ...(opts.archived ? { take: 500 } : {}),
+  } satisfies Prisma.MilestoneFindManyArgs;
+  const project = { select: { billingType: true } } as const;
+  // One statement: the rows carry their help, hours and (ADMIN) billing.
+  const rows = await (who.role === "ADMIN"
+    ? prisma.milestone.findMany({ ...args, select: { ...itemListSelectAdmin, project } })
+    : prisma.milestone.findMany({ ...args, select: { ...itemListSelectTeam, project } }));
+  const extras = extrasFromRows(rows);
   return rows.map((row) => toWorkItem(row, extras, who, row.project.billingType));
 }
 
@@ -584,6 +546,7 @@ const RECENT_TIME_ENTRIES = 20;
  *
  * Every read is keyed by the item and runs in one wave; the item read is
  * scoped by the viewer, and nothing is returned unless it finds the item.
+ * The item's row carries its help, hours and (ADMIN) billing.
  */
 export async function getWorkItemDetail(
   itemId: string,
@@ -591,22 +554,21 @@ export async function getWorkItemDetail(
 ): Promise<WorkItemDetail | null> {
   const who = viewer === undefined ? await currentWorkViewer() : viewer;
   if (!who) return null;
-  const [row, comments, extras, entries] = await Promise.all([
-    prisma.milestone.findFirst({
-      where: itemScope(who, itemId),
-      select: {
-        ...itemSelect,
-        project: { select: { billingType: true } },
-        sourceTaskRequest: { select: { status: true, adminNote: true, resolvedAt: true } },
-      },
-    }),
+  const where = itemScope(who, itemId);
+  const relations = {
+    project: { select: { billingType: true } },
+    sourceTaskRequest: { select: { status: true, adminNote: true, resolvedAt: true } },
+  } as const;
+  const [row, comments, entries] = await Promise.all([
+    who.role === "ADMIN"
+      ? prisma.milestone.findFirst({ where, select: { ...itemListSelectAdmin, ...relations } })
+      : prisma.milestone.findFirst({ where, select: { ...itemListSelectTeam, ...relations } }),
     prisma.milestoneComment.findMany({
       where: { milestoneId: itemId },
       orderBy: { createdAt: "desc" },
       take: 300,
       select: commentSelect,
     }),
-    itemExtras(itemId, who),
     prisma.timeEntry.findMany({
       where: { milestoneId: itemId },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
@@ -624,7 +586,7 @@ export async function getWorkItemDetail(
   const team = who.role !== "CLIENT";
   const request = row.sourceTaskRequest;
   return {
-    item: toWorkItem(row, extras, who, row.project.billingType),
+    item: toWorkItem(row, extrasFromRows([row]), who, row.project.billingType),
     description: (row.description as JSONContent | null) ?? null,
     comments: comments.reverse().map(toComment),
     timeEntries: entries.map((e) => ({
