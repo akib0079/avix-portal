@@ -55,6 +55,7 @@ export function CampaignSendControls({
     }
 
     // Bounded batches, each its own request — a long list can't time out.
+    // Each batch revalidates, so its response already carries the fresh page.
     let left = pending;
     let guard = 0;
     while (left > 0 && guard < 200) {
@@ -69,11 +70,9 @@ export function CampaignSendControls({
       setSentSoFar((n) => n + Math.max(done, 0));
       if ((res.data?.remaining ?? 0) >= left) break; // no progress — stop looping
       left = res.data?.remaining ?? 0;
-      router.refresh();
     }
 
     setBusy(false);
-    router.refresh();
     toast.success("Sending finished.");
   }
 

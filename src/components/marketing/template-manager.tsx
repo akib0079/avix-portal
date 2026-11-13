@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { deleteTemplate } from "@/lib/actions/marketing";
 import { TemplateFormDialog } from "./template-form-dialog";
 import { Button } from "@/components/ui/button";
@@ -28,7 +27,6 @@ export type TemplateView = {
 };
 
 export function TemplateManager({ templates }: { templates: TemplateView[] }) {
-  const router = useRouter();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<TemplateView | null>(null);
   const [deleting, setDeleting] = useState<TemplateView | null>(null);
@@ -146,7 +144,6 @@ export function TemplateManager({ templates }: { templates: TemplateView[] }) {
                 if (!result.ok) return void toast.error(result.error);
                 toast.success("Template deleted.");
                 setDeleting(null);
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />}

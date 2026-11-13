@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { AudienceEntry } from "@/lib/dal/marketing";
 import type { AudienceFilterInput } from "@/lib/validation/marketing";
 import { saveSegment, deleteSegment } from "@/lib/actions/marketing";
@@ -47,7 +46,6 @@ export function AudiencePicker({
   value: string[];
   onChange: (next: string[]) => void;
 }) {
-  const router = useRouter();
   const [filter, setFilter] = useState<AudienceFilterInput>({ audience: "both" });
   const [savingSegment, setSavingSegment] = useState(false);
   const [segmentName, setSegmentName] = useState("");
@@ -145,7 +143,6 @@ export function AudiencePicker({
                   const res = await deleteSegment(s.id);
                   if (!res.ok) return void toast.error(res.error);
                   toast.success("Segment removed.");
-                  router.refresh();
                 }}
               >
                 <Trash2 className="size-3" />
@@ -306,7 +303,6 @@ export function AudiencePicker({
                 setSavingSegment(false);
                 setSegmentName("");
                 toast.success("Segment saved.");
-                router.refresh();
               }}
             >
               <Bookmark /> Save
