@@ -8,6 +8,8 @@ import {
   isInvoiceToPay,
 } from "@/lib/work-scope";
 import { DECLINED_RECENT_DAYS, WITHDRAWN_NOTE } from "@/lib/work-list";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
+import { creditNotesShown } from "@/lib/dal/portal";
 
 const itemSelect = {
   id: true,
@@ -20,13 +22,22 @@ const itemSelect = {
 const DELIVERABLE_TO_REVIEW = { reviewStatus: null } as const;
 
 /**
+ * Each group shows this many rows. One more is read so the page can say
+ * "50+" instead of a capped count that reads as the whole story; a handled
+ * row makes room for the next one on the following render.
+ */
+const GROUP_CAP = 50;
+const capped = <T>(rows: T[]) => ({ list: rows.slice(0, GROUP_CAP), more: rows.length > GROUP_CAP });
+
+/**
  * Everything on the client's plate that needs something from them, each
  * with the one action it asks for:
  *  - work in review, waiting for their approval (approve / send back)
  *  - questions the team asked on a piece of work (answer)
  *  - approved milestones they haven't rated (rate)
  *  - deliverables they haven't reviewed (approve / ask for changes)
- *  - invoices sent or part-paid with a balance, not yet reported paid (pay)
+ *  - invoices sent or part-paid with a balance after payments and credit
+ *    notes, not yet reported paid (pay)
  * plus, as news rather than a task, their requests the team declined in the
  * last few weeks, with the reason. The work rules come from work-scope.ts,
  * which the per-project "Needs you" box uses too, so the two can't disagree.
@@ -40,25 +51,25 @@ export async function getClientActionItems(clientId: string) {
     prisma.milestone.findMany({
       where: { ...AWAITING_REVIEW, ...mine },
       orderBy: { updatedAt: "desc" },
-      take: 50,
+      take: GROUP_CAP + 1,
       select: itemSelect,
     }),
     prisma.milestone.findMany({
       where: { ...TEAM_QUESTION, ...mine },
       orderBy: { updatedAt: "desc" },
-      take: 50,
+      take: GROUP_CAP + 1,
       select: itemSelect,
     }),
     prisma.milestone.findMany({
       where: { ...AWAITING_RATING, ...mine },
       orderBy: { updatedAt: "desc" },
-      take: 50,
+      take: GROUP_CAP + 1,
       select: itemSelect,
     }),
     prisma.deliverable.findMany({
       where: { ...DELIVERABLE_TO_REVIEW, ...mine },
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: GROUP_CAP + 1,
       select: {
         id: true,
         title: true,
@@ -70,7 +81,7 @@ export async function getClientActionItems(clientId: string) {
     prisma.invoice.findMany({
       where: { clientId, ...INVOICE_TO_PAY },
       orderBy: [{ dueDate: "asc" }, { issueDate: "desc" }],
-      take: 50,
+      take: GROUP_CAP + 1,
       select: {
         id: true,
         invoiceNumber: true,
@@ -80,6 +91,7 @@ export async function getClientActionItems(clientId: string) {
         currency: true,
         dueDate: true,
         project: { select: { projectName: true } },
+        creditNotes: creditNotesShown,
       },
     }),
     prisma.taskRequest.findMany({
@@ -106,13 +118,19 @@ export async function getClientActionItems(clientId: string) {
   });
   const now = Date.now();
   const toPay = invoices
-    .map((i) => ({ ...i, amount: Number(i.amount), amountPaid: Number(i.amountPaid) }))
+    .map((i) => ({
+      ...i,
+      amount: Number(i.amount),
+      amountPaid: Number(i.amountPaid),
+      credited: creditedTotal(i.creditNotes),
+    }))
     .filter(isInvoiceToPay);
+  const [rev, ask, rate, files] = [capped(reviews), capped(questions), capped(toRate), capped(deliverables)];
   return {
-    reviews: reviews.map(item),
-    questions: questions.map(item),
-    toRate: toRate.map(item),
-    deliverables: deliverables.map((d) => ({
+    reviews: rev.list.map(item),
+    questions: ask.list.map(item),
+    toRate: rate.list.map(item),
+    deliverables: files.list.map((d) => ({
       id: d.id,
       title: d.title,
       external: !!d.externalUrl,
@@ -120,13 +138,12 @@ export async function getClientActionItems(clientId: string) {
       projectId: d.project.id,
       projectName: d.project.projectName,
     })),
-    invoices: toPay.map((i) => ({
+    invoices: toPay.slice(0, GROUP_CAP).map((i) => ({
       id: i.id,
       invoiceNumber: i.invoiceNumber,
       amount: i.amount,
-      /** What's left to pay — the whole amount unless it's part-paid. */
-      balance: Math.max(i.amount - i.amountPaid, 0),
-      partlyPaid: i.status === "PARTIALLY_PAID",
+      /** What's left to pay, after payments and credit notes. */
+      balance: balanceDue(i.amount, i.amountPaid, i.credited),
       currency: i.currency,
       dueDate: i.dueDate,
       overdue: !!i.dueDate && i.dueDate.getTime() < now,
@@ -140,16 +157,22 @@ export async function getClientActionItems(clientId: string) {
       projectId: r.project.id,
       projectName: r.project.projectName,
     })),
-    /** What needs them — the declined requests are news, not a task, so they don't count. */
-    count:
-      reviews.length + questions.length + toRate.length + deliverables.length + toPay.length,
+    /** Which groups have more rows than they show. Invoices go by the rows read. */
+    more: {
+      reviews: rev.more,
+      questions: ask.more,
+      toRate: rate.more,
+      deliverables: files.more,
+      invoices: invoices.length > GROUP_CAP,
+    },
   };
 }
 
 /**
  * Cheap badge count of what needs the client — the same rules, counted in
- * the database where a count can say it all. Invoices come back as their two
- * amounts so "has a balance" is decided by the same predicate as the list.
+ * the database where a count can say it all. Invoices come back as their
+ * amounts and credit notes so "has a balance" is decided by the same
+ * predicate as the list.
  */
 export async function countClientActionItems(clientId: string): Promise<number> {
   const mine = { project: { clientId } };
@@ -158,14 +181,19 @@ export async function countClientActionItems(clientId: string): Promise<number> 
     prisma.milestone.count({ where: { ...TEAM_QUESTION, ...mine } }),
     prisma.milestone.count({ where: { ...AWAITING_RATING, ...mine } }),
     prisma.deliverable.count({ where: { ...DELIVERABLE_TO_REVIEW, ...mine } }),
+    // Every open one: a client has a handful, and each needs its balance checked.
     prisma.invoice.findMany({
       where: { clientId, ...INVOICE_TO_PAY },
-      take: 100,
-      select: { status: true, amount: true, amountPaid: true },
+      select: { status: true, amount: true, amountPaid: true, creditNotes: creditNotesShown },
     }),
   ]);
   const toPay = invoices.filter((i) =>
-    isInvoiceToPay({ status: i.status, amount: Number(i.amount), amountPaid: Number(i.amountPaid) }),
+    isInvoiceToPay({
+      status: i.status,
+      amount: Number(i.amount),
+      amountPaid: Number(i.amountPaid),
+      credited: creditedTotal(i.creditNotes),
+    }),
   ).length;
   return reviews + questions + toRate + deliverables + toPay;
 }
