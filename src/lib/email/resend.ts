@@ -1,6 +1,7 @@
 import "server-only";
 import { Resend } from "resend";
 import type { ReactElement } from "react";
+import { isLocalAppUrl } from "@/lib/app-url";
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -10,7 +11,8 @@ const FROM = process.env.EMAIL_FROM ?? "Avix Digital <onboarding@resend.dev>";
 
 /**
  * True when this process must not send real email: a dev server, or a local
- * production build (next build && next start) whose app URL is localhost.
+ * production build (next build && next start) whose app URL is local (see
+ * isLocalAppUrl).
  *
  * The local .env carries a live Resend key, and the admin layout runs the
  * duties engine on every page view. A local test run once emailed six
@@ -23,8 +25,9 @@ function isLocalRuntime(): boolean {
   if (process.env.NODE_ENV !== "production") return true;
   // BETTER_AUTH_URL only: NEXT_PUBLIC_* is inlined at build time, which froze
   // a local build's localhost into the bundle (see src/lib/app-url.ts).
-  const appUrl = process.env.BETTER_AUTH_URL ?? "";
-  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(appUrl);
+  // A LAN address, 0.0.0.0, *.localhost or plain http is just as local as
+  // localhost; a blank URL is the deployed fallback and still sends.
+  return isLocalAppUrl(process.env.BETTER_AUTH_URL ?? "");
 }
 
 /**
