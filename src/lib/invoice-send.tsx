@@ -94,8 +94,8 @@ export async function sendInvoiceCore(id: string): Promise<SendResult> {
     return { ok: false, error: "Email failed to send — check the Resend configuration." };
   }
 
-  try {
-    await prisma.invoice.update({
+  const markSent = () =>
+    prisma.invoice.update({
       where: { id },
       data: {
         sentAt: new Date(),
@@ -106,6 +106,10 @@ export async function sendInvoiceCore(id: string): Promise<SendResult> {
           : {}),
       },
     });
+  try {
+    // Tried twice: a draft left unmarked would still offer Send and Delete
+    // for an invoice the client already has.
+    await markSent().catch(markSent);
   } catch (err) {
     // The client has the email already: sending again would email them twice.
     console.error(`[invoices] ${invoice.invoiceNumber} emailed but not marked sent:`, (err as Error).message);

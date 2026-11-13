@@ -454,7 +454,7 @@ export async function runDuePlan(plan: PlanRun, now: Date, timeZone: string): Pr
  * client whose account is active. A failed send leaves the draft and says
  * why on the plan.
  */
-async function autoSend(pass: PlanPass): Promise<"sent" | "failed" | null> {
+async function autoSend(pass: PlanPass): Promise<"sent" | "emailed" | "failed" | null> {
   const { plan } = pass;
   if (!plan.autoSend || pass.catchUp || pass.created.length !== 1) return null;
   const invoice = pass.created[0];
@@ -473,9 +473,11 @@ async function autoSend(pass: PlanPass): Promise<"sent" | "failed" | null> {
     }
   }
   if (result.ok) return "sent";
-  pass.error = result.emailed
-    ? `${invoice.invoiceNumber}: ${result.error}`
-    : `${invoice.invoiceNumber} wasn't sent automatically: ${result.error} It's waiting as a draft.`;
+  if (result.emailed) {
+    pass.error = `${invoice.invoiceNumber}: ${result.error}`;
+    return "emailed";
+  }
+  pass.error = `${invoice.invoiceNumber} wasn't sent automatically: ${result.error} It's waiting as a draft.`;
   return "failed";
 }
 
@@ -501,7 +503,12 @@ async function reportError(plan: PlanRun, message: string, link: string, now: Da
   ]);
 }
 
-export type PlanResult = PlanPass & { sent: boolean };
+/**
+ * `emailed`: the client has the invoice but it isn't marked sent. Its own
+ * bell says what to do, so the batch summary counts it as neither drafted
+ * (to review and send) nor sent.
+ */
+export type PlanResult = PlanPass & { sent: boolean; emailed: boolean };
 
 /**
  * One plan's due runs, its auto-send and its record: an activity entry per
@@ -528,7 +535,7 @@ export async function processDuePlan(
       error: "The last run failed unexpectedly. It will be tried again on the next run.",
     };
   }
-  const sent = (await autoSend(pass)) === "sent";
+  const sendOutcome = await autoSend(pass);
 
   // Settled, so a failed record can't stop the rest of the batch.
   const recorded = await Promise.allSettled([
@@ -557,13 +564,13 @@ export async function processDuePlan(
       console.error(`[recurring] plan ${plan.id} record failed:`, (r.reason as Error)?.message);
     }
   }
-  return { ...pass, sent };
+  return { ...pass, sent: sendOutcome === "sent", emailed: sendOutcome === "emailed" };
 }
 
 /** Tells the admins what a batch of plan passes did, in a few bells at most. */
 export async function summarisePlanResults(results: PlanResult[]): Promise<void> {
   const drafted = results
-    .filter((r) => !r.sent)
+    .filter((r) => !r.sent && !r.emailed)
     .reduce((n, r) => n + r.created.length, 0);
   const sent = results.filter((r) => r.sent).length;
   const notes: Promise<unknown>[] = [];
