@@ -24,6 +24,9 @@ export async function register() {
   // ~20 statements one after another, so it waits out the cold start instead
   // of holding a pool connection while the first visitors' pages load.
   const bootedAt = new Date();
+  void import("@/lib/work-backfill")
+    .then(({ markFirstBoot }) => markFirstBoot(prisma, bootedAt))
+    .catch((err) => console.warn("[backfill] first boot:", (err as Error).message));
   setTimeout(() => {
     void import("@/lib/work-backfill")
       .then(({ backfillWorkItemsOnBoot }) => backfillWorkItemsOnBoot(prisma, { bootedAt }))

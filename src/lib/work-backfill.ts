@@ -268,6 +268,21 @@ const LAST_PASS_KEY = "workBackfill:v49";
 export const FIRST_PASS_KEY = "workBackfill:v49:firstBoot";
 
 /**
+ * Records the first boot as this process starts, not when its delayed pass
+ * runs: a process that dies before then would leave the key to a later boot,
+ * and invoices the new code wrote in between would read as the old code's.
+ * One idempotent insert; a database an earlier pass ran on keeps that time.
+ */
+export function markFirstBoot(db: Pick<Db, "$executeRawUnsafe">, bootedAt: Date): Promise<number> {
+  return db.$executeRawUnsafe(
+    `INSERT INTO "app_settings" ("key", "value", "updatedAt")
+SELECT '${FIRST_PASS_KEY}', COALESCE((SELECT "value" FROM "app_settings" WHERE "key" = '${LAST_PASS_KEY}'), $1), now()
+ON CONFLICT ("key") DO NOTHING`,
+    bootedAt.toISOString(),
+  );
+}
+
+/**
  * Set once a boot pass has finished the line-linking steps. Every row they
  * look for is older than the first pass, so the first one that finishes has
  * seen them all; a later run would only undo the admin's own edits.
