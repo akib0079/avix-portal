@@ -489,8 +489,8 @@ async function chaseOverdueInvoices(now: Date): Promise<void> {
 
 /**
  * Closes the invoice to-dos an invoice has outgrown: any on an invoice now
- * paid or cancelled, and a "Confirm payment" whose claim the owner turned
- * down. Without this they stayed in Tasks after the money had landed.
+ * paid or cancelled, a chase on a $0 one, and a "Confirm payment" whose
+ * claim the owner turned down. Without this they stayed in Tasks after the money had landed.
  */
 async function closeSettledInvoiceTasks(now: Date) {
   return prisma.task.updateMany({
@@ -502,6 +502,8 @@ async function closeSettledInvoiceTasks(now: Date) {
           systemKey: { startsWith: "invoice-" },
           invoice: { status: { in: ["PAID", "CANCELLED"] } },
         },
+        // A $0 invoice was never owed, whatever its status says.
+        { systemKey: { startsWith: "invoice-overdue:" }, invoice: { amount: { lte: 0 } } },
         {
           systemKey: { startsWith: "invoice-confirm:" },
           invoice: { paymentClaimedAt: null, status: { not: "IN_REVIEW" } },
@@ -558,6 +560,8 @@ async function generateSystemTasks(now: Date): Promise<void> {
         status: { in: ["SENT", "PARTIALLY_PAID"] },
         paymentClaimedAt: null,
         creditNoteForId: null,
+        // A $0 invoice is never owed: it shouldn't take a place in the 50.
+        amount: { gt: 0 },
         dueDate: { not: null, lt: now },
       },
       select: {
@@ -581,6 +585,9 @@ async function generateSystemTasks(now: Date): Promise<void> {
     }),
     closeSettledInvoiceTasks(now),
   ]);
+  // Overdue invoices with nothing left owing, whose chase to-do (from before
+  // these were skipped) can close: their status alone doesn't say so.
+  const settledKeys: string[] = [];
   for (const inv of overdue) {
     // Nothing left owing ($0, or credited in full): the email chaser skips
     // these too.
@@ -589,7 +596,10 @@ async function generateSystemTasks(now: Date): Promise<void> {
       Number(inv.amountPaid),
       creditedTotal(inv.creditNotes),
     );
-    if (balance <= 0) continue;
+    if (balance <= 0) {
+      settledKeys.push(`invoice-overdue:${inv.id}`);
+      continue;
+    }
     seeds.push({
       systemKey: `invoice-overdue:${inv.id}`,
       title: `Chase payment on ${inv.invoiceNumber}`,
@@ -666,26 +676,34 @@ async function generateSystemTasks(now: Date): Promise<void> {
     });
   }
 
-  if (seeds.length === 0) return;
-
   // createMany + skipDuplicates leans on the unique systemKey, so this is one
   // round trip regardless of how many conditions currently hold.
-  await prisma.task.createMany({
-    data: seeds.map((seed) => ({
-      systemKey: seed.systemKey,
-      title: seed.title,
-      priority: seed.priority,
-      dueDate: seed.dueDate,
-      origin: "SYSTEM" as const,
-      assigneeId: owner.id,
-      createdById: owner.id,
-      clientId: seed.clientId ?? null,
-      projectId: seed.projectId ?? null,
-      invoiceId: seed.invoiceId ?? null,
-      leadId: seed.leadId ?? null,
-    })),
-    skipDuplicates: true,
-  });
+  await Promise.all([
+    settledKeys.length
+      ? prisma.task.updateMany({
+          where: { origin: "SYSTEM", status: { not: "DONE" }, systemKey: { in: settledKeys } },
+          data: { status: "DONE", completedAt: now },
+        })
+      : null,
+    seeds.length
+      ? prisma.task.createMany({
+          data: seeds.map((seed) => ({
+            systemKey: seed.systemKey,
+            title: seed.title,
+            priority: seed.priority,
+            dueDate: seed.dueDate,
+            origin: "SYSTEM" as const,
+            assigneeId: owner.id,
+            createdById: owner.id,
+            clientId: seed.clientId ?? null,
+            projectId: seed.projectId ?? null,
+            invoiceId: seed.invoiceId ?? null,
+            leadId: seed.leadId ?? null,
+          })),
+          skipDuplicates: true,
+        })
+      : null,
+  ]);
 }
 
 /**
