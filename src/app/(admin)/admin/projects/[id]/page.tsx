@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { getProjectActivity, getProjectPage } from "@/lib/dal/projects";
 import { getProjectMessages } from "@/lib/dal/messages";
 import { DeliverablesCard } from "@/components/deliverables/deliverables-card";
@@ -35,7 +36,7 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ id }, query] = await Promise.all([params, searchParams]);
+  const [{ id }, query, request] = await Promise.all([params, searchParams, headers()]);
   // ?tab=milestones&view=board&item=<id>, and the older shapes that
   // notifications already sent still carry (?tab=board&task=<id>, …).
   const link = resolveWorkLink({
@@ -70,7 +71,12 @@ export default async function ProjectDetailPage({
   // A deep link to one item (?item=): its drawer's detail starts now and
   // streams in with the page instead of being fetched after hydration. Only
   // after the reads above, so it never pushes the work rows into a later wave.
-  const detail = link.itemId ? getWorkItemDetail(link.itemId).catch(() => null) : null;
+  // Not when an action re-renders the page: the open drawer keeps its own
+  // copy, and the read would only hold the action's response open.
+  const detail =
+    link.itemId && !request.has("next-action")
+      ? getWorkItemDetail(link.itemId).catch(() => null)
+      : null;
   // Read once: the board and the header's "due in N days" agree on what now is.
   const renderedAt = serverNow();
   // People are already loaded for this page; the board reuses them rather
