@@ -1,14 +1,22 @@
 /**
  * v49 made Milestone the one work item: the v48 board cards (project_tasks),
  * their comments and any pending client requests move into milestones. These
- * statements ship as the v49b migration, and run once more when the new code
- * first boots, to catch rows the old code wrote between `migrate deploy` and
- * the new build taking traffic (Hostinger builds take minutes, with the old
- * app still serving). Every statement is idempotent.
+ * statements ship as the v49b migration, and run again every time the new
+ * code boots, to catch rows an older build wrote since the last pass: between
+ * `migrate deploy` and the new build taking traffic (Hostinger builds take
+ * minutes, with the old app still serving), or while a rollback had it
+ * serving again. Every statement only matches rows still in the shape the old
+ * code writes, so it is safe to repeat.
  *
  * Keep in step with
- * prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql —
- * work-backfill.test.ts fails if the two drift.
+ * prisma/migrations/20261102120100_v49b_unified_work_backfill/migration.sql
+ * (steps 1–7) and 20261102134000_v49c_b4_legacy_repairs (the rest) —
+ * work-backfill.test.ts fails if they drift. Only the boot pass bounds
+ * steps 3 and 4 to rows created since the last pass ($1): cards and comments
+ * the new code has deleted since must not come back. Steps 16 and 17 run on
+ * boot only until one pass has finished them (LINKED_KEY): after that no old
+ * row can still turn up for them, and a link the new code removed on purpose
+ * must stay removed.
  */
 export const WORK_BACKFILL_SQL: readonly string[] = [
   // 1. Place the existing milestones on the board. boardPosition = 0 marks a
@@ -38,7 +46,8 @@ WHERE r."id" = m."sourceTaskRequestId" AND m."createdById" IS NULL`,
 
   // 3. Board cards become milestones with the same ids, so ?task=<id> links in
   //    old notifications and emails still resolve. A card's milestone becomes
-  //    its phase. New rows go to the end of the project's plan.
+  //    its phase. New rows go to the end of the project's plan. On boot, only
+  //    cards made since the last pass: a copy the new code deleted stays gone.
   `INSERT INTO "milestones" ("id", "title", "projectId", "status", "stage", "position",
   "boardPosition", "description", "pricingType", "priority", "parentId", "assigneeId",
   "dueDate", "createdById", "createdByRole", "completedAt", "createdAt", "updatedAt")
@@ -55,16 +64,17 @@ LEFT JOIN (SELECT "projectId", MAX("position") AS "maxPos" FROM "milestones" GRO
   ON mx."projectId" = t."projectId"
 LEFT JOIN "milestones" pm
   ON pm."id" = t."milestoneId" AND pm."projectId" = t."projectId" AND pm."parentId" IS NULL
-WHERE NOT EXISTS (SELECT 1 FROM "milestones" m WHERE m."id" = t."id")
+WHERE NOT EXISTS (SELECT 1 FROM "milestones" m WHERE m."id" = t."id") AND t."createdAt" > $1
 ON CONFLICT DO NOTHING`,
 
-  // 4. Card comments follow their card.
+  // 4. Card comments follow their card (on boot, those made since the last pass).
   `INSERT INTO "milestone_comments" ("id", "milestoneId", "authorId", "authorRole", "kind",
   "body", "mentions", "attachments", "resolvedAt", "resolvedById", "createdAt")
 SELECT c."id", c."taskId", c."authorId", c."authorRole", c."kind", c."body", c."mentions",
   c."attachments", c."resolvedAt", c."resolvedById", c."createdAt"
 FROM "project_task_comments" c
 JOIN "milestones" m ON m."id" = c."taskId"
+WHERE c."createdAt" > $1
 ON CONFLICT DO NOTHING`,
 
   // 5. Requests still waiting for a decision appear on the board as Requested
@@ -96,12 +106,148 @@ WHERE "stage" <> 'REQUESTED' AND "status" <> (CASE "stage" WHEN 'IN_PROGRESS' TH
   //    forgot to store it, which kept them out of every USD total.
   `UPDATE "invoices" SET "amountUsd" = "amount"
 WHERE "currency" = 'USD' AND "amountUsd" IS NULL AND "creditNoteForId" IS NULL`,
+
+  // The v49c migration: repairs to rows the old code wrote that v49b left in
+  // a shape the new code can't handle. The current time is written in UTC,
+  // as Prisma writes it, whatever the session's zone.
+
+  // 8. A request the old code declined after step 5 gave it an item: the item
+  //    leaves the board the way a decline leaves it now (archived, still
+  //    Requested), instead of waiting where no action can clear it.
+  `UPDATE "milestones" m SET "archivedAt" = COALESCE(r."resolvedAt", now() AT TIME ZONE 'UTC')
+FROM "task_requests" r
+WHERE r."id" = m."sourceTaskRequestId" AND r."status" = 'REJECTED'
+  AND m."stage" = 'REQUESTED' AND m."archivedAt" IS NULL`,
+
+  // 9. A Requested item whose request was deleted with its client. Only a
+  //    client's addition and step 5 write Requested, both with a request.
+  `UPDATE "milestones" SET "archivedAt" = now() AT TIME ZONE 'UTC'
+WHERE "stage" = 'REQUESTED' AND "sourceTaskRequestId" IS NULL AND "archivedAt" IS NULL`,
+
+  // 10. The client approved work in Review on the old code, which only
+  //     stamped the approval. Nothing new leaves an approval on Review work
+  //     (sending it for review clears one), so this only finds those.
+  `UPDATE "milestones" SET "stage" = 'DONE'
+WHERE "stage" = 'REVIEW' AND "clientApprovedAt" IS NOT NULL`,
+
+  // 11. Cards the old board edited after step 3 copied them: a rename, a new
+  //     assignee, a move to another column (a client dragging one to Done
+  //     must not find it back in Review). Every write of the new code bumps
+  //     updatedAt, so its own edits win. Stage, status and completedAt follow
+  //     stageWrite, and an approval is kept only in Done. A card keeps its
+  //     place unless it changed column, and its phase isn't copied: the copy
+  //     may have become a phase with work under it since.
+  `UPDATE "milestones" m SET "title" = t."title", "description" = t."description",
+  "stage" = t."status",
+  "status" = (CASE t."status" WHEN 'IN_PROGRESS' THEN 'IN_PROGRESS' WHEN 'REVIEW' THEN 'COMPLETED'
+    WHEN 'DONE' THEN 'COMPLETED' ELSE 'PENDING' END)::"MilestoneStatus",
+  "completedAt" = CASE WHEN t."status" IN ('REVIEW', 'DONE') THEN COALESCE(
+    CASE WHEN m."stage" IN ('REVIEW', 'DONE') THEN m."completedAt" END, t."completedAt", t."updatedAt") END,
+  "clientApprovedAt" = CASE WHEN t."status" = 'DONE' THEN m."clientApprovedAt" END,
+  "boardPosition" = CASE WHEN t."status" = m."stage" THEN m."boardPosition"
+    WHEN t."position" > 0 THEN t."position" ELSE 1024 END,
+  "priority" = t."priority", "dueDate" = t."dueDate", "assigneeId" = t."assigneeId",
+  "updatedAt" = t."updatedAt"
+FROM "project_tasks" t
+WHERE m."id" = t."id" AND t."updatedAt" > m."updatedAt"`,
+
+  // 12. Help questions the old board marked answered after step 4 copied
+  //     them. Nothing reopens an answered one now.
+  `UPDATE "milestone_comments" mc SET "resolvedAt" = c."resolvedAt", "resolvedById" = c."resolvedById"
+FROM "project_task_comments" c
+WHERE mc."id" = c."id" AND mc."resolvedAt" IS NULL AND c."resolvedAt" IS NOT NULL`,
+
+  // 13. The old board put a card at 0 or below when it was added or dragged
+  //     to the top of a column, and step 3 turned all of those into 1024, so
+  //     they lost their order and their place on top. Copies still where
+  //     step 3 (or 11) put them, untouched since, go back on top in the old
+  //     order, below 1024 and below whatever else heads the column. They end
+  //     up under 1024, so this never moves the same row twice.
+  `UPDATE "milestones" m SET "boardPosition" = x."pos"
+FROM (SELECT t."id",
+    LEAST(COALESCE(top."minBoard", 1024), 1024)
+      * ROW_NUMBER() OVER (PARTITION BY t."projectId", t."status" ORDER BY t."position", t."createdAt", t."id")
+      / (COUNT(*) OVER (PARTITION BY t."projectId", t."status") + 1) AS "pos"
+  FROM "project_tasks" t
+  JOIN "milestones" c ON c."id" = t."id" AND c."stage" = t."status" AND c."boardPosition" = 1024
+    AND c."updatedAt" = t."updatedAt" AND c."archivedAt" IS NULL
+  LEFT JOIN (SELECT "projectId", "stage", MIN("boardPosition") AS "minBoard" FROM "milestones"
+    WHERE "archivedAt" IS NULL AND "boardPosition" > 0 GROUP BY 1, 2) top
+    ON top."projectId" = t."projectId" AND top."stage" = t."status"
+  WHERE t."position" <= 0) x
+WHERE m."id" = x."id"`,
+
+  // 14–15. Invoices the old code marked paid by status alone, with nothing
+  //     recorded as paid. Their status is now worked out from the payments
+  //     and credits, so one credit note would reopen them with the rest owing.
+  //     They get what Mark paid records now: a "Marked paid" payment for the
+  //     balance net of live credits, and amountPaid to match. A paid invoice
+  //     the new code wrote is always covered, so this only finds those.
+  `INSERT INTO "invoice_payments" ("id", "invoiceId", "amount", "paidAt", "method", "createdAt")
+SELECT 'legacy_' || i."id", i."id", i."amount" - c."credited" - i."amountPaid", i."updatedAt",
+  'Marked paid', now() AT TIME ZONE 'UTC'
+FROM "invoices" i
+JOIN (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
+  FROM "invoices" p
+  LEFT JOIN "invoices" n ON n."creditNoteForId" = p."id" AND n."status" NOT IN ('CANCELLED', 'DRAFT')
+  WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
+  GROUP BY p."id") c ON c."id" = i."id"
+WHERE i."amountPaid" + c."credited" < i."amount"
+ON CONFLICT DO NOTHING`,
+
+  `UPDATE "invoices" i SET "amountPaid" = i."amount" - c."credited"
+FROM (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
+  FROM "invoices" p
+  LEFT JOIN "invoices" n ON n."creditNoteForId" = p."id" AND n."status" NOT IN ('CANCELLED', 'DRAFT')
+  WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
+  GROUP BY p."id") c
+WHERE i."id" = c."id" AND i."amountPaid" + c."credited" < i."amount"`,
+
+  // 16–17. The old Bill work linked nothing to the work it billed, so all of
+  //     it read as unbilled and would be billed again. Lines on invoices from
+  //     before the first boot pass (the old code's) are matched by what the
+  //     old Bill work wrote: a fixed milestone's title, and "<title> — <n>h"
+  //     for hours. It billed every entry that existed when it ran, so each
+  //     entry goes to the earliest such line made after it. Later invoices
+  //     are left alone, so a hand-typed line can't take hours it never billed.
+  //     Only empty links are filled, and on boot only until one pass has
+  //     done this: an admin removing a line later frees its work for good.
+  `UPDATE "invoice_items" ii SET "milestoneId" = m."id"
+FROM "invoices" i, "milestones" m
+WHERE ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
+  AND i."status" <> 'CANCELLED' AND i."creditNoteForId" IS NULL
+  AND i."createdAt" < COALESCE((SELECT COALESCE(
+    (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49:firstBoot'),
+    (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49'))::timestamptz AT TIME ZONE 'UTC'),
+    now() AT TIME ZONE 'UTC')
+  AND m."projectId" = i."projectId" AND m."pricingType" = 'FIXED' AND ii."description" = m."title"`,
+
+  `UPDATE "time_entries" te SET "invoiceItemId" = x."itemId"
+FROM (SELECT DISTINCT ON (e."id") e."id" AS "entryId", ii."id" AS "itemId"
+  FROM "time_entries" e
+  JOIN "milestones" m ON m."id" = e."milestoneId" AND m."pricingType" = 'HOURLY'
+  JOIN "invoices" i ON i."projectId" = m."projectId" AND i."status" <> 'CANCELLED'
+    AND i."creditNoteForId" IS NULL AND i."createdAt" >= e."createdAt"
+    AND i."createdAt" < COALESCE((SELECT COALESCE(
+      (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49:firstBoot'),
+      (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49'))::timestamptz AT TIME ZONE 'UTC'),
+      now() AT TIME ZONE 'UTC')
+  JOIN "invoice_items" ii ON ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
+    AND left(ii."description", length(m."title") + 3) = m."title" || ' — '
+    AND right(ii."description", 1) = 'h'
+  WHERE e."invoiceItemId" IS NULL
+  ORDER BY e."id", i."createdAt", ii."sortOrder") x
+WHERE te."id" = x."entryId" AND te."invoiceItemId" IS NULL`,
 ];
 
 type Db = {
-  $executeRawUnsafe(query: string): Promise<number>;
+  $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
   appSetting: {
-    findUnique(args: { where: { key: string } }): Promise<{ value: string } | null>;
+    findMany(args: {
+      where: { key: { in: string[] } };
+      select: { key: true; value: true };
+    }): Promise<{ key: string; value: string }[]>;
+    createMany(args: { data: { key: string; value: string }[]; skipDuplicates: boolean }): Promise<unknown>;
     upsert(args: {
       where: { key: string };
       create: { key: string; value: string };
@@ -110,23 +256,83 @@ type Db = {
   };
 };
 
-const DONE_KEY = "workBackfill:v49";
+/** When the last boot pass started. */
+const LAST_PASS_KEY = "workBackfill:v49";
 
-/** Runs the statements in order and reports how many rows each touched. */
-export async function backfillWorkItems(db: Pick<Db, "$executeRawUnsafe">): Promise<number[]> {
+/**
+ * When the first boot pass started, written once. Invoices from before it
+ * were written by the old code, which linked no line to the work it billed:
+ * the line-linking steps and Bill work's allowance for older invoices
+ * (dal/billable.ts) only look at those. The SQL names it as text.
+ */
+export const FIRST_PASS_KEY = "workBackfill:v49:firstBoot";
+
+/**
+ * Set once a boot pass has finished the line-linking steps. Every row they
+ * look for is older than the first pass, so the first one that finishes has
+ * seen them all; a later run would only undo the admin's own edits.
+ */
+const LINKED_KEY = "workBackfill:v49:linked";
+
+/** Steps 16 and 17: they read the first pass's time. */
+function isLinkStep(sql: string): boolean {
+  return sql.includes(`'${FIRST_PASS_KEY}'`);
+}
+
+/**
+ * Runs the statements in order and reports how many rows each touched (0 for
+ * a skipped one). `since` bounds the steps that copy rows across ($1); the
+ * migrations run them unbounded. `link: false` skips steps 16 and 17.
+ */
+export async function backfillWorkItems(
+  db: Pick<Db, "$executeRawUnsafe">,
+  since: Date,
+  { link = true }: { link?: boolean } = {},
+): Promise<number[]> {
   const counts: number[] = [];
-  for (const sql of WORK_BACKFILL_SQL) counts.push(await db.$executeRawUnsafe(sql));
+  for (const sql of WORK_BACKFILL_SQL) {
+    if (!link && isLinkStep(sql)) counts.push(0);
+    else counts.push(await (sql.includes("$1") ? db.$executeRawUnsafe(sql, since) : db.$executeRawUnsafe(sql)));
+  }
   return counts;
 }
 
 /**
- * The post-deploy pass: once per database, on the first boot of the v49 code.
- * Concurrent boots may both run it; every statement tolerates that.
+ * The boot pass: everything an older build wrote since the last pass started.
+ * It records its own start rather than its end, so rows written while it runs
+ * are picked up next time. Concurrent boots may both run it; every statement
+ * tolerates that. `bootedAt` is when this process started taking requests:
+ * the pass itself runs a little later, and invoices the new code makes in
+ * between must not read as the old code's.
  */
-export async function backfillWorkItemsOnce(db: Db): Promise<void> {
-  if (await db.appSetting.findUnique({ where: { key: DONE_KEY } })) return;
-  const counts = await backfillWorkItems(db);
-  const value = new Date().toISOString();
-  await db.appSetting.upsert({ where: { key: DONE_KEY }, create: { key: DONE_KEY, value }, update: { value } });
+export async function backfillWorkItemsOnBoot(
+  db: Db,
+  { bootedAt = new Date() }: { bootedAt?: Date } = {},
+): Promise<number[]> {
+  const startedAt = new Date().toISOString();
+  const settings = await db.appSetting.findMany({
+    where: { key: { in: [LAST_PASS_KEY, LINKED_KEY] } },
+    select: { key: true, value: true },
+  });
+  const last = settings.find((row) => row.key === LAST_PASS_KEY)?.value;
+  const linked = settings.some((row) => row.key === LINKED_KEY);
+  // A database the first v49 build already ran its one pass on keeps that
+  // pass's time as the first.
+  await db.appSetting.createMany({
+    data: [{ key: FIRST_PASS_KEY, value: last ?? bootedAt.toISOString() }],
+    skipDuplicates: true,
+  });
+  const counts = await backfillWorkItems(db, new Date(last ?? 0), { link: !linked });
+  await Promise.all([
+    db.appSetting.upsert({
+      where: { key: LAST_PASS_KEY },
+      create: { key: LAST_PASS_KEY, value: startedAt },
+      update: { value: startedAt },
+    }),
+    ...(linked
+      ? []
+      : [db.appSetting.createMany({ data: [{ key: LINKED_KEY, value: startedAt }], skipDuplicates: true })]),
+  ]);
   if (counts.some((n, i) => n > 0 && i !== 0)) console.log(`[backfill] work items v49: ${counts.join(", ")}`);
+  return counts;
 }

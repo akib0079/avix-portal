@@ -1,0 +1,95 @@
+-- v49c: data repairs only, after v49b. Generated from src/lib/work-backfill.ts
+-- (the statements after v49b's), which runs them again on every boot of the
+-- new code to catch rows an older build wrote since. Each one only matches
+-- rows still in the shape the old code writes, so it is safe to repeat; see
+-- that file for notes.
+
+UPDATE "milestones" m SET "archivedAt" = COALESCE(r."resolvedAt", now() AT TIME ZONE 'UTC')
+FROM "task_requests" r
+WHERE r."id" = m."sourceTaskRequestId" AND r."status" = 'REJECTED'
+  AND m."stage" = 'REQUESTED' AND m."archivedAt" IS NULL;
+
+UPDATE "milestones" SET "archivedAt" = now() AT TIME ZONE 'UTC'
+WHERE "stage" = 'REQUESTED' AND "sourceTaskRequestId" IS NULL AND "archivedAt" IS NULL;
+
+UPDATE "milestones" SET "stage" = 'DONE'
+WHERE "stage" = 'REVIEW' AND "clientApprovedAt" IS NOT NULL;
+
+UPDATE "milestones" m SET "title" = t."title", "description" = t."description",
+  "stage" = t."status",
+  "status" = (CASE t."status" WHEN 'IN_PROGRESS' THEN 'IN_PROGRESS' WHEN 'REVIEW' THEN 'COMPLETED'
+    WHEN 'DONE' THEN 'COMPLETED' ELSE 'PENDING' END)::"MilestoneStatus",
+  "completedAt" = CASE WHEN t."status" IN ('REVIEW', 'DONE') THEN COALESCE(
+    CASE WHEN m."stage" IN ('REVIEW', 'DONE') THEN m."completedAt" END, t."completedAt", t."updatedAt") END,
+  "clientApprovedAt" = CASE WHEN t."status" = 'DONE' THEN m."clientApprovedAt" END,
+  "boardPosition" = CASE WHEN t."status" = m."stage" THEN m."boardPosition"
+    WHEN t."position" > 0 THEN t."position" ELSE 1024 END,
+  "priority" = t."priority", "dueDate" = t."dueDate", "assigneeId" = t."assigneeId",
+  "updatedAt" = t."updatedAt"
+FROM "project_tasks" t
+WHERE m."id" = t."id" AND t."updatedAt" > m."updatedAt";
+
+UPDATE "milestone_comments" mc SET "resolvedAt" = c."resolvedAt", "resolvedById" = c."resolvedById"
+FROM "project_task_comments" c
+WHERE mc."id" = c."id" AND mc."resolvedAt" IS NULL AND c."resolvedAt" IS NOT NULL;
+
+UPDATE "milestones" m SET "boardPosition" = x."pos"
+FROM (SELECT t."id",
+    LEAST(COALESCE(top."minBoard", 1024), 1024)
+      * ROW_NUMBER() OVER (PARTITION BY t."projectId", t."status" ORDER BY t."position", t."createdAt", t."id")
+      / (COUNT(*) OVER (PARTITION BY t."projectId", t."status") + 1) AS "pos"
+  FROM "project_tasks" t
+  JOIN "milestones" c ON c."id" = t."id" AND c."stage" = t."status" AND c."boardPosition" = 1024
+    AND c."updatedAt" = t."updatedAt" AND c."archivedAt" IS NULL
+  LEFT JOIN (SELECT "projectId", "stage", MIN("boardPosition") AS "minBoard" FROM "milestones"
+    WHERE "archivedAt" IS NULL AND "boardPosition" > 0 GROUP BY 1, 2) top
+    ON top."projectId" = t."projectId" AND top."stage" = t."status"
+  WHERE t."position" <= 0) x
+WHERE m."id" = x."id";
+
+INSERT INTO "invoice_payments" ("id", "invoiceId", "amount", "paidAt", "method", "createdAt")
+SELECT 'legacy_' || i."id", i."id", i."amount" - c."credited" - i."amountPaid", i."updatedAt",
+  'Marked paid', now() AT TIME ZONE 'UTC'
+FROM "invoices" i
+JOIN (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
+  FROM "invoices" p
+  LEFT JOIN "invoices" n ON n."creditNoteForId" = p."id" AND n."status" NOT IN ('CANCELLED', 'DRAFT')
+  WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
+  GROUP BY p."id") c ON c."id" = i."id"
+WHERE i."amountPaid" + c."credited" < i."amount"
+ON CONFLICT DO NOTHING;
+
+UPDATE "invoices" i SET "amountPaid" = i."amount" - c."credited"
+FROM (SELECT p."id", COALESCE(SUM(n."amount"), 0) AS "credited"
+  FROM "invoices" p
+  LEFT JOIN "invoices" n ON n."creditNoteForId" = p."id" AND n."status" NOT IN ('CANCELLED', 'DRAFT')
+  WHERE p."status" = 'PAID' AND p."creditNoteForId" IS NULL
+  GROUP BY p."id") c
+WHERE i."id" = c."id" AND i."amountPaid" + c."credited" < i."amount";
+
+UPDATE "invoice_items" ii SET "milestoneId" = m."id"
+FROM "invoices" i, "milestones" m
+WHERE ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
+  AND i."status" <> 'CANCELLED' AND i."creditNoteForId" IS NULL
+  AND i."createdAt" < COALESCE((SELECT COALESCE(
+    (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49:firstBoot'),
+    (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49'))::timestamptz AT TIME ZONE 'UTC'),
+    now() AT TIME ZONE 'UTC')
+  AND m."projectId" = i."projectId" AND m."pricingType" = 'FIXED' AND ii."description" = m."title";
+
+UPDATE "time_entries" te SET "invoiceItemId" = x."itemId"
+FROM (SELECT DISTINCT ON (e."id") e."id" AS "entryId", ii."id" AS "itemId"
+  FROM "time_entries" e
+  JOIN "milestones" m ON m."id" = e."milestoneId" AND m."pricingType" = 'HOURLY'
+  JOIN "invoices" i ON i."projectId" = m."projectId" AND i."status" <> 'CANCELLED'
+    AND i."creditNoteForId" IS NULL AND i."createdAt" >= e."createdAt"
+    AND i."createdAt" < COALESCE((SELECT COALESCE(
+      (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49:firstBoot'),
+      (SELECT "value" FROM "app_settings" WHERE "key" = 'workBackfill:v49'))::timestamptz AT TIME ZONE 'UTC'),
+      now() AT TIME ZONE 'UTC')
+  JOIN "invoice_items" ii ON ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
+    AND left(ii."description", length(m."title") + 3) = m."title" || ' — '
+    AND right(ii."description", 1) = 'h'
+  WHERE e."invoiceItemId" IS NULL
+  ORDER BY e."id", i."createdAt", ii."sortOrder") x
+WHERE te."id" = x."entryId" AND te."invoiceItemId" IS NULL;

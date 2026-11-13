@@ -34,6 +34,19 @@ export type BillableLineView = {
   rate: number;
 };
 
+/**
+ * Invoices from before work was linked to the lines billing it can't say
+ * what they cover, so some of the work offered may be on them already.
+ */
+export function LegacyNote({ legacyUsd }: { legacyUsd: number }) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      {usd.format(legacyUsd)} was invoiced here before invoices recorded the work they bill.
+      Tick only what it doesn&apos;t cover.
+    </p>
+  );
+}
+
 function lineTotal(line: BillableLineView): number {
   return Math.round(line.qty * line.rate * 100) / 100;
 }
@@ -49,11 +62,14 @@ export function BillWorkButton({
   projectId,
   lines,
   unbilled,
+  legacyUsd = 0,
 }: {
   projectId: string;
   lines: BillableLineView[];
   /** Value of the work no invoice bills yet (USD). */
   unbilled: number;
+  /** USD on older invoices that don't say which work they bill (dal/billable). */
+  legacyUsd?: number;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -68,8 +84,9 @@ export function BillWorkButton({
   const allPicked = chosen.length === lines.length;
 
   function show() {
-    // Everything ticked to start with: most invoices bill all of it.
-    setPicked(new Set(lines.map((line) => line.key)));
+    // Everything ticked to start with: most invoices bill all of it. Unless
+    // older invoices may already bill some of it: then the owner picks.
+    setPicked(legacyUsd > 0 ? new Set() : new Set(lines.map((line) => line.key)));
     setOpen(true);
   }
 
@@ -112,6 +129,8 @@ export function BillWorkButton({
               leave it for a later invoice. It saves as a draft — nothing is sent.
             </DialogDescription>
           </DialogHeader>
+
+          {legacyUsd > 0 && <LegacyNote legacyUsd={legacyUsd} />}
 
           <div className="rounded-lg border">
             <div className="flex items-center justify-between border-b px-3 py-2 text-xs text-muted-foreground">

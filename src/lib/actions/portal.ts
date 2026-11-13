@@ -28,6 +28,10 @@ function revalidateProject(projectId: string) {
  * The same write as approving by dragging the card to Done on the board.
  * Work finished before v49 (Done, never approved) can still be approved; it
  * just gets the stamp. In-app admin notification only — no email.
+ *
+ * An item still in Review always moves, even with an approval on it: the
+ * older build, serving during a deploy or a rollback, stamped approvals
+ * without moving anything.
  */
 export async function approveMilestone(id: string): Promise<ActionResult> {
   await requireClient();
@@ -35,17 +39,19 @@ export async function approveMilestone(id: string): Promise<ActionResult> {
   if (!access || access.viewer.side !== "CLIENT") return { ok: false, error: "Milestone not found." };
   const { viewer, item } = access;
   if (item.archivedAt) return { ok: false, error: "Milestone not found." };
-  if (item.clientApprovedAt) return { ok: true }; // already approved
+  const already = !!item.clientApprovedAt;
 
   if (item.stage === "REVIEW") {
     await writeApproval(item);
   } else if (item.stage === "DONE") {
+    if (already) return { ok: true };
     await prisma.milestone.update({ where: { id: item.id }, data: { clientApprovedAt: new Date() } });
   } else {
     return { ok: false, error: "Only work that's ready for your review can be approved." };
   }
 
-  later(() => announceApproval(viewer, item));
+  // The older build told the admins about the approval it stamped.
+  if (!already) later(() => announceApproval(viewer, item));
   revalidateProject(item.projectId);
   return { ok: true };
 }
