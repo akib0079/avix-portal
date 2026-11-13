@@ -239,10 +239,13 @@ export function positionBetween(before?: number | null, after?: number | null): 
 
 /**
  * The rows a drop writes. Normally one: the moved item, at the position the
- * board asked for. When that position is unusable — not above zero, not a
- * number, or within MIN_POSITION_GAP of a neighbour after many drops at one
- * spot — the column is renumbered POSITION_STEP apart in the order the drop
- * implies, and every row that moved is returned.
+ * board asked for. A position that lands on exactly one card — a neighbour a
+ * filter hides, say — moves to the midpoint just past that card when there
+ * is room, still one row.
+ * When the position is unusable — not above zero, not a number, or within
+ * MIN_POSITION_GAP of a neighbour after many drops at one spot — the column
+ * is renumbered POSITION_STEP apart in the order the drop implies, and every
+ * row that moved is returned.
  *
  * `others` is the destination column without the moved item.
  */
@@ -252,13 +255,22 @@ export function placeInColumn(
   requested: number,
 ): { id: string; boardPosition: number }[] {
   const rest = others.filter((o) => o.id !== id);
-  const fits =
-    Number.isFinite(requested) &&
-    requested > 0 &&
-    rest.every((o) => Math.abs(o.boardPosition - requested) >= MIN_POSITION_GAP);
-  if (fits) return [{ id, boardPosition: requested }];
+  const fits = (p: number) =>
+    Number.isFinite(p) && p > 0 && rest.every((o) => Math.abs(o.boardPosition - p) >= MIN_POSITION_GAP);
+  if (fits(requested)) return [{ id, boardPosition: requested }];
 
   const sorted = [...rest].sort((a, b) => a.boardPosition - b.boardPosition);
+  const hits = sorted.filter((o) => Math.abs(o.boardPosition - requested) < MIN_POSITION_GAP);
+  if (requested > 0 && hits.length === 1) {
+    // The side of the card the renumber below would put the item on.
+    const hit = hits[0].boardPosition;
+    const nudged =
+      requested > hit
+        ? positionBetween(hit, sorted.find((o) => o.boardPosition > hit)?.boardPosition)
+        : positionBetween(sorted.findLast((o) => o.boardPosition < hit)?.boardPosition, hit);
+    if (fits(nudged)) return [{ id, boardPosition: nudged }];
+  }
+
   const at = Number.isFinite(requested)
     ? sorted.filter((o) => o.boardPosition < requested).length
     : sorted.length;
@@ -479,6 +491,8 @@ export type WorkVersionRow = {
   commentsAt: Date | null;
   comments: number;
   hours: number;
+  /** The hours weighted by item, so moving hours between items shows. */
+  hoursMix: number;
   entries: number;
   billedAt: Date | null;
   billed: number;
@@ -488,9 +502,10 @@ export type WorkVersionRow = {
  * The board poll's change token: one number for everything a card or row can
  * show that can change — the items themselves (any update bumps updatedAt;
  * archiving or adding changes the count), their threads (a new comment, a
- * resolved help request, a deleted comment), logged hours, and for ADMIN the
- * invoice lines that bill them. Equal tokens mean the viewer already holds the
- * current board, so the poll answers 204 with no body.
+ * resolved help request, a deleted comment), logged hours and which items
+ * they're on, and for ADMIN the invoice lines that bill them. Equal tokens
+ * mean the viewer already holds the current board, so the poll answers 204
+ * with no body.
  */
 export function workVersion(row: WorkVersionRow, opts: { billing: boolean }): string {
   const at = (d: Date | null) => (d ? d.getTime() : 0);
@@ -500,6 +515,7 @@ export function workVersion(row: WorkVersionRow, opts: { billing: boolean }): st
     at(row.commentsAt),
     row.comments,
     Math.round(row.hours * 100),
+    Math.round(row.hoursMix * 100),
     row.entries,
   ];
   if (opts.billing) parts.push(at(row.billedAt), row.billed);

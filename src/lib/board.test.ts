@@ -123,6 +123,38 @@ test("a drop writes one row while there is room", () => {
   assert.deepEqual(placeInColumn([], "x", 1024), [{ id: "x", boardPosition: 1024 }]);
 });
 
+test("a drop onto a hidden card goes just past it instead of renumbering", () => {
+  const column = [
+    { id: "a", boardPosition: 1024 },
+    { id: "b", boardPosition: 2048 },
+    { id: "c", boardPosition: 3072 },
+  ];
+  // A filter hides b: the drop between a and c lands exactly on it.
+  assert.deepEqual(placeInColumn(column, "x", 2048), [{ id: "x", boardPosition: 1536 }]);
+  // Just above b goes above it.
+  assert.deepEqual(placeInColumn(column, "x", 2048 + MIN_POSITION_GAP / 4), [
+    { id: "x", boardPosition: 2560 },
+  ]);
+  // On the first card, halfway to zero.
+  assert.deepEqual(placeInColumn(column, "x", 1024), [{ id: "x", boardPosition: 512 }]);
+  // No room beside the card: renumber.
+  const tight = [
+    { id: "a", boardPosition: 1024 },
+    { id: "b", boardPosition: 1024 + MIN_POSITION_GAP * 1.5 },
+  ];
+  assert.equal(placeInColumn(tight, "x", 1024 + MIN_POSITION_GAP * 1.5).length > 1, true);
+  // Two cards at the same number are a run, not one card: renumber.
+  const tied = [
+    { id: "a", boardPosition: 1024 },
+    { id: "b", boardPosition: 1024 },
+  ];
+  assert.deepEqual(placeInColumn(tied, "x", 1024), [
+    { id: "x", boardPosition: 1024 },
+    { id: "a", boardPosition: 2048 },
+    { id: "b", boardPosition: 3072 },
+  ]);
+});
+
 test("a drop renumbers the column when the spot is worn out or not above zero", () => {
   const column = [
     { id: "a", boardPosition: 1024 },
@@ -224,6 +256,7 @@ test("the change token moves with anything a card shows", () => {
     commentsAt: new Date("2026-11-02T09:00:00Z"),
     comments: 4,
     hours: 7.5,
+    hoursMix: 7.5 * 1000,
     entries: 3,
     billedAt: null,
     billed: 0,
@@ -236,6 +269,8 @@ test("the change token moves with anything a card shows", () => {
     { commentsAt: new Date("2026-11-02T09:30:00Z") },
     { comments: 3 },
     { hours: 7.75 },
+    // The same hours, moved to another item.
+    { hoursMix: 7.5 * 2000 },
     { entries: 4 },
   ];
   for (const change of changes) {
@@ -246,8 +281,8 @@ test("the change token moves with anything a card shows", () => {
   assert.equal(workVersion(billed, { billing: false }), base);
   assert.notEqual(workVersion(billed, { billing: true }), workVersion(row, { billing: true }));
   const empty = workVersion(
-    { itemsAt: null, items: 0, commentsAt: null, comments: 0, hours: 0, entries: 0, billedAt: null, billed: 0 },
+    { itemsAt: null, items: 0, commentsAt: null, comments: 0, hours: 0, hoursMix: 0, entries: 0, billedAt: null, billed: 0 },
     { billing: true },
   );
-  assert.equal(empty, "0.0.0.0.0.0.0.0");
+  assert.equal(empty, "0.0.0.0.0.0.0.0.0");
 });

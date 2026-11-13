@@ -7,14 +7,20 @@ import { prisma } from "@/lib/prisma";
 import {
   boardAccess,
   itemAccess,
+  itemScalarSelect,
   itemSelect,
   itemExtras,
   emptyExtras,
+  personOf,
   toWorkItem,
+  withRelations,
+  commentAuthorSelect,
+  commentScalarSelect,
   commentSelect,
   toComment,
   listBoardPeople,
   type ItemRow,
+  type ItemScalarRow,
 } from "@/lib/dal/project-board";
 import { logActivity } from "@/lib/dal/activity";
 import { clipPreview } from "@/lib/rich-text";
@@ -60,8 +66,8 @@ import {
 
 /**
  * Writes on project work — the board and the list share them. Every piece of
- * work is a Milestone row (v49); nothing here touches the frozen v48 board
- * tables.
+ * work is a Milestone row (v49); the frozen v48 board tables are only ever
+ * touched to delete a migrated row along with its copy.
  *
  * Who may do what:
  *  - the team creates and edits anything (pricing is ADMIN-only: STAFF are
@@ -163,7 +169,7 @@ export async function createWorkItem(
   }
 
   const now = new Date();
-  const row = await prisma.milestone.create({
+  const created = await prisma.milestone.create({
     data: {
       projectId: viewer.project.id,
       title: d.title,
@@ -180,7 +186,12 @@ export async function createWorkItem(
       createdById: viewer.user.id,
       createdByRole: "ADMIN",
     },
-    select: itemSelect,
+    select: itemScalarSelect,
+  });
+  const row = withRelations(created, {
+    assignee: refs.assignee,
+    createdBy: personOf(viewer.user),
+    _count: { comments: 0, children: 0 },
   });
 
   const actor = displayName(viewer.user);
@@ -272,7 +283,7 @@ export async function updateWorkItem(
     ...(dueDate !== undefined ? { dueDate } : {}),
   };
 
-  const write = async (): Promise<ItemRow | null> => {
+  const write = async (): Promise<ItemScalarRow | null> => {
     if (viewer.side === "CLIENT") {
       // The request is the client's own wording; it follows their edits.
       const sync =
@@ -291,7 +302,7 @@ export async function updateWorkItem(
           // Still waiting: the team may have just decided it.
           where: { id: item.id, stage: "REQUESTED", archivedAt: null },
           data: { ...fields, ...sync },
-          select: itemSelect,
+          select: itemScalarSelect,
         });
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") return null;
@@ -302,11 +313,16 @@ export async function updateWorkItem(
     if (p.parentId !== undefined) data.parentId = p.parentId;
     if (p.assigneeId !== undefined) data.assigneeId = p.assigneeId;
     if (p.pricing) Object.assign(data, pricingColumns(p.pricing));
-    return prisma.milestone.update({ where: { id: item.id }, data, select: itemSelect });
+    return prisma.milestone.update({ where: { id: item.id }, data, select: itemScalarSelect });
   };
   // The other-table numbers don't depend on this write: same wave.
-  const [row, extras] = await Promise.all([write(), itemExtras(item.id, viewer)]);
-  if (!row) return { ok: false, error: "The team just picked this up — comment on it instead." };
+  const [written, extras] = await Promise.all([write(), itemExtras(item.id, viewer)]);
+  if (!written) return { ok: false, error: "The team just picked this up — comment on it instead." };
+  const row = withRelations(written, {
+    assignee: p.assigneeId !== undefined ? refs.assignee : item.assignee,
+    createdBy: item.createdBy,
+    _count: item._count,
+  });
 
   const newAssignee = p.assigneeId !== undefined && p.assigneeId !== item.assigneeId ? p.assigneeId : null;
   if (newAssignee && newAssignee !== viewer.user.id) {
@@ -413,21 +429,21 @@ export async function moveWorkItem(
       case "send-back":
         return writeSendBack(viewer, item, to as "TODO" | "IN_PROGRESS", comment!, boardPosition);
       case "reorder":
-        return prisma.milestone.update({
-          where: { id: item.id },
-          data: { boardPosition },
-          select: itemSelect,
-        });
+        return prisma.milestone
+          .update({ where: { id: item.id }, data: { boardPosition }, select: itemScalarSelect })
+          .then((row) => withRelations(row, item));
       case "move":
-        return prisma.milestone.update({
-          where: { id: item.id },
-          data: {
-            ...stageWrite(to, item),
-            clientApprovedAt: approvalAfterMove(to, viewer.role, item.clientApprovedAt),
-            boardPosition,
-          },
-          select: itemSelect,
-        });
+        return prisma.milestone
+          .update({
+            where: { id: item.id },
+            data: {
+              ...stageWrite(to, item),
+              clientApprovedAt: approvalAfterMove(to, viewer.role, item.clientApprovedAt),
+              boardPosition,
+            },
+            select: itemScalarSelect,
+          })
+          .then((row) => withRelations(row, item));
     }
   };
 
@@ -457,16 +473,16 @@ export async function moveWorkItem(
   const renumbered = plan.length > 1 || planned !== target ? plan : [];
   const pending = plan.filter((r) => r.id !== item.id || r.boardPosition !== row.boardPosition);
   if (pending.length) {
-    await prisma.$transaction(
-      pending.map((r) =>
-        prisma.milestone.update({
-          where: { id: r.id },
-          data: { boardPosition: r.boardPosition },
-          select: { id: true },
-        }),
-      ),
-    );
-    row = { ...row, boardPosition: planned };
+    // One statement for the whole renumber: one round trip, all or nothing,
+    // and the column's rows are locked only while it runs. updatedAt is set by
+    // hand (a raw write skips @updatedAt): the poll's version token reads it.
+    const now = new Date();
+    await prisma.$executeRaw`
+      UPDATE "milestones" AS m
+      SET "boardPosition" = v."pos", "updatedAt" = ${now}::timestamp
+      FROM unnest(${pending.map((r) => r.id)}::text[], ${pending.map((r) => r.boardPosition)}::float8[]) AS v("id", "pos")
+      WHERE m."id" = v."id" AND m."projectId" = ${item.projectId}`;
+    row = { ...row, boardPosition: planned, updatedAt: now };
   }
 
   if (from !== to) {
@@ -566,10 +582,14 @@ export async function restoreWorkItem(itemId: string): Promise<BoardResult<{ ite
     prisma.$transaction([
       prisma.milestone.update({
         where: { id: item.id },
-        // Back under its phase only if the phase is still there.
+        // Back under its phase only if the phase is still there, and still a
+        // phase: it may have been put under another while this was away, and
+        // work nests one level deep.
         data: {
           archivedAt: null,
-          ...(item.parentId && (!item.parent || item.parent.archivedAt) ? { parentId: null } : {}),
+          ...(item.parentId && (!item.parent || item.parent.archivedAt || item.parent.parentId)
+            ? { parentId: null }
+            : {}),
         },
         select: itemSelect,
       }),
@@ -627,7 +647,13 @@ export async function deleteWorkItem(
     if (!item.archivedAt) await archiveTree(item.id);
   } else {
     // Its sub-items stay, at the top level (the relation sets parentId null).
-    await prisma.milestone.delete({ where: { id: item.id } });
+    // A card migrated from v48 shares its id with the frozen project_tasks
+    // row (its old comments cascade with it); that row goes too, or a re-run
+    // of the backfill would bring the card back. Same wave.
+    await Promise.all([
+      prisma.milestone.delete({ where: { id: item.id } }),
+      prisma.projectTask.deleteMany({ where: { id: item.id } }),
+    ]);
   }
   later(() =>
     logActivity({
@@ -757,7 +783,7 @@ export async function addWorkComment(
     .filter((p) => d.mentionIds.includes(p.id) && body.includes(`@${p.name}`))
     .map((p) => ({ id: p.id, name: p.name }));
 
-  const row = await prisma.milestoneComment.create({
+  const created = await prisma.milestoneComment.create({
     data: {
       milestoneId: item.id,
       authorId: viewer.user.id,
@@ -767,8 +793,9 @@ export async function addWorkComment(
       mentions: mentions.length ? mentions : undefined,
       attachments: d.attachments.length ? d.attachments : undefined,
     },
-    select: commentSelect,
+    select: commentScalarSelect,
   });
+  const row = { ...created, author: { ...personOf(viewer.user), role: viewer.role } };
   const [itemRow, extras] = await Promise.all([
     prisma.milestone.findUniqueOrThrow({ where: { id: item.id }, select: itemSelect }),
     itemExtras(item.id, viewer),
@@ -849,7 +876,14 @@ export async function addWorkComment(
 async function commentAccess(commentId: string) {
   const comment = await prisma.milestoneComment.findUnique({
     where: { id: commentId },
-    select: { id: true, milestoneId: true, authorId: true, kind: true, resolvedAt: true },
+    select: {
+      id: true,
+      milestoneId: true,
+      authorId: true,
+      kind: true,
+      resolvedAt: true,
+      author: commentAuthorSelect,
+    },
   });
   if (!comment) return null;
   const access = await itemAccess(comment.milestoneId);
@@ -867,11 +901,14 @@ export async function resolveWorkHelp(
 
   const row = comment.resolvedAt
     ? await prisma.milestoneComment.findUniqueOrThrow({ where: { id: comment.id }, select: commentSelect })
-    : await prisma.milestoneComment.update({
-        where: { id: comment.id },
-        data: { resolvedAt: new Date(), resolvedById: viewer.user.id },
-        select: commentSelect,
-      });
+    : {
+        ...(await prisma.milestoneComment.update({
+          where: { id: comment.id },
+          data: { resolvedAt: new Date(), resolvedById: viewer.user.id },
+          select: commentScalarSelect,
+        })),
+        author: comment.author,
+      };
   const [itemRow, extras] = await Promise.all([
     prisma.milestone.findUniqueOrThrow({ where: { id: item.id }, select: itemSelect }),
     itemExtras(item.id, viewer),
@@ -895,7 +932,12 @@ export async function deleteWorkComment(
   if (comment.authorId !== viewer.user.id && viewer.role !== "ADMIN") {
     return { ok: false, error: "You can only delete your own comments." };
   }
-  await prisma.milestoneComment.delete({ where: { id: comment.id } });
+  // A comment migrated from v48 keeps its old row's id: that row goes too, or
+  // a re-run of the backfill would bring the comment back.
+  await Promise.all([
+    prisma.milestoneComment.delete({ where: { id: comment.id } }),
+    prisma.projectTaskComment.deleteMany({ where: { id: comment.id } }),
+  ]);
   const [itemRow, extras] = await Promise.all([
     prisma.milestone.findUniqueOrThrow({ where: { id: item.id }, select: itemSelect }),
     itemExtras(item.id, viewer),
