@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireClient } from "@/lib/dal/session";
 import { notifyAllAdmins } from "@/lib/dal/notifications";
@@ -122,21 +123,28 @@ export async function reviewDeliverable(
   });
 
   const approved = decision === "APPROVED";
-  await notifyAllAdmins({
-    type: "DELIVERABLE_REVIEWED",
-    title: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"}: ${deliverable.title}`,
-    body: trimmed ? `“${trimmed}”` : deliverable.project.projectName,
-    link: `/admin/projects/${deliverable.project.id}`,
-  });
-  await logActivity({
-    type: approved ? "deliverable.approved" : "deliverable.changes",
-    summary: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"} “${deliverable.title}”`,
-    actorId: user.id,
-    clientId: user.id,
-    projectId: deliverable.project.id,
-    entity: "project",
-    entityId: deliverable.project.id,
-    link: `/admin/projects/${deliverable.project.id}`,
+  // The client's answer doesn't wait on telling the team.
+  after(async () => {
+    try {
+      await notifyAllAdmins({
+        type: "DELIVERABLE_REVIEWED",
+        title: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"}: ${deliverable.title}`,
+        body: trimmed ? `“${trimmed}”` : deliverable.project.projectName,
+        link: `/admin/projects/${deliverable.project.id}`,
+      });
+      await logActivity({
+        type: approved ? "deliverable.approved" : "deliverable.changes",
+        summary: `${user.firstName || "Client"} ${approved ? "approved" : "requested changes on"} “${deliverable.title}”`,
+        actorId: user.id,
+        clientId: user.id,
+        projectId: deliverable.project.id,
+        entity: "project",
+        entityId: deliverable.project.id,
+        link: `/admin/projects/${deliverable.project.id}`,
+      });
+    } catch (err) {
+      console.error("[deliverables] review follow-up failed:", (err as Error).message);
+    }
   });
 
   revalidatePath(`/portal/projects/${deliverable.project.id}`);
