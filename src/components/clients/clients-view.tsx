@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import type { ClientHealth } from "@/lib/dal/users";
 import { ClientActions } from "@/components/clients/client-actions";
 import { UserStatusBadge, InviteBadge } from "@/components/status-badges";
@@ -245,12 +245,12 @@ function ClientCard({ client }: { client: ClientRow }) {
           {initials(name)}
         </span>
         <div className="min-w-0 flex-1">
-          <Link
+          <IntentLink
             href={`/admin/clients/${client.id}`}
             className="line-clamp-2 text-[13px] leading-snug font-semibold hover:text-primary [overflow-wrap:anywhere]"
           >
             {name}
-          </Link>
+          </IntentLink>
           {client.company && (
             <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
               <Building2 className="size-3 shrink-0" />
@@ -347,7 +347,7 @@ function ClientTable({ rows }: { rows: ClientRow[] }) {
               return (
                 <TableRow key={client.id}>
                   <TableCell>
-                    <Link
+                    <IntentLink
                       href={`/admin/clients/${client.id}`}
                       className="flex items-center gap-2 font-medium hover:text-primary"
                     >
@@ -357,7 +357,7 @@ function ClientTable({ rows }: { rows: ClientRow[] }) {
                         title={client.healthReason ?? lane.title}
                       />
                       {name}
-                    </Link>
+                    </IntentLink>
                     <p className="pl-4 text-xs text-muted-foreground">{client.email}</p>
                   </TableCell>
                   <TableCell className="hidden text-sm text-muted-foreground md:table-cell">

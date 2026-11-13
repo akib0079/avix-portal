@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import type { Priority, ProjectStatus } from "@prisma/client";
 import { ProjectRowActions } from "@/components/projects/project-row-actions";
 import { ProjectStatusBadge, PriorityBadge } from "@/components/status-badges";
@@ -153,12 +153,12 @@ export function ProjectTable({
                 {page.shown.map((project) => (
                   <TableRow key={project.id}>
                     <TableCell>
-                      <Link
+                      <IntentLink
                         href={`/admin/projects/${project.id}`}
                         className="font-medium hover:text-primary"
                       >
                         {project.projectName}
-                      </Link>
+                      </IntentLink>
                       <p className="text-xs text-muted-foreground">
                         {project.sourceLabel} · {project.milestonesDone}/{project.milestoneCount}{" "}
                         milestones

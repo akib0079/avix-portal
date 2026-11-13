@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import type { ActivityRow } from "@/lib/dal/activity";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -88,9 +88,9 @@ export function ActivityFeed({
         return (
           <li key={e.id}>
             {e.link ? (
-              <Link href={e.link} className="flex gap-2.5 hover:opacity-80">
+              <IntentLink href={e.link} className="flex gap-2.5 hover:opacity-80">
                 {inner}
-              </Link>
+              </IntentLink>
             ) : (
               <div className="flex gap-2.5">{inner}</div>
             )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { toneChip, toneText } from "@/lib/tone";
@@ -248,7 +248,7 @@ function ContextChip({
   children: React.ReactNode;
 }) {
   return (
-    <Link
+    <IntentLink
       href={href}
       onClick={(e) => e.stopPropagation()}
       className={cn(
@@ -259,6 +259,6 @@ function ContextChip({
     >
       <Icon className="size-3 shrink-0" />
       <span className="truncate">{children}</span>
-    </Link>
+    </IntentLink>
   );
 }
