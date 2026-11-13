@@ -11,7 +11,7 @@ import {
   settleStatus,
   unsettledStatus,
 } from "@/lib/invoice-totals";
-import { draftBlocker } from "@/lib/invoice-rules";
+import { draftBlocker, restoreBlock, type RestoreBlock } from "@/lib/invoice-rules";
 import type { InvoiceInput } from "@/lib/validation/invoice";
 
 /**
@@ -340,9 +340,9 @@ export async function settleIfRaced(
   }
 }
 
-/** A cancelled invoice's work, billed again on these live invoices. */
+/** A cancelled invoice's work, billed again meanwhile. */
 class Rebilled extends Error {
-  constructor(readonly invoiceNumbers: string[]) {
+  constructor(readonly block: RestoreBlock) {
     super("Rebilled");
   }
 }
@@ -355,15 +355,18 @@ class Rebilled extends Error {
  *
  * `write` runs under the Bill work lock of every project whose work the
  * invoice's lines bill, so no bill lands in between, and it is rolled back if
- * another live invoice now bills one of those lines' work: a fixed line's, or
- * an hourly line's whose hours have moved. An hourly line that still has its
- * hours is left alone, since later hours of the same work are rightly on
- * other invoices. Returns those invoices' numbers; none when it was restored.
+ * another live invoice now bills one of those lines' work (a fixed line's),
+ * or if one of its hourly lines has lost its hours. Hours that moved stay
+ * moved, whatever happened to the invoice that took them: if it was cancelled
+ * too, they count as unbilled again, so a restored line with nothing behind
+ * it would charge them a second time. An hourly line that still has its hours is
+ * left alone, since later hours of the same work are rightly on other
+ * invoices. Returns why it was refused, or null when it was restored.
  */
 export async function restoreCancelled(
   invoiceId: string,
   write: (tx: Prisma.TransactionClient) => Promise<unknown>,
-): Promise<string[]> {
+): Promise<RestoreBlock | null> {
   try {
     await prisma.$transaction(
       async (tx) => {
@@ -377,26 +380,41 @@ export async function restoreCancelled(
           ) AS w`;
         await write(tx);
         // Read after the write, so lines the same edit removed don't count.
-        const taken = await tx.invoice.findMany({
+        // One statement: the other live invoices billing this one's work, and
+        // this invoice itself when an hourly line of it has lost its hours.
+        const found = await tx.invoice.findMany({
           where: {
-            id: { not: invoiceId },
-            status: { not: "CANCELLED" },
-            items: {
-              some: {
-                milestone: { invoiceItems: { some: { invoiceId, timeEntries: { none: {} } } } },
+            OR: [
+              {
+                id: { not: invoiceId },
+                status: { not: "CANCELLED" },
+                items: {
+                  some: {
+                    milestone: {
+                      invoiceItems: { some: { invoiceId, timeEntries: { none: {} } } },
+                    },
+                  },
+                },
               },
-            },
+              {
+                id: invoiceId,
+                items: {
+                  some: { milestone: { pricingType: "HOURLY" }, timeEntries: { none: {} } },
+                },
+              },
+            ],
           },
           orderBy: { invoiceNumber: "asc" },
-          select: { invoiceNumber: true },
+          select: { id: true, invoiceNumber: true },
         });
-        if (taken.length > 0) throw new Rebilled(taken.map((t) => t.invoiceNumber));
+        const block = restoreBlock(invoiceId, found);
+        if (block) throw new Rebilled(block);
       },
       { maxWait: 10_000, timeout: 20_000 },
     );
-    return [];
+    return null;
   } catch (err) {
-    if (err instanceof Rebilled) return err.invoiceNumbers;
+    if (err instanceof Rebilled) return err.block;
     throw err;
   }
 }
