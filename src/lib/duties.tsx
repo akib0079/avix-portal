@@ -34,7 +34,16 @@ import { runProposalDuties } from "@/lib/duties-proposals";
  * plan's nextRunAt claimed by compare-and-set, make re-runs no-ops).
  */
 
-const THROTTLE_KEY = "dutiesLastRunAt";
+const THROTTLE_KEY = "dutiesLastRunAt:v49";
+/**
+ * The stamp builds before v49 throttle on. v49 parks it in the far future,
+ * so an old build serving again (a rollback, or an old worker after the
+ * restart) always finds "ran just now" and runs no duties: its retainer duty
+ * would bill plans v49 scheduled by rules it doesn't know. To let an old
+ * build run its duties again, delete this setting.
+ */
+const LEGACY_THROTTLE_KEY = "dutiesLastRunAt";
+const LEGACY_PARKED = "9999-12-31T00:00:00.000Z";
 const THROTTLE_MS = 15 * 60 * 1000;
 
 function sleep(ms: number) {
@@ -198,9 +207,18 @@ async function generateScheduledInvoices(now: Date): Promise<void> {
 
   const results = [];
   for (const plan of plans) {
-    results.push(await processDuePlan(plan, now, booking.agencyTimezone));
+    // One plan failing must not cost the others their run or their summary.
+    try {
+      results.push(await processDuePlan(plan, now, booking.agencyTimezone));
+    } catch (err) {
+      console.error(`[duties] plan ${plan.id} failed:`, (err as Error).message);
+    }
   }
-  await summarisePlanResults(results);
+  try {
+    await summarisePlanResults(results);
+  } catch (err) {
+    console.error("[duties] plan summary failed:", (err as Error).message);
+  }
 }
 
 /**
@@ -471,8 +489,8 @@ async function chaseOverdueInvoices(now: Date): Promise<void> {
 
 /**
  * Closes the invoice to-dos an invoice has outgrown: any on an invoice now
- * paid or cancelled, and a "Confirm payment" whose claim the owner turned
- * down. Without this they stayed in Tasks after the money had landed.
+ * paid or cancelled, a chase on a $0 one, and a "Confirm payment" whose
+ * claim the owner turned down. Without this they stayed in Tasks after the money had landed.
  */
 async function closeSettledInvoiceTasks(now: Date) {
   return prisma.task.updateMany({
@@ -484,6 +502,8 @@ async function closeSettledInvoiceTasks(now: Date) {
           systemKey: { startsWith: "invoice-" },
           invoice: { status: { in: ["PAID", "CANCELLED"] } },
         },
+        // A $0 invoice was never owed, whatever its status says.
+        { systemKey: { startsWith: "invoice-overdue:" }, invoice: { amount: { lte: 0 } } },
         {
           systemKey: { startsWith: "invoice-confirm:" },
           invoice: { paymentClaimedAt: null, status: { not: "IN_REVIEW" } },
@@ -540,6 +560,8 @@ async function generateSystemTasks(now: Date): Promise<void> {
         status: { in: ["SENT", "PARTIALLY_PAID"] },
         paymentClaimedAt: null,
         creditNoteForId: null,
+        // A $0 invoice is never owed: it shouldn't take a place in the 50.
+        amount: { gt: 0 },
         dueDate: { not: null, lt: now },
       },
       select: {
@@ -563,6 +585,9 @@ async function generateSystemTasks(now: Date): Promise<void> {
     }),
     closeSettledInvoiceTasks(now),
   ]);
+  // Overdue invoices with nothing left owing, whose chase to-do (from before
+  // these were skipped) can close: their status alone doesn't say so.
+  const settledKeys: string[] = [];
   for (const inv of overdue) {
     // Nothing left owing ($0, or credited in full): the email chaser skips
     // these too.
@@ -571,7 +596,10 @@ async function generateSystemTasks(now: Date): Promise<void> {
       Number(inv.amountPaid),
       creditedTotal(inv.creditNotes),
     );
-    if (balance <= 0) continue;
+    if (balance <= 0) {
+      settledKeys.push(`invoice-overdue:${inv.id}`);
+      continue;
+    }
     seeds.push({
       systemKey: `invoice-overdue:${inv.id}`,
       title: `Chase payment on ${inv.invoiceNumber}`,
@@ -648,26 +676,34 @@ async function generateSystemTasks(now: Date): Promise<void> {
     });
   }
 
-  if (seeds.length === 0) return;
-
   // createMany + skipDuplicates leans on the unique systemKey, so this is one
   // round trip regardless of how many conditions currently hold.
-  await prisma.task.createMany({
-    data: seeds.map((seed) => ({
-      systemKey: seed.systemKey,
-      title: seed.title,
-      priority: seed.priority,
-      dueDate: seed.dueDate,
-      origin: "SYSTEM" as const,
-      assigneeId: owner.id,
-      createdById: owner.id,
-      clientId: seed.clientId ?? null,
-      projectId: seed.projectId ?? null,
-      invoiceId: seed.invoiceId ?? null,
-      leadId: seed.leadId ?? null,
-    })),
-    skipDuplicates: true,
-  });
+  await Promise.all([
+    settledKeys.length
+      ? prisma.task.updateMany({
+          where: { origin: "SYSTEM", status: { not: "DONE" }, systemKey: { in: settledKeys } },
+          data: { status: "DONE", completedAt: now },
+        })
+      : null,
+    seeds.length
+      ? prisma.task.createMany({
+          data: seeds.map((seed) => ({
+            systemKey: seed.systemKey,
+            title: seed.title,
+            priority: seed.priority,
+            dueDate: seed.dueDate,
+            origin: "SYSTEM" as const,
+            assigneeId: owner.id,
+            createdById: owner.id,
+            clientId: seed.clientId ?? null,
+            projectId: seed.projectId ?? null,
+            invoiceId: seed.invoiceId ?? null,
+            leadId: seed.leadId ?? null,
+          })),
+          skipDuplicates: true,
+        })
+      : null,
+  ]);
 }
 
 /**
@@ -684,21 +720,48 @@ export async function runDueDuties(): Promise<void> {
   nextCheckAt = nowMs + 60_000;
   try {
     const now = new Date();
-    const stamp = await prisma.appSetting.findUnique({ where: { key: THROTTLE_KEY } });
-    if (stamp && now.getTime() - Date.parse(stamp.value) < THROTTLE_MS) return;
-
-    await prisma.appSetting.upsert({
-      where: { key: THROTTLE_KEY },
-      create: { key: THROTTLE_KEY, value: now.toISOString() },
-      update: { value: now.toISOString() },
+    const stamps = await prisma.appSetting.findMany({
+      where: { key: { in: [THROTTLE_KEY, LEGACY_THROTTLE_KEY] } },
     });
+    // The old build's stamp still counts while it is a real time (during the
+    // switch-over), so the two builds never run duties at once; parked, it is
+    // ignored.
+    const recent = stamps.some((stamp) => {
+      const age = now.getTime() - Date.parse(stamp.value);
+      return age >= 0 && age < THROTTLE_MS;
+    });
+    if (recent) return;
 
-    await sendMeetingReminders(now);
-    await generateScheduledInvoices(now);
-    await chaseOverdueInvoices(now);
-    await drainCampaigns(now);
-    await generateSystemTasks(now);
-    await runProposalDuties(now);
+    await Promise.all([
+      prisma.appSetting.upsert({
+        where: { key: THROTTLE_KEY },
+        create: { key: THROTTLE_KEY, value: now.toISOString() },
+        update: { value: now.toISOString() },
+      }),
+      prisma.appSetting.upsert({
+        where: { key: LEGACY_THROTTLE_KEY },
+        create: { key: LEGACY_THROTTLE_KEY, value: LEGACY_PARKED },
+        update: { value: LEGACY_PARKED },
+      }),
+    ]);
+
+    // Each on its own, so one failing duty can't skip the rest for the
+    // 15 minutes the stamp already holds them off.
+    const duties: [string, (now: Date) => Promise<unknown>][] = [
+      ["meeting reminders", sendMeetingReminders],
+      ["recurring invoices", generateScheduledInvoices],
+      ["payment reminders", chaseOverdueInvoices],
+      ["campaigns", drainCampaigns],
+      ["system tasks", generateSystemTasks],
+      ["proposals", runProposalDuties],
+    ];
+    for (const [name, duty] of duties) {
+      try {
+        await duty(now);
+      } catch (err) {
+        console.error(`[duties] ${name} failed:`, (err as Error).message);
+      }
+    }
   } catch (err) {
     console.error("[duties] run failed:", (err as Error).message);
   }

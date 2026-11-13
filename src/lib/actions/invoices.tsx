@@ -8,7 +8,7 @@ import { requireAdmin } from "@/lib/dal/session";
 import { parseInvoiceForm } from "@/lib/invoice-form-data";
 import { createWithNextNumber } from "@/lib/invoice-number";
 import { creditedTotal, dueDateFromTerms, invoiceTotals } from "@/lib/invoice-totals";
-import { canDeleteInvoice, paymentBlocker } from "@/lib/invoice-rules";
+import { canDeleteInvoice, paymentBlocker, restoreRefusal } from "@/lib/invoice-rules";
 import {
   MARKED_PAID,
   addPayment,
@@ -87,14 +87,6 @@ function statusConflict(requested: InvoiceStatus, settled: InvoiceStatus): strin
     return "Part of this invoice is paid, so it stays Part paid until the rest comes in or a payment is removed.";
   }
   return "That status doesn't match the payments recorded on this invoice.";
-}
-
-/** Why a cancelled invoice can't come back: its work is billed on these now. */
-function rebilledError(invoiceNumbers: string[]): string {
-  const last = invoiceNumbers[invoiceNumbers.length - 1];
-  const list =
-    invoiceNumbers.length > 1 ? `${invoiceNumbers.slice(0, -1).join(", ")} and ${last}` : last;
-  return `This invoice's work was billed again on ${list} while it was cancelled, so bringing it back would bill that work twice. Cancel ${invoiceNumbers.length > 1 ? "those invoices" : list} first.`;
 }
 
 function invoiceLink(id: string) {
@@ -392,13 +384,13 @@ export async function updateInvoice(
     invoice.items.some((i) => i.milestoneId);
   if (restoring) {
     // Brought back from Cancelled: refused if its work was billed again since.
-    const taken = await restoreCancelled(id, async (tx) => {
+    const blocked = await restoreCancelled(id, async (tx) => {
       for (const write of writes(tx)) await write;
     });
-    if (taken.length > 0) {
+    if (blocked) {
       const stored = pdf.fileName;
       if (stored) after(() => deleteUpload("invoices", stored));
-      return { ok: false, error: rebilledError(taken) };
+      return { ok: false, error: restoreRefusal(blocked) };
     }
   } else {
     await prisma.$transaction(writes(prisma));
@@ -452,7 +444,7 @@ export async function setInvoiceStatus(
 
   if (invoice.status === "CANCELLED" && invoice.items.length > 0) {
     // Mark paid's payment goes in with the status, as addPayment writes it.
-    const taken = await restoreCancelled(id, async (tx) => {
+    const blocked = await restoreCancelled(id, async (tx) => {
       if (next.markPaid > 0) {
         await tx.invoicePayment.create({
           data: { invoiceId: id, amount: next.markPaid, paidAt: new Date(), method: MARKED_PAID },
@@ -469,7 +461,7 @@ export async function setInvoiceStatus(
         select: { id: true },
       });
     });
-    if (taken.length > 0) return { ok: false, error: rebilledError(taken) };
+    if (blocked) return { ok: false, error: restoreRefusal(blocked) };
   } else if (next.markPaid > 0) {
     await addPayment(
       invoice,

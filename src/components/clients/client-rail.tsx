@@ -180,6 +180,12 @@ export function ClientRail({
               </dd>
             </div>
           )}
+          {snapshot.unconverted > 0 && (
+            <p className="text-xs text-muted-foreground">
+              In USD. {snapshot.unconverted} invoice{snapshot.unconverted === 1 ? " has" : "s have"} no USD
+              value yet and {snapshot.unconverted === 1 ? "isn't" : "aren't"} in these figures.
+            </p>
+          )}
           <div className="flex items-center justify-between border-t pt-2.5">
             <dt className="text-muted-foreground">Projects</dt>
             <dd className="font-medium">

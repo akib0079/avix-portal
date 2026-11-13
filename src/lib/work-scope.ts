@@ -127,11 +127,13 @@ export function isInvoiceToPay(invoice: {
   creditNoteForId?: string | null;
   amount?: number | null;
   amountPaid?: number | null;
+  /** What its issued credit notes take off it (creditedTotal); none when left out. */
+  credited?: number | null;
 }): boolean {
   if (invoice.status !== "SENT" && invoice.status !== "PARTIALLY_PAID") return false;
   if (invoice.paymentClaimedAt || invoice.creditNoteForId) return false;
   if (invoice.amount != null && invoice.amountPaid != null) {
-    return invoice.amount - invoice.amountPaid > 0.005;
+    return invoice.amount - invoice.amountPaid - (invoice.credited ?? 0) > 0.005;
   }
   return true;
 }

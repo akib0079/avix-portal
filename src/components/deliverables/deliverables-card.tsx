@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createDeliverable, deleteDeliverable } from "@/lib/actions/deliverables";
 import type { DeliverableRow } from "@/lib/dal/deliverables";
@@ -36,11 +35,11 @@ export function DeliverablesCard({
   projectId: string;
   deliverables: DeliverableRow[];
 }) {
-  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [pending, startTransition] = useTransition();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // No router.refresh() below: both actions revalidate this page themselves.
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -49,7 +48,6 @@ export function DeliverablesCard({
       if (res.ok) {
         toast.success("Deliverable posted — the client has been notified.");
         formRef.current?.reset();
-        router.refresh();
       } else {
         toast.error(res.error);
       }
@@ -62,7 +60,6 @@ export function DeliverablesCard({
       const res = await deleteDeliverable(id);
       if (res.ok) {
         toast.success("Deliverable removed.");
-        router.refresh();
       } else {
         toast.error(res.error);
       }

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { formatDistanceToNow } from "date-fns";
 import { markNotificationsRead } from "@/lib/actions/notifications";
@@ -33,7 +32,6 @@ const fetcher = (url: string) =>
   fetch(url).then((r) => (r.ok ? r.json() : null));
 
 export function NotificationBell({ tone = "dark" }: { tone?: "dark" | "light" }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const { data, mutate } = useSWR<NotificationsResponse | null>(
     "/api/notifications",
@@ -44,10 +42,11 @@ export function NotificationBell({ tone = "dark" }: { tone?: "dark" | "light" })
   const unread = data?.unreadCount ?? 0;
   const notifications = data?.notifications ?? [];
 
+  // No router.refresh(): read state only feeds this SWR key (the bell and
+  // the nav badges), and nothing server-rendered depends on it.
   async function markAllRead() {
     await markNotificationsRead();
     mutate();
-    router.refresh();
   }
 
   return (

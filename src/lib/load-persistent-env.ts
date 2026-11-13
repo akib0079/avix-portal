@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import os from "os";
 import path from "path";
+import { isDeveloperPlatform } from "@/lib/dev-machine";
 
 /**
  * Reads a persistent secrets file and returns its KEY=value pairs.
@@ -62,6 +63,20 @@ export function getPersistentSecrets(): Secrets {
   // developer's ~/portal-secrets.env (kept for deploys) must NOT hijack
   // DATABASE_URL — that points dev at the production database.
   if (process.env.NODE_ENV === "development") {
+    cache = {};
+    return cache;
+  }
+  // A local production run (next build && next start, or a script) on the
+  // developer's computer: the file would swap in the production database,
+  // app URL and Resend key, and the run would mail real clients from a
+  // laptop. Decided by the OS, never by the app URL: a local .env may have
+  // none or an https tunnel, and on the host a stale panel URL must not be
+  // able to switch the file off. Said out loud, once, so a skip is never a
+  // mystery.
+  if (isDeveloperPlatform()) {
+    console.warn(
+      "[env] developer machine: not loading the persistent secrets file; this run uses its own env.",
+    );
     cache = {};
     return cache;
   }

@@ -72,6 +72,40 @@ export function draftBlocker(invoice: {
 }
 
 /**
+ * Why a cancelled invoice can't come back: `rebilledOn` are the live invoices
+ * that bill its work now, and `hoursMoved` is set when one of its hourly lines
+ * no longer has its hours, because Bill work moved them onto another invoice.
+ */
+export type RestoreBlock = { rebilledOn: string[]; hoursMoved: boolean };
+
+/**
+ * Why restoreCancelled (invoice-write.ts) refuses, from its one read: rows
+ * other than the invoice itself bill its work now; the invoice itself is
+ * there when one of its hourly lines has no hours left.
+ */
+export function restoreBlock(
+  invoiceId: string,
+  found: { id: string; invoiceNumber: string }[],
+): RestoreBlock | null {
+  const rebilledOn = found.filter((f) => f.id !== invoiceId).map((f) => f.invoiceNumber);
+  const hoursMoved = found.length > rebilledOn.length;
+  return hoursMoved || rebilledOn.length > 0 ? { rebilledOn, hoursMoved } : null;
+}
+
+/** The owner's message for a refused restore of a cancelled invoice. */
+export function restoreRefusal({ rebilledOn, hoursMoved }: RestoreBlock): string {
+  // Hours that moved never come back to this invoice, so cancelling the
+  // invoice that took them wouldn't help: it would leave them unbilled
+  // while this one charged them.
+  if (hoursMoved) {
+    return "This invoice's hours were moved onto another invoice while it was cancelled, so bringing it back would bill them twice. Leave it cancelled: Bill work on the project puts any hours still unbilled on a new invoice.";
+  }
+  const last = rebilledOn[rebilledOn.length - 1];
+  const list = rebilledOn.length > 1 ? `${rebilledOn.slice(0, -1).join(", ")} and ${last}` : last;
+  return `This invoice's work was billed again on ${list} while it was cancelled, so bringing it back would bill that work twice. Cancel ${rebilledOn.length > 1 ? "those invoices" : list} first.`;
+}
+
+/**
  * Money the client still owes us: issued, not settled or void, and not a
  * credit note (which is money we owe them). Drafts aren't receivables.
  */

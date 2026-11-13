@@ -71,10 +71,13 @@ const SLA_DAYS = 3;
  */
 export function RequestBoard({
   requests,
+  waitingTotal,
   now,
   role,
 }: {
   requests: InboxRequest[];
+  /** Every waiting request, uncapped; `requests` holds only the oldest. */
+  waitingTotal: number;
   /** Server timestamp, so "waiting N days" is stable across re-renders. */
   now: number;
   role: WorkRole;
@@ -94,6 +97,10 @@ export function RequestBoard({
   }, [requests, search]);
 
   const inLane = (key: LaneKey) => visible.filter((r) => laneOf(r.outcome) === key);
+  const searching = search.trim() !== "";
+  // The inbox loads the oldest waiting requests only; say how many it left out.
+  const loadedWaiting = requests.filter((r) => r.outcome.kind === "waiting").length;
+  const cut = Math.max(0, waitingTotal - loadedWaiting);
   const overdue = inLane("waiting").filter(
     (r) => (now - new Date(r.createdAt).getTime()) / 86_400_000 >= SLA_DAYS,
   ).length;
@@ -141,7 +148,7 @@ export function RequestBoard({
               key={lane.key}
               color={lane.color}
               title={lane.label}
-              count={items.length}
+              count={lane.key === "waiting" && !searching ? Math.max(items.length, waitingTotal) : items.length}
               hint={lane.hint}
               collapsed={folded.has(lane.key)}
               onToggle={() => toggleFold(lane.key)}
@@ -157,6 +164,12 @@ export function RequestBoard({
           );
         })}
       </LaneScroller>
+      {cut > 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Oldest {loadedWaiting} of {waitingTotal} waiting shown — {cut} newer wait at the top of their
+          projects&apos; Milestones.{searching ? " Search only covers the ones shown." : ""}
+        </p>
+      )}
     </div>
   );
 }

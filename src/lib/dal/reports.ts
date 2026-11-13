@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { usdValue } from "@/lib/invoice-usd";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
 import { monthlyUsd } from "@/lib/recurring";
 import { requireAdmin } from "@/lib/dal/session";
 import { projectSourceLabels } from "@/lib/format";
@@ -81,6 +82,7 @@ export async function getReportsData(): Promise<ReportsData> {
         issueDate: true,
         clientId: true,
         project: { select: { source: true } },
+        creditNotes: { select: { amount: true, status: true } },
       },
     }),
     prisma.timeEntry.findMany({ select: { hours: true, date: true } }),
@@ -143,7 +145,9 @@ export async function getReportsData(): Promise<ReportsData> {
     const amount = Number(inv.amount);
     // Partial payments are real money: count what was received, not the status.
     const received = Number(inv.amountPaid ?? 0);
-    const owing = Math.max(amount - received, 0);
+    // A credit note takes its amount off what was billed and what is owed.
+    const credited = Math.min(creditedTotal(inv.creditNotes), amount);
+    const owing = balanceDue(amount, received, credited);
 
     // The KPIs are one number across every currency, so they may only use USD.
     // The per-currency block below still uses the invoice's own amounts —
@@ -157,10 +161,10 @@ export async function getReportsData(): Promise<ReportsData> {
     if (usdTotal == null) {
       missingUsd++;
     } else {
-      const ratio = amount > 0 ? Math.min(1, received / amount) : 0;
-      usdReceived = usdTotal * ratio;
-      usdOwing = Math.max(usdTotal - usdReceived, 0);
-      totalInvoiced += usdTotal;
+      const rate = amount > 0 ? usdTotal / amount : 0;
+      usdReceived = Math.min(received, amount) * rate;
+      usdOwing = owing * rate;
+      totalInvoiced += (amount - credited) * rate;
       totalPaid += usdReceived;
       outstanding += usdOwing;
       if (received > 0) paidCount++;
@@ -172,7 +176,7 @@ export async function getReportsData(): Promise<ReportsData> {
       paid: 0,
       outstanding: 0,
     };
-    currency.invoiced += amount;
+    currency.invoiced += amount - credited;
     currency.paid += received;
     currency.outstanding += owing;
     perCurrency.set(inv.currency, currency);

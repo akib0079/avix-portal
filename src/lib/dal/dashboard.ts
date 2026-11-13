@@ -6,7 +6,8 @@ import { formatCurrency } from "@/lib/currency";
 import { requireAdmin } from "@/lib/dal/session";
 import { rangeWindow, type DashboardRange } from "@/lib/dashboard-ranges";
 import { workItemHref } from "@/lib/board";
-import { AWAITING_REVIEW, OPEN_REQUEST, PLAN_ITEM } from "@/lib/work-scope";
+import { AWAITING_REVIEW, INVOICE_TO_PAY, OPEN_REQUEST, PLAN_ITEM, isInvoiceToPay } from "@/lib/work-scope";
+import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
 import { monthlyUsd } from "@/lib/recurring";
 
 export {
@@ -286,15 +287,17 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
     undraftedRetainers,
     helpRequests,
   ] = await Promise.all([
+      // Only what the client can pay: one they say they've paid waits on a
+      // "Confirm payment" task instead, and one never sent isn't theirs to
+      // chase yet. A few spare rows for those paid or credited off.
       prisma.invoice.findMany({
-        where: {
-          status: { notIn: ["PAID", "DRAFT", "CANCELLED"] },
-          creditNoteForId: null,
-          dueDate: { not: null, lt: now },
-        },
+        where: { ...INVOICE_TO_PAY, dueDate: { not: null, lt: now } },
         orderBy: { dueDate: "asc" },
-        take: 5,
-        include: { client: { select: { firstName: true, lastName: true } } },
+        take: 10,
+        include: {
+          client: { select: { firstName: true, lastName: true } },
+          creditNotes: { select: { amount: true, status: true } },
+        },
       }),
       prisma.lead.findMany({
         where: {
@@ -434,13 +437,23 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
       link: workItemHref(h.milestone.projectId, h.milestone.id, "ADMIN"),
     });
   }
-  for (const inv of overdueInvoices) {
+  const toChase = overdueInvoices
+    .map((inv) => {
+      const amount = Number(inv.amount);
+      const amountPaid = Number(inv.amountPaid);
+      const credited = creditedTotal(inv.creditNotes);
+      return { ...inv, amount, amountPaid, credited, balance: balanceDue(amount, amountPaid, credited) };
+    })
+    .filter(isInvoiceToPay)
+    .slice(0, 5);
+  for (const inv of toChase) {
     const days = Math.floor((now.getTime() - inv.dueDate!.getTime()) / 86_400_000);
     items.push({
       kind: "invoice",
       label: `Chase ${inv.invoiceNumber} — ${inv.client.firstName} ${inv.client.lastName}`,
-      // In the invoice's own currency: "$1400" on a EUR invoice is a wrong number.
-      detail: `${formatCurrency(Number(inv.amount), inv.currency)} · ${days} day${days === 1 ? "" : "s"} overdue`,
+      // In the invoice's own currency: "$1400" on a EUR invoice is a wrong
+      // number. What's left, after payments and credit notes.
+      detail: `${formatCurrency(inv.balance, inv.currency)} · ${days} day${days === 1 ? "" : "s"} overdue`,
       link: `/admin/invoices/${inv.id}`,
     });
   }

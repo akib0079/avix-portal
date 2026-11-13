@@ -16,10 +16,15 @@ export const usd = new Intl.NumberFormat("en-US", {
 
 export function formatDate(date: Date | string | null | undefined) {
   if (!date) return "—";
+  // "YYYY-MM-DD" names a calendar day, not an instant: JS parses it as UTC
+  // midnight, so it is formatted in UTC or it lands a day early west of UTC
+  // (and the server and the browser disagree). Real timestamps stay local.
+  const isDayKey = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date);
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
+    ...(isDayKey && { timeZone: "UTC" }),
   }).format(new Date(date));
 }
 

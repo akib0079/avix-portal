@@ -13,7 +13,10 @@
  * (steps 1–7) and 20261102134000_v49c_b4_legacy_repairs (the rest) —
  * work-backfill.test.ts fails if they drift. Only the boot pass bounds
  * steps 3 and 4 to rows created since the last pass ($1): cards and comments
- * the new code has deleted since must not come back.
+ * the new code has deleted since must not come back. Steps 16 and 17 run on
+ * boot only until one pass has finished them (LINKED_KEY): after that no old
+ * row can still turn up for them, and a link the new code removed on purpose
+ * must stay removed.
  */
 export const WORK_BACKFILL_SQL: readonly string[] = [
   // 1. Place the existing milestones on the board. boardPosition = 0 marks a
@@ -207,7 +210,8 @@ WHERE i."id" = c."id" AND i."amountPaid" + c."credited" < i."amount"`,
   //     for hours. It billed every entry that existed when it ran, so each
   //     entry goes to the earliest such line made after it. Later invoices
   //     are left alone, so a hand-typed line can't take hours it never billed.
-  //     Only empty links are filled.
+  //     Only empty links are filled, and on boot only until one pass has
+  //     done this: an admin removing a line later frees its work for good.
   `UPDATE "invoice_items" ii SET "milestoneId" = m."id"
 FROM "invoices" i, "milestones" m
 WHERE ii."invoiceId" = i."id" AND ii."milestoneId" IS NULL
@@ -239,7 +243,10 @@ WHERE te."id" = x."entryId" AND te."invoiceItemId" IS NULL`,
 type Db = {
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
   appSetting: {
-    findUnique(args: { where: { key: string } }): Promise<{ value: string } | null>;
+    findMany(args: {
+      where: { key: { in: string[] } };
+      select: { key: true; value: true };
+    }): Promise<{ key: string; value: string }[]>;
     createMany(args: { data: { key: string; value: string }[]; skipDuplicates: boolean }): Promise<unknown>;
     upsert(args: {
       where: { key: string };
@@ -261,16 +268,31 @@ const LAST_PASS_KEY = "workBackfill:v49";
 export const FIRST_PASS_KEY = "workBackfill:v49:firstBoot";
 
 /**
- * Runs the statements in order and reports how many rows each touched. `since`
- * bounds the steps that copy rows across ($1); the migrations run them unbounded.
+ * Set once a boot pass has finished the line-linking steps. Every row they
+ * look for is older than the first pass, so the first one that finishes has
+ * seen them all; a later run would only undo the admin's own edits.
+ */
+const LINKED_KEY = "workBackfill:v49:linked";
+
+/** Steps 16 and 17: they read the first pass's time. */
+function isLinkStep(sql: string): boolean {
+  return sql.includes(`'${FIRST_PASS_KEY}'`);
+}
+
+/**
+ * Runs the statements in order and reports how many rows each touched (0 for
+ * a skipped one). `since` bounds the steps that copy rows across ($1); the
+ * migrations run them unbounded. `link: false` skips steps 16 and 17.
  */
 export async function backfillWorkItems(
   db: Pick<Db, "$executeRawUnsafe">,
   since: Date,
+  { link = true }: { link?: boolean } = {},
 ): Promise<number[]> {
   const counts: number[] = [];
   for (const sql of WORK_BACKFILL_SQL) {
-    counts.push(await (sql.includes("$1") ? db.$executeRawUnsafe(sql, since) : db.$executeRawUnsafe(sql)));
+    if (!link && isLinkStep(sql)) counts.push(0);
+    else counts.push(await (sql.includes("$1") ? db.$executeRawUnsafe(sql, since) : db.$executeRawUnsafe(sql)));
   }
   return counts;
 }
@@ -279,23 +301,38 @@ export async function backfillWorkItems(
  * The boot pass: everything an older build wrote since the last pass started.
  * It records its own start rather than its end, so rows written while it runs
  * are picked up next time. Concurrent boots may both run it; every statement
- * tolerates that.
+ * tolerates that. `bootedAt` is when this process started taking requests:
+ * the pass itself runs a little later, and invoices the new code makes in
+ * between must not read as the old code's.
  */
-export async function backfillWorkItemsOnBoot(db: Db): Promise<number[]> {
+export async function backfillWorkItemsOnBoot(
+  db: Db,
+  { bootedAt = new Date() }: { bootedAt?: Date } = {},
+): Promise<number[]> {
   const startedAt = new Date().toISOString();
-  const last = await db.appSetting.findUnique({ where: { key: LAST_PASS_KEY } });
+  const settings = await db.appSetting.findMany({
+    where: { key: { in: [LAST_PASS_KEY, LINKED_KEY] } },
+    select: { key: true, value: true },
+  });
+  const last = settings.find((row) => row.key === LAST_PASS_KEY)?.value;
+  const linked = settings.some((row) => row.key === LINKED_KEY);
   // A database the first v49 build already ran its one pass on keeps that
   // pass's time as the first.
   await db.appSetting.createMany({
-    data: [{ key: FIRST_PASS_KEY, value: last?.value ?? startedAt }],
+    data: [{ key: FIRST_PASS_KEY, value: last ?? bootedAt.toISOString() }],
     skipDuplicates: true,
   });
-  const counts = await backfillWorkItems(db, new Date(last?.value ?? 0));
-  await db.appSetting.upsert({
-    where: { key: LAST_PASS_KEY },
-    create: { key: LAST_PASS_KEY, value: startedAt },
-    update: { value: startedAt },
-  });
+  const counts = await backfillWorkItems(db, new Date(last ?? 0), { link: !linked });
+  await Promise.all([
+    db.appSetting.upsert({
+      where: { key: LAST_PASS_KEY },
+      create: { key: LAST_PASS_KEY, value: startedAt },
+      update: { value: startedAt },
+    }),
+    ...(linked
+      ? []
+      : [db.appSetting.createMany({ data: [{ key: LINKED_KEY, value: startedAt }], skipDuplicates: true })]),
+  ]);
   if (counts.some((n, i) => n > 0 && i !== 0)) console.log(`[backfill] work items v49: ${counts.join(", ")}`);
   return counts;
 }
