@@ -32,6 +32,8 @@ import {
   shiftMonths,
   shiftMonthsInDoc,
   shortDay,
+  templateFrom,
+  templateShift,
   upcomingRuns,
   withoutMonths,
   type Schedule,
@@ -323,6 +325,44 @@ test("a weekly template's dates move by whole weeks", () => {
     type: "doc",
     content: [{ type: "text", text: "9 – 15 Nov 2026" }],
   });
+});
+
+test("only a real day of the month moves with it", () => {
+  assert.equal(shiftMonths("Sprint 42 November 2026", 1), "Sprint 42 December 2026");
+  assert.equal(shiftMonths("Top 50 May picks", 1), "Top 50 May picks");
+  assert.equal(shiftMonths("Hours: 40 Jan", 1), "Hours: 40 Jan");
+  assert.equal(shiftMonths("Due 31 Jan 2027", 1), "Due 28 Feb 2027");
+  // "of" after an ordinal day is part of the date.
+  assert.equal(shiftMonths("Due the 31st of December 2026", 2), "Due the 28th of February 2027");
+  assert.equal(shiftMonths("From the 1st of Nov to the 30th of Nov", 1), "From the 1st of Dec to the 31st of Dec");
+  assert.equal(shiftMonths("Week 1st – 7th of Dec 2026", 0, 28), "Week 29th of Dec 2026 – 4th of Jan 2027");
+  assert.equal(shiftMonths("Top 5 of May picks", 1), "Top 5 of May picks");
+});
+
+test("a month without a year is read in the template's year", () => {
+  // 2028 is a leap year.
+  assert.equal(shiftMonths("Hosting Jan 1–31", 1, 0, "2028-01"), "Hosting Feb 1–29");
+  assert.equal(shiftMonths("Hosting Feb 1–29", 1, 0, "2028-02"), "Hosting Mar 1–31");
+  assert.equal(shiftMonths("Hosting Feb 1–28", 1, 0, "2027-02"), "Hosting Mar 1–31");
+  // A "Jan" in a December template is the January after it.
+  assert.equal(shiftMonths("Due 31 Jan", 1, 0, "2027-12"), "Due 29 Feb");
+  assert.equal(shiftMonths("Work 26 Feb – 4 Mar", 0, 7, "2028-02"), "Work 4 Mar – 11 Mar");
+  const doc = { type: "doc", content: [{ type: "text", text: "Jan 1–31" }] };
+  assert.deepEqual(shiftMonthsInDoc(doc, 1, 0, "2028-01"), {
+    type: "doc",
+    content: [{ type: "text", text: "Feb 1–29" }],
+  });
+});
+
+test("a template's move is read from its own period, or its issue day", () => {
+  assert.equal(templateFrom("2026-11", "2026-10-20", "MONTH"), "2026-11");
+  assert.equal(templateFrom("2026-W45", "2026-10-20", "MONTH"), "2026-10-20");
+  assert.equal(templateFrom("2026-W45", "2026-10-20", "WEEK"), "2026-W45");
+  assert.equal(templateFrom(null, "2026-10-20", "WEEK"), "2026-10-20");
+  assert.deepEqual(templateShift("2026-11", "2027-01-15", "MONTH"), { offset: 2, days: 0, around: "2026-11" });
+  assert.deepEqual(templateShift("2026-11-04", "2026-12-02", "MONTH"), { offset: 1, days: 0, around: "2026-11" });
+  assert.deepEqual(templateShift("2026-W45", "2026-11-11", "WEEK"), { offset: 0, days: 7, around: "2026-11" });
+  assert.deepEqual(templateShift("2026-11-25", "2026-12-02", "WEEK"), { offset: 1, days: 7, around: "2026-11" });
 });
 
 test("the old code's month is the server's own month", () => {

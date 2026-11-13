@@ -481,29 +481,49 @@ export function periodVars(day: Day, schedule: Schedule): PeriodVars {
 // "May" is left out of standalone names: on its own it is usually the verb.
 const STANDALONE: readonly string[] = MONTHS.filter((name) => name !== "May");
 const MONTH_NAME = [...MONTHS, "Sept", ...SHORT_MONTHS].join("|");
-const DAY_NUM = String.raw`\d{1,2}(?:st|nd|rd|th)?(?!\d)`;
+// 1 to 31 only, so "Sprint 42 November" is a month mention, not a day.
+const DAY_NUM = String.raw`(?:3[01]|[12]\d|0?[1-9])(?:st|nd|rd|th)?(?!\d)`;
+// "31st of December"; only after an ordinal, since "5 of May" is rarely a date.
+const DAY_OF = String.raw`(?<=st|nd|rd|th)\s+of`;
 const DAY_SEP = String.raw`\s*[–—-]\s*`;
 const YEAR_AFTER = String.raw`,?\s+\d{4}(?!\d)`;
 /**
  * A month as a template writes it, with the days and year around it:
- * "1 Jan 2027", "2 – 8 Nov 2026", "15th December" (day first), or
+ * "1 Jan 2027", "2 – 8 Nov 2026", "15th of December" (day first), or
  * "December 1–31, 2026", "Nov. 2026", "November" (month first).
  */
 const MONTH_DATE = new RegExp(
-  String.raw`\b(?<d1>${DAY_NUM})(?:(?<sep>${DAY_SEP})(?<d2>${DAY_NUM}))?\s+(?<name>${MONTH_NAME})(?<dot>\.?)(?![A-Za-z])(?<year>${YEAR_AFTER})?` +
+  String.raw`\b(?<d1>${DAY_NUM})(?:(?<sep>${DAY_SEP})(?<d2>${DAY_NUM}))?(?<of>${DAY_OF})?\s+(?<name>${MONTH_NAME})(?<dot>\.?)(?![A-Za-z])(?<year>${YEAR_AFTER})?` +
     "|" +
     String.raw`\b(?<uName>${MONTH_NAME})(?<uDot>\.?)(?![A-Za-z])(?:\s+(?<ud1>${DAY_NUM})(?:(?<uSep>${DAY_SEP})(?<ud2>${DAY_NUM}))?)?(?<uYear>${YEAR_AFTER})?`,
   "g",
 );
 /** What joins two months into one span: "Oct–Dec 2026", "May to June 2026". */
 const MONTH_JOIN = /^(?:\s*[–—/-]\s*|\s+to\s+)$/;
-/** A year for the arithmetic of a date written without one. */
+/** A year for the arithmetic of a date written without one, and no template to go by. */
 const NO_YEAR = 2001;
+
+/**
+ * The year a month written without one most likely means: the one that puts
+ * it nearest the template's own month (`around`, "2026-12"), so a "Jan" in a
+ * December template is the January after it. Leap years then come out right.
+ */
+function yearNear(index: number, around: string | undefined): number {
+  const key = around ? /^(\d{4})-(\d{2})/.exec(around) : null;
+  if (!key) return NO_YEAR;
+  const at = Number(key[1]) * 12 + Number(key[2]) - 1;
+  const y = Number(key[1]);
+  return [y, y + 1, y - 1].reduce((best, year) =>
+    Math.abs(year * 12 + index - at) < Math.abs(best * 12 + index - at) ? year : best,
+  );
+}
 
 type MonthMention = {
   start: number;
   end: number;
   dayFirst: boolean;
+  /** " of", as in "31st of December", or "". */
+  of: string;
   index: number;
   short: boolean;
   dot: string;
@@ -530,6 +550,7 @@ function readMention(m: RegExpMatchArray): MonthMention | null {
     start: m.index!,
     end: m.index! + m[0].length,
     dayFirst,
+    of: (dayFirst ? g.of : "") ?? "",
     index,
     short: full < 0,
     dot: (dayFirst ? g.dot : g.uDot) ?? "",
@@ -569,9 +590,12 @@ function moveDay(n: number, from: { y: number; m: number }, to: { y: number; m: 
  * over with it, a month's last day stays its last day ("Jan 1–31" becomes
  * "Feb 1–28"), and a month joined to a dated one ("Oct–Dec 2026") takes its
  * year. With `days` (a weekly plan), a mention with a day moves by that many
- * days instead, since its weeks don't line up with the months.
+ * days instead, since its weeks don't line up with the months. A month
+ * written without a year is read in the year nearest `around`, the
+ * template's own month ("2026-11"), so its last day and its weeks fall where
+ * they do in that year.
  */
-export function shiftMonths(text: string, offset: number, days = 0): string {
+export function shiftMonths(text: string, offset: number, days = 0, around?: string): string {
   if ((!offset && !days) || !text) return text;
   const mentions = [...text.matchAll(MONTH_DATE)].map(readMention);
   // Right to left, so a chain like "Oct–Nov–Dec 2026" passes the year along.
@@ -591,7 +615,7 @@ export function shiftMonths(text: string, offset: number, days = 0): string {
     if (year === null && !ds.length && (mention.short || !STANDALONE.includes(MONTHS[index]))) {
       return null;
     }
-    const from = { y: year ?? NO_YEAR, m: index + 1 };
+    const from = { y: year ?? yearNear(index, around), m: index + 1 };
     if (days && ds.length) {
       // Each day on its own: a week can start in one month and end in the next.
       return ds.map(({ n }) => {
@@ -633,13 +657,13 @@ export function shiftMonths(text: string, offset: number, days = 0): string {
       const firstYear = crossYear ? `${yearGap}${first.y}` : "";
       const lastYear = yearOf(last.y, crossYear && gap === null ? yearGap : gap);
       written = mention.dayFirst
-        ? `${dayText(first.d[0], 0)} ${label(first.m)}${firstYear}${mention.sep}${dayText(last.d[0], 1)} ${label(last.m)}${lastYear}`
+        ? `${dayText(first.d[0], 0)}${mention.of} ${label(first.m)}${firstYear}${mention.sep}${dayText(last.d[0], 1)}${mention.of} ${label(last.m)}${lastYear}`
         : `${label(first.m)} ${dayText(first.d[0], 0)}${firstYear}${mention.sep}${label(last.m)} ${dayText(last.d[0], 1)}${lastYear}`;
     } else {
       const ds = dates.flatMap((date) => date.d).map(dayText);
       const dayPart = ds.join(mention.sep);
       written = mention.dayFirst
-        ? `${dayPart} ${label(last.m)}${yearOf(last.y, gap)}`
+        ? `${dayPart}${mention.of} ${label(last.m)}${yearOf(last.y, gap)}`
         : `${label(last.m)}${dayPart ? ` ${dayPart}` : ""}${yearOf(last.y, gap)}`;
     }
     out += text.slice(at, mention.start) + written;
@@ -651,15 +675,47 @@ export function shiftMonths(text: string, offset: number, days = 0): string {
 type DocNode = { text?: string; content?: DocNode[]; [key: string]: unknown };
 
 /** shiftMonths over every text node of a Tiptap document, returning a new one. */
-export function shiftMonthsInDoc(doc: unknown, offset: number, days = 0): unknown {
+export function shiftMonthsInDoc(doc: unknown, offset: number, days = 0, around?: string): unknown {
   if ((!offset && !days) || doc == null || typeof doc !== "object") return doc;
   const walk = (node: DocNode): DocNode => {
     const next: DocNode = { ...node };
-    if (typeof next.text === "string") next.text = shiftMonths(next.text, offset, days);
+    if (typeof next.text === "string") next.text = shiftMonths(next.text, offset, days, around);
     if (Array.isArray(next.content)) next.content = next.content.map(walk);
     return next;
   };
   return Array.isArray(doc) ? (doc as DocNode[]).map(walk) : walk(doc as DocNode);
+}
+
+/**
+ * What a plan's template is read from: its own period on the plan ("2026-11",
+ * or "2026-W45" for a weekly plan) when it has one of the plan's kind, else
+ * the day it was issued.
+ */
+export function templateFrom(own: string | null, issued: Day, frequency: ScheduleUnit): string {
+  const pattern = frequency === "WEEK" ? /^\d{4}-W\d{2}$/ : /^\d{4}-\d{2}$/;
+  return own && pattern.test(own) ? own : issued;
+}
+
+/**
+ * How far a template's dates move for a run on `day`, as shiftMonths takes
+ * it. A monthly plan's move by the months from the template's month. A weekly
+ * plan's move by whole weeks, since its weeks don't line up with the months:
+ * "2 – 8 Nov 2026" reads "9 – 15 Nov 2026" a week on. Its months follow the
+ * template's run day in its own week, so a "November 2026" reads "December
+ * 2026" on a run in December. `around` is the template's month.
+ */
+export function templateShift(
+  from: string,
+  day: Day,
+  frequency: ScheduleUnit,
+): { offset: number; days: number; around: string } {
+  if (frequency === "WEEK") {
+    const days = daysBetweenWeeks(from, day);
+    const at = addDays(day, -days);
+    return { offset: monthsBetween(at, day), days, around: at.slice(0, 7) };
+  }
+  const month = from.slice(0, 7);
+  return { offset: monthsBetween(month, day), days: 0, around: month };
 }
 
 /** A month name, and the year written after it. */

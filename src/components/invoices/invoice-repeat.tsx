@@ -12,16 +12,14 @@ import {
 } from "@/lib/actions/retainers";
 import { repeatSchema } from "@/lib/validation/retainer";
 import {
-  addDays,
   cadenceLabel,
-  daysBetweenWeeks,
   defaultFirstRun,
-  isDay,
   longDay,
-  monthsBetween,
   periodVars,
   shiftMonths,
   shortDay,
+  templateFrom,
+  templateShift,
   withoutMonths,
   type Day,
   type PlanState,
@@ -80,7 +78,9 @@ export type InvoicePlanView = {
   isTemplate: boolean;
   /** What the next invoice's title will be copied from, for the preview. */
   templateTitle: string | null;
+  /** The template's own period on the plan, if it has one. */
   templatePeriod: string | null;
+  templateIssueDay: Day | null;
 };
 
 type InvoiceFacts = {
@@ -93,24 +93,27 @@ type InvoiceFacts = {
 };
 
 /**
- * "dadad — November 2026" copied for the period of `day`. `from` is the
- * template's month ("2026-11") or its issue day; from a day, a weekly plan's
- * dates move by whole weeks, as the run moves them.
+ * "dadad — November 2026" copied for the period of `day`, as the run copies
+ * it: from the template's own period on the plan (`own`) or its issue day.
  */
-function nextTitle(title: string | null, from: string | null, draft: ScheduleDraft): string | null {
-  if (!title || !from || draft.interval === "" || !draft.nextDate) return null;
-  const days = draft.frequency === "WEEK" && isDay(from) ? daysBetweenWeeks(from, draft.nextDate) : 0;
-  const offset = days
-    ? monthsBetween(addDays(draft.nextDate, -days), draft.nextDate)
-    : /^\d{4}-\d{2}/.test(from)
-      ? monthsBetween(from, draft.nextDate)
-      : 0;
+function nextTitle(
+  title: string | null,
+  own: string | null,
+  issued: Day | null,
+  draft: ScheduleDraft,
+): string | null {
+  if (!title || !issued || draft.interval === "" || !draft.nextDate) return null;
+  const { offset, days, around } = templateShift(
+    templateFrom(own, issued, draft.frequency),
+    draft.nextDate,
+    draft.frequency,
+  );
   const vars = periodVars(draft.nextDate, {
     frequency: draft.frequency,
     interval: draft.interval,
     dayOfMonth: Number(draft.nextDate.slice(8, 10)),
   });
-  return renderPeriodTags(shiftMonths(title, offset, days), vars);
+  return renderPeriodTags(shiftMonths(title, offset, days, around), vars);
 }
 
 /**
@@ -364,8 +367,8 @@ function RepeatDialog({
   }
 
   const preview = editing
-    ? nextTitle(plan.templateTitle, plan.templatePeriod, schedule)
-    : nextTitle(invoice.title, invoice.issueDay, schedule);
+    ? nextTitle(plan.templateTitle, plan.templatePeriod, plan.templateIssueDay, schedule)
+    : nextTitle(invoice.title, null, invoice.issueDay, schedule);
 
   async function save() {
     const parsed = repeatSchema.safeParse({ title, schedule: scheduleInput(schedule) });
