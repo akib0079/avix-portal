@@ -49,8 +49,10 @@ export function clientMoney(invoices: ClientMoneyInvoice[], now: Date): ClientMo
   let overdue = 0;
   let unconverted = 0;
   for (const i of invoices) {
+    // Nothing billed is $0 in any currency: in no figure, and not unconverted.
+    if (i.amount <= 0) continue;
     const worth = usdValue(i);
-    if (worth == null || i.amount <= 0) {
+    if (worth == null) {
       unconverted++;
       continue;
     }
