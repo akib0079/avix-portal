@@ -9,6 +9,7 @@ import { workItemHref } from "@/lib/board";
 import { AWAITING_REVIEW, INVOICE_TO_PAY, OPEN_REQUEST, PLAN_ITEM, isInvoiceToPay } from "@/lib/work-scope";
 import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
 import { monthlyUsd } from "@/lib/recurring";
+import { paidTrend, projectFlags, toTopClients, type TopClientRow } from "@/lib/dashboard-health";
 
 export {
   DASHBOARD_RANGES,
@@ -578,40 +579,27 @@ export const getTodayItems = cache(async (): Promise<TodayItem[]> => {
 
 export const REVENUE_TARGET_KEY = "monthlyRevenueTarget";
 
-export type MonthPoint = { label: string; amount: number };
-
-export type BusinessHealth = {
-  /** Paid totals (USD) for the last 6 months, oldest first. */
-  trend: MonthPoint[];
-  /** Projects that look stuck or late. */
-  flags: {
-    id: string;
-    name: string;
-    clientName: string | null;
-    reason: string;
-    kind: "late" | "stale";
-  }[];
-  /** Best clients by collected revenue, with how long since we last spoke. */
-  topClients: {
-    id: string;
-    name: string;
-    collected: number;
-    lastContactDays: number | null;
-  }[];
-};
-
-/** Cached per request: the deck, the pulse tiles and the money grid all read it. */
-export const getBusinessHealth = cache(async (): Promise<BusinessHealth> => {
+/** Paid totals (USD) for the last 6 months, oldest first: the deck's trend. */
+export const getPaidTrend = cache(async () => {
   await requireAdmin();
   const now = new Date();
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-  const staleCutoff = new Date(now.getTime() - 14 * 86_400_000);
+  const rows = await prisma.invoice.findMany({
+    where: { status: "PAID", issueDate: { gte: sixMonthsAgo }, amountUsd: { not: null } },
+    select: { amountUsd: true, issueDate: true },
+  });
+  return paidTrend(rows, now);
+});
 
-  const [paidRows, staleProjects, lateProjects, topRows] = await Promise.all([
-    prisma.invoice.findMany({
-      where: { status: "PAID", issueDate: { gte: sixMonthsAgo }, amountUsd: { not: null } },
-      select: { amountUsd: true, issueDate: true },
-    }),
+/**
+ * Projects that look late or stuck. Cached per request: the pulse tiles and
+ * the delivery grid both read it.
+ */
+export const getProjectFlags = cache(async () => {
+  await requireAdmin();
+  const now = new Date();
+  const staleCutoff = new Date(now.getTime() - 14 * 86_400_000);
+  const [staleProjects, lateProjects] = await Promise.all([
     // Live projects with nothing touched in a fortnight.
     prisma.project.findMany({
       where: { status: { not: "COMPLETED" }, updatedAt: { lt: staleCutoff } },
@@ -636,83 +624,35 @@ export const getBusinessHealth = cache(async (): Promise<BusinessHealth> => {
         client: { select: { firstName: true, lastName: true } },
       },
     }),
-    // Ranked in the database. This used to load every client with every paid
-    // invoice and sort in JS — a query that grew with the whole ledger to
-    // show five rows. Also USD now: face value added EUR to USD.
-    prisma.invoice.groupBy({
-      by: ["clientId"],
-      where: { status: "PAID", amountUsd: { not: null } },
-      _sum: { amountUsd: true },
-      orderBy: { _sum: { amountUsd: "desc" } },
-      take: 5,
-    }),
   ]);
+  return projectFlags(lateProjects, staleProjects, now);
+});
 
-  const top = await prisma.user.findMany({
-    where: { id: { in: topRows.map((r) => r.clientId) } },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      company: true,
-      clientMessages: { orderBy: { createdAt: "desc" }, take: 1, select: { createdAt: true } },
-    },
-  });
-  const byId = new Map(top.map((u) => [u.id, u]));
-
-  // Six-month paid trend, bucketed by calendar month.
-  const buckets = new Map<string, number>();
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    buckets.set(`${d.getFullYear()}-${d.getMonth()}`, 0);
-  }
-  for (const inv of paidRows) {
-    const key = `${inv.issueDate.getFullYear()}-${inv.issueDate.getMonth()}`;
-    if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + Number(inv.amountUsd));
-  }
-  const trend: MonthPoint[] = [...buckets.entries()].map(([key, amount]) => {
-    const [y, m] = key.split("-").map(Number);
-    return {
-      label: new Date(y, m, 1).toLocaleString("en-US", { month: "short" }),
-      amount,
-    };
-  });
-
-  const flags = [
-    ...lateProjects.map((p) => ({
-      id: p.id,
-      name: p.projectName,
-      clientName: p.client ? `${p.client.firstName} ${p.client.lastName}`.trim() : null,
-      reason: `past due ${p.dueDate!.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
-      kind: "late" as const,
-    })),
-    ...staleProjects.map((p) => ({
-      id: p.id,
-      name: p.projectName,
-      clientName: p.client ? `${p.client.firstName} ${p.client.lastName}`.trim() : null,
-      reason: `no activity in ${Math.floor((now.getTime() - p.updatedAt.getTime()) / 86_400_000)} days`,
-      kind: "stale" as const,
-    })),
-  ]
-    // A project can be both late and stale — show it once.
-    .filter((f, i, arr) => arr.findIndex((x) => x.id === f.id) === i)
-    .slice(0, 6);
-
-  const topClients = topRows.flatMap((row) => {
-    const c = byId.get(row.clientId);
-    if (!c) return [];
-    const last = c.clientMessages[0]?.createdAt ?? null;
-    return [
-      {
-        id: c.id,
-        name: c.company || `${c.firstName} ${c.lastName}`.trim() || "Client",
-        collected: Number(row._sum.amountUsd ?? 0),
-        lastContactDays: last
-          ? Math.floor((now.getTime() - last.getTime()) / 86_400_000)
-          : null,
-      },
-    ];
-  });
-
-  return { trend, flags, topClients };
+/**
+ * Best clients by collected revenue (USD), with how long since we last spoke.
+ * Ranked in the database, and the client and their latest message come in the
+ * same statement: this used to be a groupBy, then a second wave for the users.
+ * USD only, since face value added EUR to USD.
+ */
+export const getTopClients = cache(async () => {
+  await requireAdmin();
+  const rows = await prisma.$queryRaw<TopClientRow[]>`
+    SELECT
+      u.id,
+      u."firstName",
+      u."lastName",
+      u.company,
+      t.collected,
+      (SELECT MAX(m."createdAt") FROM messages m WHERE m."clientId" = u.id) AS "lastContact"
+    FROM (
+      SELECT "clientId", SUM("amountUsd") AS collected
+      FROM invoices
+      WHERE status = 'PAID' AND "amountUsd" IS NOT NULL
+      GROUP BY 1
+      ORDER BY 2 DESC, 1
+      LIMIT 5
+    ) t
+    JOIN users u ON u.id = t."clientId"
+    ORDER BY t.collected DESC, u.id`;
+  return toTopClients(rows, new Date());
 });

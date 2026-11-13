@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
-  getBusinessHealth,
   getDashboardKpis,
   getDashboardLists,
+  getPaidTrend,
+  getProjectFlags,
   getTodayItems,
+  getTopClients,
   monthsInRange,
   type TodayItem,
 } from "@/lib/dal/dashboard";
@@ -45,7 +47,7 @@ import {
 /* ================================================================== */
 
 export async function CommandDeck({ range }: { range: DashboardRange }) {
-  const [k, health] = await Promise.all([getDashboardKpis(range), getBusinessHealth()]);
+  const [k, trend] = await Promise.all([getDashboardKpis(range), getPaidTrend()]);
   const months = monthsInRange(range);
   const target = k.target * months;
   const pct = target > 0 ? Math.round((k.collected / target) * 100) : null;
@@ -74,13 +76,13 @@ export async function CommandDeck({ range }: { range: DashboardRange }) {
           </p>
 
           <div className="mt-7">
-            <TrendArea points={health.trend} className="h-24 sm:h-28" />
+            <TrendArea points={trend} className="h-24 sm:h-28" />
             <div className="mt-2 flex justify-between text-[10px] font-medium tracking-wider text-white/35 uppercase">
-              {health.trend.map((p, i) => (
+              {trend.map((p, i) => (
                 <span
                   key={p.label}
                   title={`${p.label}: ${usd.format(p.amount)}`}
-                  className={cn(i === health.trend.length - 1 && "text-white/80")}
+                  className={cn(i === trend.length - 1 && "text-white/80")}
                 >
                   {p.label}
                 </span>
@@ -315,9 +317,9 @@ export async function TriagePanel() {
 /* ================================================================== */
 
 export async function PulseRow({ range }: { range: DashboardRange }) {
-  const [k, health] = await Promise.all([getDashboardKpis(range), getBusinessHealth()]);
+  const [k, flags] = await Promise.all([getDashboardKpis(range), getProjectFlags()]);
   const { pipeline } = k;
-  const late = health.flags.filter((f) => f.kind === "late").length;
+  const late = flags.filter((f) => f.kind === "late").length;
   const hoursDelta = k.hoursThisWeek - k.hoursLastWeek;
 
   return (
@@ -445,7 +447,7 @@ function PulseTile({
 /* ================================================================== */
 
 export async function MoneyGrid({ range }: { range: DashboardRange }) {
-  const [k, health] = await Promise.all([getDashboardKpis(range), getBusinessHealth()]);
+  const [k, topClients] = await Promise.all([getDashboardKpis(range), getTopClients()]);
   const { current, thirty, sixtyPlus } = k.money.aging;
   const overdue = current.amount + thirty.amount + sixtyPlus.amount;
   const buckets = [
@@ -453,7 +455,7 @@ export async function MoneyGrid({ range }: { range: DashboardRange }) {
     { label: "31–60 days", ...thirty, color: "bg-orange-500", text: "text-orange-600 dark:text-orange-300" },
     { label: "60+ days", ...sixtyPlus, color: "bg-red-500", text: "text-red-600 dark:text-red-300" },
   ];
-  const topMax = Math.max(1, ...health.topClients.map((c) => c.collected));
+  const topMax = Math.max(1, ...topClients.map((c) => c.collected));
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
@@ -509,11 +511,11 @@ export async function MoneyGrid({ range }: { range: DashboardRange }) {
       {/* Top clients leaderboard */}
       <div className="surface rise p-5 [--i:1] xl:col-span-4">
         <p className="eyebrow">Top clients · lifetime</p>
-        {health.topClients.length === 0 ? (
+        {topClients.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">No paid invoices yet.</p>
         ) : (
           <ol className="mt-4 space-y-3.5">
-            {health.topClients.map((c, i) => (
+            {topClients.map((c, i) => (
               <li key={c.id}>
                 <Link href={`/admin/clients/${c.id}`} className="group flex items-center gap-3">
                   <span className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-foreground/90 to-foreground/60 text-xs font-semibold text-background">
@@ -570,7 +572,7 @@ export async function MoneyGrid({ range }: { range: DashboardRange }) {
 /* ================================================================== */
 
 export async function DeliveryGrid() {
-  const [lists, health] = await Promise.all([getDashboardLists(), getBusinessHealth()]);
+  const [lists, flags] = await Promise.all([getDashboardLists(), getProjectFlags()]);
 
   return (
     <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
@@ -637,20 +639,20 @@ export async function DeliveryGrid() {
       <div className="surface rise p-5 [--i:1] xl:col-span-4">
         <div className="flex items-center justify-between">
           <p className="eyebrow">Needs attention</p>
-          {health.flags.length > 0 && (
+          {flags.length > 0 && (
             <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-600 dark:text-red-300">
-              {health.flags.length}
+              {flags.length}
             </span>
           )}
         </div>
-        {health.flags.length === 0 ? (
+        {flags.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-8 text-center">
             <CheckCheck className="size-5 text-emerald-500" />
             <p className="text-sm text-muted-foreground">Every live project is on track.</p>
           </div>
         ) : (
           <ul className="mt-3 space-y-1">
-            {health.flags.map((f) => (
+            {flags.map((f) => (
               <li key={f.id}>
                 <Link
                   href={`/admin/projects/${f.id}`}
