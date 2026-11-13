@@ -9,7 +9,7 @@ import {
   type TaskRequestInput,
 } from "@/lib/validation/task-request";
 import { submitTaskRequest } from "@/lib/actions/task-requests";
-import { RichTextEditor } from "@/components/editor/rich-text-editor-lazy";
+import { RichTextEditor, preloadRichTextEditor } from "@/components/editor/rich-text-editor-lazy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -86,7 +86,13 @@ export function RequestFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
+      {/* The editor is the slow part of opening; fetch it on the way to the click. */}
+      <DialogTrigger
+        asChild
+        onPointerEnter={preloadRichTextEditor}
+        onPointerDown={preloadRichTextEditor}
+        onFocus={preloadRichTextEditor}
+      >
         {trigger ?? (
           <Button>
             <MessageSquarePlus /> {triggerLabel}

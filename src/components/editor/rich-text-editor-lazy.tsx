@@ -53,8 +53,19 @@ function EditorPlaceholder({ className }: { className?: string }) {
   );
 }
 
+const load = () => import("./rich-text-editor");
+
+/**
+ * Start fetching the editor before it is needed — from an opener's hover,
+ * focus or press — so a dialog that holds it opens on the real editor rather
+ * than the placeholder. Safe to call often: the browser fetches the chunk once.
+ */
+export function preloadRichTextEditor(): void {
+  void load().catch(() => {});
+}
+
 export const RichTextEditor = dynamic<RichTextEditorProps>(
-  () => import("./rich-text-editor").then((m) => m.RichTextEditor),
+  () => load().then((m) => m.RichTextEditor),
   {
     // The editor touches the DOM directly; there is nothing useful to SSR.
     ssr: false,
