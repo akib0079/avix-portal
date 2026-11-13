@@ -281,8 +281,11 @@ export async function TriagePanel() {
               const Icon = meta.icon;
               return (
                 <li key={i}>
+                  {/* Row links here don't prefetch: each visible one cost two
+                      requests on every load. Section headers still do. */}
                   <Link
                     href={item.link}
+                    prefetch={false}
                     className="group relative flex items-center gap-3 rounded-xl py-2 pr-2 pl-3 transition-colors hover:bg-muted/70"
                   >
                     <span className={cn("absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full", sev.rail)} />
@@ -517,7 +520,11 @@ export async function MoneyGrid({ range }: { range: DashboardRange }) {
           <ol className="mt-4 space-y-3.5">
             {topClients.map((c, i) => (
               <li key={c.id}>
-                <Link href={`/admin/clients/${c.id}`} className="group flex items-center gap-3">
+                <Link
+                  href={`/admin/clients/${c.id}`}
+                  prefetch={false}
+                  className="group flex items-center gap-3"
+                >
                   <span className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-foreground/90 to-foreground/60 text-xs font-semibold text-background">
                     {initials(c.name)}
                     <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-card text-[9px] font-bold text-muted-foreground ring-1 ring-[var(--hairline)]">
@@ -596,6 +603,7 @@ export async function DeliveryGrid() {
                 <li key={p.id}>
                   <Link
                     href={`/admin/projects/${p.id}`}
+                    prefetch={false}
                     className="group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-5 py-3.5 transition-colors hover:bg-muted/50 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_8rem_6.5rem]"
                   >
                     {/* Explicit placement: a lone row-start on the badge made
@@ -656,6 +664,7 @@ export async function DeliveryGrid() {
               <li key={f.id}>
                 <Link
                   href={`/admin/projects/${f.id}`}
+                  prefetch={false}
                   className="group -mx-2 flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-muted/70"
                 >
                   <span
@@ -717,6 +726,7 @@ export async function FlowGrid() {
                 <li key={inv.id}>
                   <Link
                     href={`/admin/invoices/${inv.id}`}
+                    prefetch={false}
                     className="group -mx-2 flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-muted/70"
                   >
                     {/* Calendar tile */}
@@ -796,7 +806,11 @@ export async function FlowGrid() {
               return (
                 <li key={e.id}>
                   {e.link ? (
-                    <Link href={e.link} className="flex gap-3 transition-opacity hover:opacity-75">
+                    <Link
+                      href={e.link}
+                      prefetch={false}
+                      className="flex gap-3 transition-opacity hover:opacity-75"
+                    >
                       {body}
                     </Link>
                   ) : (
