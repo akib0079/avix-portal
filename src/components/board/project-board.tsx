@@ -541,6 +541,10 @@ function Column({
       aria-label={label}
       className={cn(
         "flex w-[84vw] max-w-[320px] min-w-[240px] shrink-0 snap-center flex-col rounded-2xl border bg-[color-mix(in_oklab,var(--col)_4%,var(--muted))] transition-[background-color,box-shadow] sm:w-auto sm:flex-1 sm:basis-0 lg:min-w-[196px]",
+        // On a phone each lane is a whole screen, so an empty Requested (a
+        // client always has one) would open the board on nothing. Their asks
+        // go through "Request a task" anyway; wider screens keep the lane.
+        column.id === "REQUESTED" && cards.length === 0 && "max-sm:hidden",
         (isOver || isTarget) && "shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--col)_55%,transparent)]",
       )}
     >
