@@ -57,6 +57,17 @@ export function dayIn(iso: string | Date, tz: string): DayKey {
   }
 }
 
+/**
+ * The day an instant falls on in this runtime's own zone: the viewer's, in a
+ * browser. A date input's "today" and an instant shown as a date use this,
+ * never `toISOString().slice(0, 10)`, which is the UTC day and a day off for
+ * anyone far from UTC in the evening or morning.
+ */
+export function localDay(at: Date | string = new Date()): DayKey {
+  const d = typeof at === "string" ? new Date(at) : at;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 /** Format a day key without a zone shift (it names a date, not an instant). */
 export function formatDay(key: DayKey, options: Intl.DateTimeFormatOptions): string {
   const [y, m, d] = parts(key);

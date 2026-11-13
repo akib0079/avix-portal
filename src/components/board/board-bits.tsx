@@ -5,6 +5,7 @@ import type { Priority } from "@prisma/client";
 import { PRIORITY_META, dayKey, type BoardMention, type BoardPerson } from "@/lib/board";
 import { formatHours, hoursProgress } from "@/lib/work-list";
 import { initials } from "@/lib/format";
+import { localDay } from "@/lib/calendar-days";
 import { cn } from "@/lib/utils";
 import { Flag, CalendarDays } from "lucide-react";
 
@@ -83,8 +84,7 @@ export function PriorityFlag({
 
 /** Today as "YYYY-MM-DD" in the viewer's own calendar. */
 export function todayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return localDay();
 }
 
 const noSubscribe = () => () => {};
@@ -99,6 +99,23 @@ const noSubscribe = () => () => {};
  */
 export function useToday(renderedAt: number): string {
   return useSyncExternalStore(noSubscribe, todayKey, () => dayKey(new Date(renderedAt)));
+}
+
+const inBrowser = () => true;
+const onServer = () => false;
+
+/**
+ * The viewer's day an instant falls on ("asked Oct 24"), hydration-safe the
+ * same way as useToday: the UTC day on the server and while hydrating, the
+ * browser's own day straight after.
+ */
+export function useDayOf(): (iso: string) => string {
+  const local = useSyncExternalStore(noSubscribe, inBrowser, onServer);
+  return local ? localDay : utcDayOf;
+}
+
+function utcDayOf(iso: string): string {
+  return dayKey(new Date(iso));
 }
 
 export type DueState = "overdue" | "today" | "soon" | "later";

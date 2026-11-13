@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2 } from "lucide-react";
+import { localDay } from "@/lib/calendar-days";
 
 export type ProposalLeadOption = {
   id: string;
@@ -52,8 +53,9 @@ export type ProposalLeadOption = {
   brandInfo: string | null;
 };
 
+/** The viewer's today, not the UTC day (a day off near midnight far from UTC). */
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return localDay();
 }
 
 const emptyInvoice = (currency: CurrencyCode = "USD") => ({
