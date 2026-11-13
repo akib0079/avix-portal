@@ -20,10 +20,15 @@ export async function register() {
   setInterval(warm, 4 * 60_000).unref();
   void seed(prisma);
   // v49 folded the board cards into milestones. This catches anything an older
-  // build wrote since the last boot (the deploy window, or a rollback).
-  void import("@/lib/work-backfill")
-    .then(({ backfillWorkItemsOnBoot }) => backfillWorkItemsOnBoot(prisma))
-    .catch((err) => console.warn("[backfill] work items:", (err as Error).message));
+  // build wrote since the last boot (the deploy window, or a rollback). It is
+  // ~20 statements one after another, so it waits out the cold start instead
+  // of holding a pool connection while the first visitors' pages load.
+  const bootedAt = new Date();
+  setTimeout(() => {
+    void import("@/lib/work-backfill")
+      .then(({ backfillWorkItemsOnBoot }) => backfillWorkItemsOnBoot(prisma, { bootedAt }))
+      .catch((err) => console.warn("[backfill] work items:", (err as Error).message));
+  }, 30_000).unref();
 }
 
 type Db = (typeof import("@/lib/prisma"))["prisma"];
