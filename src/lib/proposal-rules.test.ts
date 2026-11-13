@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  acceptedInvoiceDates,
   depositAmount,
   draftInvoiceRemovable,
   dueProposalReminder,
   firstInvoicePromise,
   formatTotals,
+  handoffContractPrice,
+  invoiceKeptReason,
+  keepLineFormatting,
+  keptWithoutLead,
+  leadDeleteNote,
   proposalRemovalMode,
   proposalRemovalPlan,
   timeAgo,
@@ -14,7 +20,15 @@ import {
 } from "./proposal-rules";
 
 const DAY = 24 * 60 * 60 * 1000;
-const paperwork = { status: "ASSIGNED" as const, sentAt: null, amountPaid: 0, paymentCount: 0 };
+const paperwork = {
+  status: "ASSIGNED" as const,
+  sentAt: null,
+  amountPaid: 0,
+  paymentCount: 0,
+  paymentClaimedAt: null,
+  creditNoteCount: 0,
+  copiedByPlan: false,
+};
 
 test("only a draft that was never sent is deleted; everything else is archived", () => {
   assert.equal(proposalRemovalMode({ status: "DRAFT", sentAt: null }), "delete");
@@ -36,6 +50,29 @@ test("the draft invoice goes only while it is still paperwork", () => {
   assert.equal(draftInvoiceRemovable(null), false);
 });
 
+test("deleteInvoice's line holds: a claimed, credited or plan-copied invoice stays", () => {
+  const claimed = { ...paperwork, paymentClaimedAt: "2026-11-01T10:00:00Z" };
+  const credited = { ...paperwork, creditNoteCount: 1 };
+  const copied = { ...paperwork, copiedByPlan: true };
+  for (const invoice of [claimed, credited, copied]) {
+    assert.equal(draftInvoiceRemovable(invoice), false);
+    assert.deepEqual(proposalRemovalPlan({ status: "DRAFT", sentAt: null }, invoice), {
+      mode: "delete",
+      invoice: "keep",
+    });
+    assert.deepEqual(proposalRemovalPlan({ status: "SENT", sentAt: new Date() }, invoice), {
+      mode: "archive",
+      invoice: "keep",
+    });
+  }
+  assert.equal(invoiceKeptReason(claimed), "the client reported paying it");
+  assert.equal(invoiceKeptReason(credited), "credit notes were issued against it");
+  assert.equal(invoiceKeptReason(copied), "a recurring plan copies it");
+  assert.equal(invoiceKeptReason({ ...copied, sentAt: new Date() }), "it has already been sent");
+  assert.equal(invoiceKeptReason({ ...paperwork, amountPaid: 5 }), "money has been recorded against it");
+  assert.equal(invoiceKeptReason({ ...paperwork, status: "CANCELLED" }), "it is cancelled");
+});
+
 test("the removal plan: drafts take a safe invoice along, archives only offer it, accepted keeps it", () => {
   const draft = { status: "DRAFT" as const, sentAt: null };
   const sent = { status: "SENT" as const, sentAt: new Date() };
@@ -48,6 +85,62 @@ test("the removal plan: drafts take a safe invoice along, archives only offer it
   assert.deepEqual(proposalRemovalPlan(sent, paperwork), { mode: "archive", invoice: "offer" });
   assert.deepEqual(proposalRemovalPlan(sent, sentInvoice), { mode: "archive", invoice: "keep" });
   assert.deepEqual(proposalRemovalPlan(accepted, paperwork), { mode: "archive", invoice: "keep" });
+});
+
+test("deleting a lead takes only its unsent drafts; sent and archived proposals stay", () => {
+  assert.equal(keptWithoutLead({ status: "DRAFT", sentAt: null, archivedAt: null }), false);
+  assert.equal(keptWithoutLead({ status: "DRAFT", sentAt: new Date(), archivedAt: null }), true);
+  assert.equal(keptWithoutLead({ status: "DRAFT", sentAt: null, archivedAt: new Date() }), true);
+  assert.equal(keptWithoutLead({ status: "SENT", sentAt: new Date(), archivedAt: null }), true);
+  assert.equal(keptWithoutLead({ status: "DECLINED", sentAt: "2026-10-01T10:00:00Z", archivedAt: null }), true);
+
+  assert.equal(leadDeleteNote({ unsent: 0, kept: 0 }), null);
+  assert.equal(leadDeleteNote({ unsent: 1, kept: 0 }), "1 unsent draft proposal is deleted with it.");
+  assert.equal(
+    leadDeleteNote({ unsent: 2, kept: 1 }),
+    "2 unsent draft proposals are deleted with it. 1 sent or archived proposal stays, addressed to the lead's contact.",
+  );
+  assert.equal(
+    leadDeleteNote({ unsent: 0, kept: 3 }),
+    "3 sent or archived proposals stay, addressed to the lead's contact.",
+  );
+});
+
+test("a builder save keeps the formatting of the lines whose words it left alone", () => {
+  const text = { type: "text", text: "Design", marks: [{ type: "bold" }] };
+  const bold = { type: "doc", content: [{ type: "paragraph", content: [text] }] };
+  const list = { type: "doc", content: [{ type: "bulletList" }] };
+  const saved = [
+    { description: "Design", descriptionRich: bold },
+    { description: "Build\nPages and forms", descriptionRich: list },
+    { description: "Hosting", descriptionRich: null },
+  ];
+  const row = (description: string, sortOrder: number) => ({ description, qty: 1, rate: 100, sortOrder });
+
+  // A rate changed, the words didn't: everything keeps its formatting.
+  const same = [row("Design", 0), row("Build\nPages and forms", 1), row("Hosting", 2)];
+  assert.deepEqual(keepLineFormatting(saved, same), [
+    { ...row("Design", 0), descriptionRich: bold },
+    { ...row("Build\nPages and forms", 1), descriptionRich: list },
+    row("Hosting", 2),
+  ]);
+  // An edited line drops its stale formatting; a moved one keeps its own.
+  assert.deepEqual(keepLineFormatting(saved, [row("Build", 0), row("Design", 1)]), [
+    row("Build", 0),
+    { ...row("Design", 1), descriptionRich: bold },
+  ]);
+  // Two lines with the same words keep theirs in order, and a new third gets none.
+  const twice = [
+    { description: "Retainer", descriptionRich: null },
+    { description: "Retainer", descriptionRich: list },
+  ];
+  const three = [row("Retainer", 0), row("Retainer", 1), row("Retainer", 2)];
+  assert.deepEqual(keepLineFormatting(twice, three), [
+    row("Retainer", 0),
+    { ...row("Retainer", 1), descriptionRich: list },
+    row("Retainer", 2),
+  ]);
+  assert.deepEqual(keepLineFormatting([], [row("New", 0)]), [row("New", 0)]);
 });
 
 test("totals are kept per currency and never added across them", () => {
@@ -91,6 +184,42 @@ test("the client is promised the invoice that is attached, else the deposit acce
     { kind: "deposit", percent: 50, amount: 1500, currency: "GBP" },
   );
   assert.equal(firstInvoicePromise({ ...proposal, depositPercent: 0 }, null), null);
+});
+
+test("an accepted proposal's invoice is dated from the acceptance, never earlier", () => {
+  const drafted = { issueDate: "2026-10-01", dueDate: "2026-10-15", paymentTermsDays: null };
+  // Signed weeks later: the same 14-day gap, from the day it was agreed.
+  assert.deepEqual(acceptedInvoiceDates(drafted, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: "2026-12-04",
+  });
+  // Net terms win over the old gap; no due date stays none; a negative gap is none.
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, paymentTermsDays: 30 }, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: "2026-12-20",
+  });
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, dueDate: null }, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: null,
+  });
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, dueDate: "2026-09-20" }, "2026-11-20"), {
+    issueDate: "2026-11-20",
+    dueDate: "2026-11-20",
+  });
+  // Across a month end and a DST change, in whole days.
+  assert.deepEqual(acceptedInvoiceDates({ ...drafted, paymentTermsDays: 7 }, "2027-03-27"), {
+    issueDate: "2027-03-27",
+    dueDate: "2027-04-03",
+  });
+  // Dated today or later on purpose: left alone.
+  assert.equal(acceptedInvoiceDates(drafted, "2026-10-01"), null);
+  assert.equal(acceptedInvoiceDates({ ...drafted, issueDate: "2026-12-01" }, "2026-11-20"), null);
+});
+
+test("only a dollar proposal prices its project; another currency leaves it to the admin", () => {
+  assert.equal(handoffContractPrice({ total: 10_000, currency: "USD" }), 10_000);
+  assert.equal(handoffContractPrice({ total: 10_000, currency: "GBP" }), null);
+  assert.equal(handoffContractPrice({ total: 0, currency: "USD" }), 0);
 });
 
 test("reminders: one per window, never on the heels of the send, one email when late", () => {

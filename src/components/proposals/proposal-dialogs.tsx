@@ -11,7 +11,7 @@ import {
 } from "@/lib/actions/proposals";
 import { setLeadStage } from "@/lib/actions/leads";
 import { formatCurrency } from "@/lib/currency";
-import { invoiceStatusLabels } from "@/lib/format";
+import { handoffContractPrice, invoiceKeptReason } from "@/lib/proposal-rules";
 import { proposalValidityDays } from "@/lib/validation/proposal";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -82,13 +82,6 @@ export function useProposalDetail(id: string | null, refreshKey = "") {
   };
 }
 
-/** Why an invoice can't go with the proposal, in the words of draftInvoiceRemovable. */
-function keptBecause(invoice: NonNullable<ProposalDetail["invoice"]>): string {
-  if (invoice.sentAt) return "it has already been sent";
-  if (invoice.amountPaid > 0 || invoice.paymentCount > 0) return "money has been recorded against it";
-  return `it is ${invoiceStatusLabels[invoice.status].toLowerCase()}`;
-}
-
 function DetailLoading() {
   return (
     <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
@@ -147,7 +140,7 @@ export function ProposalRemoveDialog({
                   )}
                   {invoice && plan.invoice === "keep" && (
                     <p>
-                      Invoice {invoice.invoiceNumber} stays: {keptBecause(invoice)}.
+                      Invoice {invoice.invoiceNumber} stays: {invoiceKeptReason(invoice)}.
                     </p>
                   )}
                 </>
@@ -190,7 +183,7 @@ export function ProposalRemoveDialog({
         )}
         {plan?.mode === "archive" && plan.invoice === "keep" && invoice && proposal.status !== "ACCEPTED" && (
           <p className="text-xs text-muted-foreground">
-            Invoice {invoice.invoiceNumber} stays: {keptBecause(invoice)}.
+            Invoice {invoice.invoiceNumber} stays: {invoiceKeptReason(invoice)}.
           </p>
         )}
 
@@ -229,6 +222,7 @@ export function ProposalAcceptDialog({
   const [evidence, setEvidence] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const first = detail?.firstInvoice;
+  const price = handoffContractPrice(proposal);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -245,7 +239,17 @@ export function ProposalAcceptDialog({
                 <DetailLoading />
               ) : (
                 <ul className="list-disc space-y-1 pl-5">
-                  <li>a contract project, priced at {formatCurrency(proposal.total, proposal.currency)}</li>
+                  <li>
+                    {price != null ? (
+                      `a contract project, priced at ${formatCurrency(price, "USD")}`
+                    ) : (
+                      <>
+                        a contract project with no price yet: projects are priced in US
+                        dollars, so set its USD value on the project (the proposal is in{" "}
+                        {proposal.currency})
+                      </>
+                    )}
+                  </li>
                   {first?.kind === "invoice" && detail?.invoice && (
                     <li>
                       invoice {detail.invoice.invoiceNumber} (
@@ -321,7 +325,9 @@ export function ProposalAcceptDialog({
               toast.success(
                 result.data?.alreadyAccepted
                   ? "It was already accepted — nothing was created twice."
-                  : "Marked accepted — project and invoice are ready.",
+                  : price != null
+                    ? "Marked accepted — project and invoice are ready."
+                    : "Marked accepted — project and invoice are ready. Set the project's USD price next.",
               );
               onClose();
             }}
