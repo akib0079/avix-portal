@@ -159,6 +159,7 @@ export function pendingWork(input: {
     paymentClaimedAt?: string | Date | null;
     amount?: number | null;
     amountPaid?: number | null;
+    credited?: number | null;
   }[];
 }): PendingWork {
   const milestonesAwaitingApproval = input.milestones.filter(isAwaitingReview).length;
