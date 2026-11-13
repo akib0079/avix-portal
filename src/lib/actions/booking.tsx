@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { deriveOpenSlots } from "@/lib/dal/availability";
@@ -118,20 +119,27 @@ export async function bookMeeting(
     devHint: `self-booked meeting → ${client.email}`,
   });
 
-  await notifyAllAdmins({
-    type: "MEETING_SCHEDULED",
-    title: `${client.firstName || "A client"} booked a meeting`,
-    body: whenText,
-    link: "/admin/calendar",
-  });
-  await logActivity({
-    type: "meeting.scheduled",
-    summary: `${client.firstName || "Client"} self-booked: ${meeting.title}`,
-    actorId: client.id,
-    clientId: client.id,
-    entity: "meeting",
-    entityId: meeting.id,
-    link: "/admin/calendar",
+  // The client's answer doesn't wait on telling the team (and its email).
+  after(async () => {
+    try {
+      await notifyAllAdmins({
+        type: "MEETING_SCHEDULED",
+        title: `${client.firstName || "A client"} booked a meeting`,
+        body: whenText,
+        link: "/admin/calendar",
+      });
+      await logActivity({
+        type: "meeting.scheduled",
+        summary: `${client.firstName || "Client"} self-booked: ${meeting.title}`,
+        actorId: client.id,
+        clientId: client.id,
+        entity: "meeting",
+        entityId: meeting.id,
+        link: "/admin/calendar",
+      });
+    } catch (err) {
+      console.error("[booking] admin follow-up failed:", (err as Error).message);
+    }
   });
 
   revalidatePath("/portal/book");

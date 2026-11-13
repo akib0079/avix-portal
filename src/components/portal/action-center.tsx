@@ -2,6 +2,7 @@
 
 import { useState, useTransition, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
+import { useSWRConfig } from "swr";
 import { approveMilestone, claimInvoicePayment, sendBackMilestone } from "@/lib/actions/portal";
 import { reviewDeliverable } from "@/lib/actions/deliverables";
 import type { ClientActionItems } from "@/lib/dal/portal-actions";
@@ -59,6 +60,10 @@ export function ActionCenter({
   const [busy, setBusy] = useState<string | null>(null);
   const [done, setDone] = useState<Set<string>>(() => new Set());
   const [sendingBack, setSendingBack] = useState<{ id: string; title: string } | null>(null);
+  // The nav and bell badges count the same things; after a handled row they
+  // re-read at once instead of on the next poll.
+  const { mutate } = useSWRConfig();
+  const refreshBadges = () => void mutate("/api/notifications");
   const live = <T extends { id: string }>(kind: string, list: T[]) => list.filter((x) => !done.has(`${kind}:${x.id}`));
 
   function run(key: string, fn: () => Promise<Result>, okMsg: string) {
@@ -69,6 +74,7 @@ export function ActionCenter({
       if (!res.ok) return void toast.error(res.error);
       toast.success(okMsg);
       setDone((prev) => new Set(prev).add(key));
+      refreshBadges();
     });
   }
 
@@ -106,7 +112,7 @@ export function ActionCenter({
                   href={workItemHref(q.projectId, q.id, "CLIENT", "list")}
                   actions={
                     <Button asChild size="sm">
-                      <Link href={workItemHref(q.projectId, q.id, "CLIENT", "list")}>
+                      <Link href={workItemHref(q.projectId, q.id, "CLIENT", "list")} prefetch={false}>
                         Answer <ArrowRight />
                       </Link>
                     </Button>
@@ -172,7 +178,7 @@ export function ActionCenter({
                     actions={
                       <>
                         <Button asChild variant="outline" size="sm">
-                          <Link href={`/portal/invoices/${i.id}`}>
+                          <Link href={`/portal/invoices/${i.id}`} prefetch={false}>
                             <ExternalLink /> View
                           </Link>
                         </Button>
@@ -220,7 +226,9 @@ export function ActionCenter({
                           {busy === key ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Approve
                         </Button>
                         <Button asChild variant="ghost" size="sm">
-                          <Link href={`/portal/projects/${d.projectId}?tab=files`}>Ask for changes</Link>
+                          <Link href={`/portal/projects/${d.projectId}?tab=files`} prefetch={false}>
+                            Ask for changes
+                          </Link>
                         </Button>
                       </>
                     }
@@ -294,6 +302,7 @@ export function ActionCenter({
           toast.success("Sent back — the team has your note.");
           setDone((prev) => new Set(prev).add(`review:${sendingBack.id}`));
           setSendingBack(null);
+          refreshBadges();
           return true;
         }}
       />
@@ -351,7 +360,7 @@ function Row({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           {href ? (
-            <Link href={href} className="font-medium [overflow-wrap:anywhere] hover:text-primary">
+            <Link href={href} prefetch={false} className="font-medium [overflow-wrap:anywhere] hover:text-primary">
               {title}
             </Link>
           ) : (

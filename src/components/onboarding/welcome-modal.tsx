@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { completeOnboarding } from "@/lib/actions/onboarding";
 import { AvixBot } from "@/components/avix-bot";
 import { Button } from "@/components/ui/button";
@@ -36,7 +35,6 @@ const STEPS = [
 
 /** First-login guide for a new client. Shows once, then never again. */
 export function WelcomeModal({ firstName }: { firstName: string }) {
-  const router = useRouter();
   const [open, setOpen] = useState(true);
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -48,8 +46,8 @@ export function WelcomeModal({ firstName }: { firstName: string }) {
     setBusy(true);
     await completeOnboarding();
     setBusy(false);
+    // completeOnboarding revalidates /portal; its response carries the page.
     setOpen(false);
-    router.refresh();
   }
 
   return (

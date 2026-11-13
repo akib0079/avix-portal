@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { updateMyProfile } from "@/lib/actions/profile";
 import { authClient } from "@/lib/auth-client";
+import { timezoneMarkerKey } from "@/lib/browser-timezone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,8 +21,7 @@ export type ClientProfile = {
   marketingOptOut: boolean;
 };
 
-export function ProfileSettings({ profile }: { profile: ClientProfile }) {
-  const router = useRouter();
+export function ProfileSettings({ profile, userId }: { profile: ClientProfile; userId: string }) {
   const [pending, startTransition] = useTransition();
 
   const [firstName, setFirstName] = useState(profile.firstName);
@@ -48,8 +47,16 @@ export function ProfileSettings({ profile }: { profile: ClientProfile }) {
         marketingOptOut: optOut,
       });
       if (!res.ok) return void toast.error(res.error);
+      if (!timezone.trim()) {
+        // A cleared zone is refilled from this browser on the next page load.
+        try {
+          localStorage.removeItem(timezoneMarkerKey(userId));
+        } catch {
+          // No storage: the daily resend refills it instead.
+        }
+      }
+      // updateMyProfile revalidates this page; its response carries the render.
       toast.success("Profile saved.");
-      router.refresh();
     });
   }
 

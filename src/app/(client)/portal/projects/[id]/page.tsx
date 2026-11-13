@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getMyProject, getMyProjectExtras } from "@/lib/dal/portal";
+import { getMyProjectPage } from "@/lib/dal/portal";
 import { getProjectMessages } from "@/lib/dal/messages";
-import { listByProject } from "@/lib/dal/deliverables";
+import { getMyProjectProposalId } from "@/lib/dal/proposals";
 import {
   getBoardPeople,
   getWorkItems,
@@ -63,32 +63,34 @@ export default async function MyProjectPage({
     },
   });
   // Everything loads in the same wave as the ownership check. The work reads
-  // scope themselves to the session; the messages and deliverables don't, so
-  // nothing is rendered unless getMyProject — scoped to the session — found
-  // the project. The poll token is read before the work rows go out, so it
-  // is never newer than the rows (a change in between shows up on the next
-  // poll instead of being taken as already seen).
+  // scope themselves to the session; the messages don't, so nothing is
+  // rendered unless getMyProjectPage — scoped to the session — found the
+  // project, with its files, invoices and calls. The poll token is read
+  // before the work rows go out, so it is never newer than the rows (a change
+  // in between shows up on the next poll instead of being taken as already
+  // seen).
   const versionRead = getWorkVersion(id);
-  const [user, project, whatsappUrl, items, version, people, messages, deliverables, extras] =
-    await Promise.all([
-      requireClient(),
-      getMyProject(id),
-      getWhatsappSupportUrl(),
-      versionRead.then(() => getWorkItems(id)),
-      versionRead,
-      getBoardPeople(id),
-      getProjectMessages(id),
-      listByProject(id),
-      getMyProjectExtras(id),
-    ]);
-  if (!project) notFound();
+  // Scoped to the session too, and awaited inside its Suspense, so it goes out
+  // now rather than after the page's own wave.
+  const proposalId = getMyProjectProposalId(id).catch(() => null);
+  const [user, page, whatsappUrl, items, version, people, messages] = await Promise.all([
+    requireClient(),
+    getMyProjectPage(id),
+    getWhatsappSupportUrl(),
+    versionRead.then(() => getWorkItems(id)),
+    versionRead,
+    getBoardPeople(id),
+    getProjectMessages(id),
+  ]);
+  if (!page) notFound();
+  const { project, deliverables } = page;
   // Read once: the header's "due in N days" and the store's freshness check
   // agree on what now is.
   const renderedAt = serverNow();
   const board = { items, people, phases: phasesOf(items), version: version ?? "" };
   // A draft is being prepared and isn't the client's to see yet — kept off
   // this page whatever the read hands back.
-  const invoices = extras.invoices.filter((i) => i.status !== "DRAFT");
+  const invoices = page.invoices.filter((i) => i.status !== "DRAFT");
 
   const health = projectHealth({
     milestones: items,
@@ -130,8 +132,8 @@ export default async function MyProjectPage({
       content: (
         <BillingAndCalls
           invoices={invoices}
-          meetings={extras.meetings}
-          timezone={extras.timezone}
+          meetings={page.meetings}
+          timezone={page.timezone}
         />
       ),
     },
@@ -215,7 +217,7 @@ export default async function MyProjectPage({
               </span>
             )}
             <Suspense fallback={null}>
-              <SignedProposalLink projectId={project.id} />
+              <SignedProposalLink proposalId={proposalId} />
             </Suspense>
           </div>
 
@@ -276,13 +278,15 @@ function callTime(iso: string, timeZone: string): string {
   }
 }
 
+type PageData = NonNullable<Awaited<ReturnType<typeof getMyProjectPage>>>;
+
 function BillingAndCalls({
   invoices,
   meetings,
   timezone,
 }: {
-  invoices: Awaited<ReturnType<typeof getMyProjectExtras>>["invoices"];
-  meetings: Awaited<ReturnType<typeof getMyProjectExtras>>["meetings"];
+  invoices: PageData["invoices"];
+  meetings: PageData["meetings"];
   timezone: string;
 }) {
   return (

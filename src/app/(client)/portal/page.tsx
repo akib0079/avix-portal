@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { getPortalOverview, getMyTimezone } from "@/lib/dal/portal";
-import { requireClient } from "@/lib/dal/session";
+import { getPortalOverview } from "@/lib/dal/portal";
 import { Greeting, LiveClock } from "@/components/dashboard/greeting";
 import { TargetDial } from "@/components/dashboard/instruments";
 import { ProjectStatusBadge } from "@/components/status-badges";
@@ -9,8 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WelcomeModal } from "@/components/onboarding/welcome-modal";
 import { GettingStarted } from "@/components/onboarding/getting-started";
 import { UpcomingMeetings } from "@/components/portal/upcoming-meetings";
-import { listMyUpcomingMeetings } from "@/lib/dal/meetings";
-import { countClientActionItems } from "@/lib/dal/portal-actions";
 import { formatDate, projectTypeLabels } from "@/lib/format";
 import { formatCurrency, sumByCurrency } from "@/lib/currency";
 import { balanceDue, creditedTotal } from "@/lib/invoice-totals";
@@ -23,20 +20,19 @@ import { toneChip } from "@/lib/tone";
 export const metadata = { title: "Overview" };
 
 export default async function PortalOverviewPage() {
-  // The action count used to wait for the overview to finish just to learn the
-  // user id; the session is already cached, so all three run together.
-  const me = await requireClient();
-  const [
-    { user, onboardedAt, projects, openInvoices, notifications, checklist },
+  // One wave: the overview carries the meetings, the zone and the action
+  // count too.
+  const {
+    user,
+    onboardedAt,
+    projects,
+    openInvoices,
+    notifications,
+    checklist,
     meetings,
     pendingActions,
     timezone,
-  ] = await Promise.all([
-    getPortalOverview(),
-    listMyUpcomingMeetings(),
-    countClientActionItems(me.id),
-    getMyTimezone(),
-  ]);
+  } = await getPortalOverview();
   // Balance owed, not headline totals — a part-paid or credited invoice isn't
   // fully open. One total per currency: EUR and USD added together is a
   // number that is true of nothing.
@@ -266,7 +262,7 @@ export default async function PortalOverviewPage() {
                   {notifications.map((n) => (
                     <li key={n.id} className="text-sm">
                       {n.link ? (
-                        <Link href={n.link} className="font-medium hover:text-primary">
+                        <Link href={n.link} prefetch={false} className="font-medium hover:text-primary">
                           {n.title}
                         </Link>
                       ) : (

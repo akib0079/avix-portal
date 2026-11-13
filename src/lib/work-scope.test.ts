@@ -8,6 +8,9 @@ import {
   PLAN_ITEM,
   TEAM_QUESTION,
   clientWaiting,
+  countInvoicesToPay,
+  countWaiting,
+  countWaitingItems,
   hasTeamQuestion,
   isAwaitingRating,
   isAwaitingReview,
@@ -214,4 +217,75 @@ test("an invoice is the client's to pay once it's sent and until they report pay
     false,
     "paid and credit together cover it",
   );
+});
+
+type Row = Parameters<typeof countWaitingItems>[0][number];
+function row(over: Partial<Row> = {}): Row {
+  return {
+    stage: "TODO",
+    parentId: null,
+    archivedAt: null,
+    clientApprovedAt: null,
+    clientRating: null,
+    _count: { comments: 0 },
+    ...over,
+  };
+}
+const bill = (over: Partial<Parameters<typeof countInvoicesToPay>[0][number]> = {}) => ({
+  status: "SENT",
+  amount: 1000 as number | { toString(): string },
+  amountPaid: 0 as number | { toString(): string },
+  creditNotes: [] as { amount: number; status: "SENT" | "DRAFT" | "CANCELLED" }[],
+  ...over,
+});
+
+test("countWaitingItems counts each reason an item waits", () => {
+  assert.equal(countWaitingItems([row({ stage: "REVIEW", _count: { comments: 1 } })]), 2, "in review with a question");
+  assert.equal(
+    countWaitingItems([row({ stage: "DONE", clientApprovedAt: new Date(), clientRating: null })]),
+    1,
+    "approved, not rated",
+  );
+  assert.equal(countWaitingItems([row({ stage: "DONE", clientApprovedAt: new Date(), clientRating: 1 })]), 0);
+  assert.equal(countWaitingItems([row({ stage: "DONE" })]), 0, "closed by the team, never approved");
+  assert.equal(
+    countWaitingItems([row({ stage: "REVIEW", archivedAt: new Date(), _count: { comments: 2 } })]),
+    0,
+    "archived items wait on nobody",
+  );
+  assert.equal(
+    countWaitingItems([row({ stage: "DONE", parentId: "p", clientApprovedAt: new Date() })]),
+    0,
+    "sub-items aren't rated",
+  );
+  assert.equal(countWaitingItems([row({ stage: "REVIEW", parentId: "p" })]), 1, "sub-items get reviewed");
+});
+
+test("countInvoicesToPay goes by the balance after payments and credit notes", () => {
+  assert.equal(countInvoicesToPay([bill()]), 1);
+  assert.equal(countInvoicesToPay([bill({ amount: "1000.00", amountPaid: "400.00" })]), 1, "Decimal-like amounts");
+  assert.equal(countInvoicesToPay([bill({ creditNotes: [{ amount: 1000, status: "SENT" }] })]), 0, "credited to zero");
+  assert.equal(
+    countInvoicesToPay([bill({ creditNotes: [{ amount: 1000, status: "CANCELLED" }] })]),
+    1,
+    "a cancelled credit note credits nothing",
+  );
+  assert.equal(countInvoicesToPay([bill({ paymentClaimedAt: new Date() })]), 0, "reported paid");
+  assert.equal(countInvoicesToPay([bill({ status: "IN_REVIEW" })]), 0);
+  assert.equal(countInvoicesToPay([bill({ status: "DRAFT" })]), 0, "a draft is never the client's to pay");
+  assert.equal(countInvoicesToPay([bill({ creditNoteForId: "inv_1" })]), 0, "a credit note is money back");
+});
+
+test("countWaiting adds work, files and invoices across projects", () => {
+  assert.equal(
+    countWaiting({
+      projects: [
+        { milestones: [row({ stage: "REVIEW", _count: { comments: 1 } })], _count: { deliverables: 2 } },
+        { milestones: [row({ stage: "DONE", clientApprovedAt: new Date() })], _count: { deliverables: 0 } },
+      ],
+      invoices: [bill(), bill({ amountPaid: 1000 })],
+    }),
+    2 + 2 + 1 + 1,
+  );
+  assert.equal(countWaiting({ projects: [], invoices: [] }), 0);
 });

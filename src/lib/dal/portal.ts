@@ -1,9 +1,16 @@
 import "server-only";
-import type { Prisma } from "@prisma/client";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireClient } from "@/lib/dal/session";
 import { getBookingConfig } from "@/lib/dal/availability";
-import { PLAN_ITEM } from "@/lib/work-scope";
+import { meetingViewInclude, toView } from "@/lib/dal/meetings";
+import {
+  CLIENT_WAITING_ITEM,
+  DELIVERABLE_TO_REVIEW,
+  waitingItemSelect,
+} from "@/lib/dal/portal-actions";
+import type { DeliverableRow } from "@/lib/dal/deliverables";
+import { PLAN_ITEM, countInvoicesToPay, countWaitingItems, creditNotesShown } from "@/lib/work-scope";
 import { creditedTotal } from "@/lib/invoice-totals";
 
 /**
@@ -19,84 +26,105 @@ import { creditedTotal } from "@/lib/invoice-totals";
  */
 const shownToClient = { not: "DRAFT" } as const;
 
-/**
- * What a credit note takes off its invoice, for the balance the client sees.
- * The Action Centre (portal-actions.ts) uses it too, so the two agree.
- */
-export const creditNotesShown = {
-  where: { status: { notIn: ["DRAFT", "CANCELLED"] } },
-  select: { amount: true, status: true },
-} satisfies Prisma.Invoice$creditNotesArgs;
-
 export async function getPortalOverview() {
   const user = await requireClient();
-  // One wave: these used to be two sequential Promise.alls, though nothing in
-  // the second depended on the first.
-  const [projects, openInvoices, notifications, sentMessages, requests, settledInvoices, record] =
-    await Promise.all([
-      prisma.project.findMany({
-        where: { clientId: user.id },
-        orderBy: { updatedAt: "desc" },
-        include: {
-          // The plan only, so progress means the same here as on the project.
-          milestones: { where: PLAN_ITEM, select: { status: true } },
+  const now = new Date();
+  // One wave: the client's own row carries nearly everything. The waiting
+  // work is its own read, because the projects' milestones above are the plan
+  // only, and the agency zone goes out alongside rather than after a miss.
+  const [record, waiting, booking] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        // The session user doesn't carry these — read them from the DB.
+        onboardedAt: true,
+        timezone: true,
+        projects: {
+          orderBy: { updatedAt: "desc" },
+          select: {
+            id: true,
+            projectName: true,
+            type: true,
+            status: true,
+            dueDate: true,
+            // The plan only, so progress means the same here as on the project.
+            milestones: { where: PLAN_ITEM, select: { status: true } },
+            _count: { select: { deliverables: { where: DELIVERABLE_TO_REVIEW } } },
+          },
         },
-      }),
-      // What they still owe: issued, not settled or void, and not a credit
-      // note (that is money owed to them).
-      prisma.invoice.findMany({
-        where: {
-          clientId: user.id,
-          status: { notIn: ["PAID", "CANCELLED", "DRAFT"] },
-          creditNoteForId: null,
+        // What they still owe: issued, not settled or void, and not a credit
+        // note (that is money owed to them).
+        invoices: {
+          where: { status: { notIn: ["PAID", "CANCELLED", "DRAFT"] }, creditNoteForId: null },
+          orderBy: { issueDate: "desc" },
+          select: {
+            id: true,
+            amount: true,
+            amountPaid: true,
+            currency: true,
+            dueDate: true,
+            status: true,
+            paymentClaimedAt: true,
+            creditNotes: creditNotesShown,
+          },
         },
-        orderBy: { issueDate: "desc" },
-        select: {
-          id: true,
-          amount: true,
-          amountPaid: true,
-          currency: true,
-          dueDate: true,
-          creditNotes: creditNotesShown,
+        notifications: { orderBy: { createdAt: "desc" }, take: 6 },
+        meetings: {
+          where: { status: "SCHEDULED", startsAt: { gte: now } },
+          orderBy: { startsAt: "asc" },
+          take: 3,
+          include: meetingViewInclude,
         },
-      }),
-      prisma.notification.findMany({
-        where: { userId: user.id },
-        orderBy: { createdAt: "desc" },
-        take: 6,
-      }),
-      // Onboarding checklist signals
-      prisma.message.count({ where: { clientId: user.id, senderRole: "CLIENT" } }),
-      prisma.taskRequest.count({ where: { clientId: user.id } }),
-      // Ticked once they've actually paid (or told us they have).
-      prisma.invoice.count({
-        where: {
-          clientId: user.id,
-          status: shownToClient,
-          OR: [{ status: "PAID" }, { paymentClaimedAt: { not: null } }],
+        // Onboarding checklist signals.
+        _count: {
+          select: {
+            clientMessages: { where: { senderRole: "CLIENT" } },
+            taskRequests: true,
+            // Ticked once they've actually paid (or told us they have).
+            invoices: {
+              where: {
+                status: shownToClient,
+                OR: [{ status: "PAID" }, { paymentClaimedAt: { not: null } }],
+              },
+            },
+          },
         },
-      }),
-      // The session user doesn't carry onboardedAt — read it from the DB.
-      prisma.user.findUnique({
-        where: { id: user.id },
-        select: { onboardedAt: true },
-      }),
-    ]);
+      },
+    }),
+    prisma.milestone.findMany({
+      where: { project: { clientId: user.id }, ...CLIENT_WAITING_ITEM },
+      select: waitingItemSelect,
+    }),
+    getBookingConfig(),
+  ]);
+  if (!record) redirect("/login");
+  const { projects, invoices: openInvoices, notifications, _count: counts } = record;
 
   const checklist = {
     viewedProject: projects.length > 0,
-    sentMessage: sentMessages > 0,
-    seenPayment: settledInvoices > 0,
-    submittedRequest: requests > 0,
+    sentMessage: counts.clientMessages > 0,
+    seenPayment: counts.invoices > 0,
+    submittedRequest: counts.taskRequests > 0,
   };
+
+  // The same rules as the Action Centre and the badge: work waiting on them,
+  // files to review, and the open invoices that still have a balance to pay.
+  const pendingActions =
+    countWaitingItems(waiting) +
+    projects.reduce((n, p) => n + p._count.deliverables, 0) +
+    countInvoicesToPay(openInvoices);
 
   return {
     user,
-    onboardedAt: record?.onboardedAt ?? null,
+    onboardedAt: record.onboardedAt,
     projects,
     openInvoices,
     notifications,
     checklist,
+    meetings: record.meetings.map(toView),
+    pendingActions,
+    // The zone their browser reported (TimezoneSync), else the agency's.
+    timezone: record.timezone || booking.agencyTimezone,
   };
 }
 
@@ -110,59 +138,71 @@ export async function listMyProjects() {
 }
 
 /**
- * The client's own project. Its work items load separately, through
- * getWorkItems (src/lib/dal/project-board.ts), scoped to the same session.
+ * The client's own project, with what the page shows beside the work: its
+ * files, its invoices and its upcoming calls, in one statement. Its work
+ * items load separately, through getWorkItems (src/lib/dal/project-board.ts),
+ * scoped to the same session. Null when it isn't theirs.
  */
-export async function getMyProject(id: string) {
-  const user = await requireClient();
-  return prisma.project.findFirst({
-    where: { id, clientId: user.id },
-  });
-}
-
-/**
- * The extras the project page shows beside the work: this project's invoices
- * and its upcoming calls. Scoped to the signed-in client.
- */
-export async function getMyProjectExtras(projectId: string) {
+export async function getMyProjectPage(id: string) {
   const user = await requireClient();
   const now = new Date();
-
-  const [invoices, meetings, viewer] = await Promise.all([
-    prisma.invoice.findMany({
-      where: { projectId, clientId: user.id, status: shownToClient },
-      orderBy: { issueDate: "desc" },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        issueDate: true,
-        dueDate: true,
-        amount: true,
-        // Without this the portal cannot know what currency it is showing, so
-        // it showed dollars for everything.
-        currency: true,
-        status: true,
-        creditNoteForId: true,
-        // The Action Centre's balance rules, so "Pay 1 invoice" here agrees
-        // with it: not once reported paid, and not once paid or credited off.
-        amountPaid: true,
-        paymentClaimedAt: true,
-        creditNotes: creditNotesShown,
+  const row = await prisma.project.findFirst({
+    where: { id, clientId: user.id },
+    include: {
+      // The zone their browser reported (TimezoneSync), for rendering call times.
+      client: { select: { timezone: true } },
+      // listByProject's rows and order (src/lib/dal/deliverables.ts).
+      deliverables: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          title: true,
+          filePath: true,
+          fileOriginalName: true,
+          externalUrl: true,
+          reviewStatus: true,
+          reviewNote: true,
+          reviewedAt: true,
+          createdAt: true,
+        } satisfies Record<keyof DeliverableRow, true>,
       },
-    }),
-    prisma.meeting.findMany({
-      where: { projectId, clientId: user.id, startsAt: { gte: now } },
-      orderBy: { startsAt: "asc" },
-      take: 5,
-      select: { id: true, title: true, startsAt: true, durationMins: true },
-    }),
-    // The zone their browser reported (TimezoneSync), for rendering call times.
-    prisma.user.findUnique({ where: { id: user.id }, select: { timezone: true } }),
-  ]);
+      invoices: {
+        where: { clientId: user.id, status: shownToClient },
+        orderBy: { issueDate: "desc" },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          issueDate: true,
+          dueDate: true,
+          amount: true,
+          // Without this the portal cannot know what currency it is showing, so
+          // it showed dollars for everything.
+          currency: true,
+          status: true,
+          creditNoteForId: true,
+          // The Action Centre's balance rules, so "Pay 1 invoice" here agrees
+          // with it: not once reported paid, and not once paid or credited off.
+          amountPaid: true,
+          paymentClaimedAt: true,
+          creditNotes: creditNotesShown,
+        },
+      },
+      meetings: {
+        where: { clientId: user.id, startsAt: { gte: now } },
+        orderBy: { startsAt: "asc" },
+        take: 5,
+        select: { id: true, title: true, startsAt: true, durationMins: true },
+      },
+    },
+  });
+  if (!row) return null;
+  const { client, deliverables, invoices, meetings, ...project } = row;
   // Not captured yet (first visit): the agency's zone beats the server's UTC.
-  const timezone = viewer?.timezone || (await getBookingConfig()).agencyTimezone;
+  const timezone = client?.timezone || (await getBookingConfig()).agencyTimezone;
 
   return {
+    project,
+    deliverables,
     invoices: invoices.map((i) => ({
       id: i.id,
       invoiceNumber: i.invoiceNumber,
@@ -194,11 +234,12 @@ export async function getMyProjectExtras(projectId: string) {
  */
 export async function getMyTimezone(): Promise<string> {
   const user = await requireClient();
-  const me = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: { timezone: true },
-  });
-  return me?.timezone || (await getBookingConfig()).agencyTimezone;
+  // Together, not one after the other on a first visit.
+  const [me, booking] = await Promise.all([
+    prisma.user.findUnique({ where: { id: user.id }, select: { timezone: true } }),
+    getBookingConfig(),
+  ]);
+  return me?.timezone || booking.agencyTimezone;
 }
 
 export async function listMyInvoices() {
