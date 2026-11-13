@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email/resend";
 import { appUrl } from "@/lib/app-url";
 import AdminAlertEmail from "@/emails/admin-alert";
+import { clientWaitingSelect } from "@/lib/dal/portal-actions";
 
 export async function getNotificationsForUser(userId: string) {
   const [unreadCount, notifications] = await Promise.all([
@@ -14,6 +15,33 @@ export async function getNotificationsForUser(userId: string) {
     }),
   ]);
   return { unreadCount, notifications };
+}
+
+/**
+ * Everything a client's poll answers, in one statement on their own row: the
+ * bell, the unread chat and the "needs you" badge (countWaiting finishes it).
+ * Status comes back too, so a deactivated client is refused on fresh data.
+ */
+export async function getClientPoll(userId: string) {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      status: true,
+      notifications: {
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: { id: true, type: true, title: true, body: true, link: true, readAt: true, createdAt: true },
+      },
+      _count: {
+        select: {
+          notifications: { where: { readAt: null } },
+          // An internal note is the team's, never the client's to read.
+          clientMessages: { where: { senderRole: "ADMIN", readByClientAt: null, visibility: "PUBLIC" } },
+        },
+      },
+      ...clientWaitingSelect,
+    },
+  });
 }
 
 /**

@@ -1,4 +1,5 @@
-import type { Prisma } from "@prisma/client";
+import type { InvoiceStatus, Prisma } from "@prisma/client";
+import { creditedTotal } from "@/lib/invoice-totals";
 
 /**
  * Which work items count for what — defined once for every surface that
@@ -8,8 +9,8 @@ import type { Prisma } from "@prisma/client";
  *
  * Each rule comes twice: as a Prisma filter, for counting in the database, and
  * as a predicate over items already loaded. They sit side by side so a change
- * to one is a change to both. Dependency-free (types only), so client
- * components can use the predicates.
+ * to one is a change to both. Dependency-free (types and the pure invoice
+ * sums only), so client components can use the predicates.
  */
 
 type Itemish = {
@@ -136,4 +137,72 @@ export function isInvoiceToPay(invoice: {
     return invoice.amount - invoice.amountPaid - (invoice.credited ?? 0) > 0.005;
   }
   return true;
+}
+
+/**
+ * What a credit note takes off its invoice, for the balance the client sees.
+ * Every portal read of an invoice's balance selects it, so they all agree.
+ */
+export const creditNotesShown = {
+  where: { status: { notIn: ["DRAFT", "CANCELLED"] } },
+  select: { amount: true, status: true },
+} satisfies Prisma.Invoice$creditNotesArgs;
+
+type Amount = number | { toString(): string };
+
+/** A work item as the "needs you" count reads it, straight from the database. */
+export type WaitingItemRow = Itemish & {
+  clientApprovedAt: string | Date | null;
+  clientRating: number | null;
+  /** The team's open questions on it (TEAM_QUESTION's comments, counted). */
+  _count: { comments: number };
+};
+
+/** An invoice as the "needs you" count reads it, straight from the database. */
+export type InvoiceToPayRow = {
+  status: string;
+  paymentClaimedAt?: string | Date | null;
+  creditNoteForId?: string | null;
+  amount: Amount;
+  amountPaid: Amount;
+  creditNotes: { amount: Amount; status: InvoiceStatus }[];
+};
+
+/**
+ * Work items waiting on the client. Each reason counts on its own, so an item
+ * in review that also carries a team question counts twice, as the Action
+ * Centre lists it twice.
+ */
+export function countWaitingItems(items: WaitingItemRow[]): number {
+  const waiting = clientWaiting(items.map((m) => ({ ...m, openHelp: { team: m._count.comments } })));
+  return waiting.review + waiting.questions + waiting.rating;
+}
+
+/** Invoices with a balance left after payments and credit notes, not yet reported paid. */
+export function countInvoicesToPay(invoices: InvoiceToPayRow[]): number {
+  return invoices.filter((i) =>
+    isInvoiceToPay({
+      status: i.status,
+      paymentClaimedAt: i.paymentClaimedAt,
+      creditNoteForId: i.creditNoteForId,
+      amount: Number(i.amount),
+      amountPaid: Number(i.amountPaid),
+      credited: creditedTotal(i.creditNotes),
+    }),
+  ).length;
+}
+
+/**
+ * The client's "needs you" badge from one read of their row: work waiting
+ * on them, files they haven't reviewed, and invoices to pay.
+ */
+export function countWaiting(row: {
+  projects: { milestones: WaitingItemRow[]; _count: { deliverables: number } }[];
+  invoices: InvoiceToPayRow[];
+}): number {
+  return (
+    countWaitingItems(row.projects.flatMap((p) => p.milestones)) +
+    row.projects.reduce((n, p) => n + p._count.deliverables, 0) +
+    countInvoicesToPay(row.invoices)
+  );
 }
