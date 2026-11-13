@@ -76,13 +76,11 @@ export function ProjectForm({
       if (!result.ok) return void toast.error(result.error);
       toast.success("Project updated.");
       router.push(`/admin/projects/${project.id}`);
-      router.refresh();
     } else {
       const result = await createProject(values);
       if (!result.ok) return void toast.error(result.error);
       toast.success("Project created — default milestones added.");
       router.push(result.data ? `/admin/projects/${result.data.id}` : "/admin/projects");
-      router.refresh();
     }
   }
 

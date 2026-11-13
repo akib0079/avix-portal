@@ -186,7 +186,6 @@ export function CampaignComposer({
       if (!queued.ok) return void toast.error(queued.error);
       toast.success("Campaign queued — it starts sending in the background.");
       router.push(`/admin/marketing/${id}`);
-      router.refresh();
       return;
     }
     const result = await track(sendCampaign(form.getValues()), "Queueing campaign…");
@@ -195,7 +194,6 @@ export function CampaignComposer({
     if (!result.ok) return void toast.error(result.error);
     toast.success("Campaign queued — it starts sending in the background.");
     router.push(result.data ? `/admin/marketing/${result.data.id}` : "/admin/marketing");
-    router.refresh();
   }
 
   async function doSaveDraft() {
@@ -206,7 +204,6 @@ export function CampaignComposer({
     if (!id) return;
     toast.success("Draft saved.");
     router.push(`/admin/marketing/${id}`);
-    router.refresh();
   }
 
   async function doSchedule() {
@@ -224,7 +221,6 @@ export function CampaignComposer({
     if (!result.ok) return void toast.error(result.error);
     toast.success("Scheduled.");
     router.push(`/admin/marketing/${id}`);
-    router.refresh();
   }
 
   return (

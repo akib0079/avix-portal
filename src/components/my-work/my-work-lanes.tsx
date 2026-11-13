@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import type { ProjectTaskStatus } from "@prisma/client";
 import { toast } from "sonner";
 import type { MyWorkItem } from "@/lib/dal/my-work";
@@ -157,7 +157,7 @@ function ItemCard({
         )}
       </div>
 
-      <Link
+      <IntentLink
         href={href}
         className={cn(
           "line-clamp-2 text-[13px] leading-snug font-semibold [overflow-wrap:anywhere] outline-none hover:text-primary focus-visible:underline",
@@ -165,7 +165,7 @@ function ItemCard({
         )}
       >
         {item.title}
-      </Link>
+      </IntentLink>
       <p className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
         <Building2 className="size-3 shrink-0" />
         <span className="truncate">

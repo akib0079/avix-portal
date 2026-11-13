@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
@@ -51,7 +50,6 @@ export function ProjectLanes({
   /** "YYYY-MM-DD" in the viewer's calendar, for the due chips. */
   today: string;
 }) {
-  const router = useRouter();
   const [folded, toggleFold] = useLocalSet("avix.projects.folded", ["COMPLETED"]);
   // Optimistic status overrides, keyed by project. Cleared when fresh rows arrive.
   const [moved, setMoved] = useState<Record<string, ProjectStatus>>({});
@@ -95,7 +93,6 @@ export function ProjectLanes({
       return;
     }
     toast.success(`${project.projectName} → ${projectStatusLabels[target]}`);
-    router.refresh();
   }
 
   const board = (

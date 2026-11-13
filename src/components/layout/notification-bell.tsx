@@ -128,6 +128,7 @@ export function NotificationBell({ tone = "dark" }: { tone?: "dark" | "light" })
                 <Link
                   key={n.id}
                   href={n.link}
+                  prefetch={false}
                   onClick={() => setOpen(false)}
                   className="block transition-colors hover:bg-muted/50"
                 >

@@ -53,7 +53,6 @@ export function LeadDetailActions({
     setBusy(false);
     if (!res.ok) return void toast.error(res.error);
     toast.success(`Moved to ${leadStageLabels[next as never]}.`);
-    router.refresh();
   }
 
   async function confirmLost() {
@@ -64,7 +63,6 @@ export function LeadDetailActions({
     setLostFor(null);
     setReason("");
     toast.success("Marked as lost.");
-    router.refresh();
   }
 
   return (
@@ -152,7 +150,6 @@ export function LeadDetailActions({
                 if (!res.ok) return void toast.error(res.error);
                 setConfirmConvert(false);
                 toast.success("Client created — invite sent.");
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />} Convert

@@ -49,7 +49,6 @@ export function ClientActions({
       return false;
     }
     toast.success(success);
-    router.refresh();
     return true;
   }
 

@@ -196,10 +196,10 @@ export async function setProjectOwner(
   let resolved: string | null = null;
   if (ownerId && ownerId !== "none") {
     const user = await prisma.user.findFirst({
-      where: { id: ownerId, role: { in: ["ADMIN", "STAFF"] } },
+      where: { id: ownerId, role: { in: ["ADMIN", "STAFF"] }, status: "ACTIVE" },
       select: { id: true },
     });
-    if (!user) return { ok: false, error: "That team member no longer exists." };
+    if (!user) return { ok: false, error: "That team member is no longer on the team." };
     resolved = user.id;
   }
 

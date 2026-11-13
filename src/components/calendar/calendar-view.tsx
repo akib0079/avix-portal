@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { MeetingView } from "@/lib/dal/meetings";
 import { cancelMeeting } from "@/lib/actions/meetings";
 import { googleCalendarUrl } from "@/lib/calendar-links";
@@ -126,7 +125,6 @@ export function CalendarView({
   serverTimezone: string;
   renderedAt: number;
 }) {
-  const router = useRouter();
   const tz = useDisplayTz(serverTimezone);
   const todayKey = tz === serverTimezone ? serverToday : dayIn(new Date(renderedAt), tz);
   const [mode, setMode] = useLocalChoice<CalendarMode>("avix.calendar.view", "week", MODES);
@@ -154,7 +152,6 @@ export function CalendarView({
     setSelected(null);
     if (!result.ok) return void toast.error(result.error);
     toast.success("Meeting cancelled — the client has been notified.");
-    router.refresh();
   }
 
   // Navigation

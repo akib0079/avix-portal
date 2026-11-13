@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -108,7 +107,6 @@ export function MeetingFormDialog({
   /** "YYYY-MM-DD" prefill when opened from a day cell. */
   defaultDate?: string | null;
 }) {
-  const router = useRouter();
   const [saving, setSaving] = useState(false);
 
   const form = useForm<FormValues>({
@@ -163,7 +161,6 @@ export function MeetingFormDialog({
     toast.success("Meeting booked — the client has been emailed.");
     onOpenChange(false);
     form.reset();
-    router.refresh();
   }
 
   return (

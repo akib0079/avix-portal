@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { InvoiceStatusSelect } from "@/components/invoices/invoice-actions";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -249,7 +249,7 @@ export function InvoiceTable({
                     return (
                       <TableRow key={invoice.id}>
                         <TableCell>
-                          <Link
+                          <IntentLink
                             href={`/admin/invoices/${invoice.id}`}
                             className="flex items-center gap-1.5 font-medium hover:text-primary"
                           >
@@ -268,15 +268,15 @@ export function InvoiceTable({
                                 Credit note
                               </SoftPill>
                             )}
-                          </Link>
+                          </IntentLink>
                         </TableCell>
                         <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                          <Link
+                          <IntentLink
                             href={`/admin/clients/${invoice.clientId}`}
                             className="hover:text-primary"
                           >
                             {invoice.clientName}
-                          </Link>
+                          </IntentLink>
                         </TableCell>
                         <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
                           {invoice.projectName ?? "—"}

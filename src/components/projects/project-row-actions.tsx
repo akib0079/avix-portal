@@ -74,7 +74,6 @@ export function ProjectRowActions({
                 toast.success("Project deleted.");
                 setConfirmOpen(false);
                 if (redirectAfterDelete) router.push(redirectAfterDelete);
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />}

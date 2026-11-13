@@ -110,6 +110,7 @@ export async function updateLead(id: string, input: LeadInput): Promise<ActionRe
 
   await prisma.lead.update({ where: { id }, data: normalize(parsed.data) });
   revalidatePath("/admin/leads");
+  revalidatePath(`/admin/leads/${id}`);
   revalidatePath("/admin");
   return { ok: true };
 }
@@ -122,7 +123,12 @@ export async function setLeadStage(
   const session = await requireAdmin();
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return { ok: false, error: "Lead not found." };
-  if (lead.stage === stage) return { ok: true };
+  if (lead.stage === stage) {
+    // Moved there elsewhere meanwhile: the page the picker was on is stale.
+    revalidatePath("/admin/leads");
+    revalidatePath(`/admin/leads/${id}`);
+    return { ok: true };
+  }
 
   // Losing a lead without saying why makes the pipeline unlearnable.
   const reason = lostReason?.trim().slice(0, 1000) || null;
@@ -477,6 +483,9 @@ export async function convertLead(
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return { ok: false, error: "Lead not found." };
   if (lead.convertedClientId) {
+    // Converted elsewhere meanwhile: the page the button was on is stale.
+    revalidatePath("/admin/leads");
+    revalidatePath(`/admin/leads/${id}`);
     return { ok: true, data: { clientId: lead.convertedClientId } };
   }
   if (!lead.email) {

@@ -58,7 +58,6 @@ export function ClientForm({
     }
     if (client) {
       toast.success("Client updated.");
-      router.refresh();
     } else {
       toast.success("Client added — invite email sent.");
       router.push("/admin/clients");

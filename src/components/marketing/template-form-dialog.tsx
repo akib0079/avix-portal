@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { JSONContent } from "@tiptap/react";
@@ -43,7 +42,6 @@ export function TemplateFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const isEdit = !!template;
 
   const form = useForm<EmailTemplateInput>({
@@ -69,7 +67,6 @@ export function TemplateFormDialog({
     if (!result.ok) return void toast.error(result.error);
     toast.success(isEdit ? "Template updated." : "Template saved.");
     onOpenChange(false);
-    router.refresh();
   }
 
   return (

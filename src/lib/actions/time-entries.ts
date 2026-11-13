@@ -3,9 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/dal/session";
-import type { SessionUser } from "@/lib/auth";
 import { timeEntrySchema, type TimeEntryInput } from "@/lib/validation/time-entry";
 import { parseDay } from "@/lib/board";
+import { unbilledHours } from "@/lib/dal/billable";
+import { refusedChange } from "@/lib/time-entry-lock";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -19,6 +20,17 @@ function revalidateProject(projectId: string) {
   revalidatePath(`/portal/projects/${projectId}`);
 }
 
+/**
+ * After a guarded write, from the entry read beside it. That read can miss
+ * an entry the write (or someone else) just deleted; then every project
+ * page is revalidated instead.
+ */
+function revalidateEntry(entry: { milestone: { projectId: string } } | null) {
+  if (entry) return revalidateProject(entry.milestone.projectId);
+  revalidatePath("/admin/projects", "layout");
+  revalidatePath("/portal/projects", "layout");
+}
+
 // Time entries deliberately create NO notifications and NO emails — progress
 // surfaces passively on the milestone board and the client's timeline.
 
@@ -27,22 +39,16 @@ const billedSelect = {
   invoiceItem: { select: { invoice: { select: { invoiceNumber: true, status: true } } } },
 } as const;
 
-type Billed = { invoiceItem: { invoice: { invoiceNumber: string; status: string } } | null };
-
-function liveInvoice(entry: Billed) {
-  const invoice = entry.invoiceItem?.invoice;
-  return invoice && invoice.status !== "CANCELLED" ? invoice : null;
-}
-
 /**
- * Billed hours are what an invoice charged for, so their hours and date
- * can't change under it (a cancelled invoice frees them). Staff are
- * money-blind: they are told the hours are locked, never by which invoice.
+ * The entry's project and invoice, read in the same wave as a guarded write.
+ * Listed first in that Promise.all, so a busy pool queues it ahead of the
+ * write and it still sees an entry the write deletes.
  */
-function lockedMessage(viewer: SessionUser, invoiceNumber: string, change: string): string {
-  return viewer.role === "ADMIN"
-    ? `These hours are billed on ${invoiceNumber}. Take them off that invoice, or cancel it, before ${change}.`
-    : `These hours are locked. Ask an admin if they need ${change === "deleting them" ? "deleting" : "changing"}.`;
+function findEntry(id: string) {
+  return prisma.timeEntry.findUnique({
+    where: { id },
+    select: { milestone: { select: { projectId: true } }, ...billedSelect },
+  });
 }
 
 export async function createTimeEntry(
@@ -100,55 +106,39 @@ export async function updateTimeEntry(
   const date = parseDate(data.date);
   if (!date) return { ok: false, error: "Pick a valid date" };
 
-  const entry = await prisma.timeEntry.findUnique({
-    where: { id },
-    select: {
-      date: true,
-      hours: true,
-      milestone: { select: { projectId: true } },
-      ...billedSelect,
-    },
-  });
-  if (!entry) return { ok: false, error: "Time entry not found." };
-  // The note can always be edited; the hours and the date are what was billed.
-  const invoice = liveInvoice(entry);
-  if (
-    invoice &&
-    (Number(entry.hours) !== data.hours || entry.date.toISOString().slice(0, 10) !== data.date)
-  ) {
-    return {
-      ok: false,
-      error: lockedMessage(viewer, invoice.invoiceNumber, "changing their hours or date"),
-    };
+  // The lock is part of the write, so a bill that lands meanwhile can't be
+  // edited under, and the read beside it only explains a refusal. The note
+  // can always be edited; the hours and the date are what was billed.
+  const [entry, { count }] = await Promise.all([
+    findEntry(id),
+    prisma.timeEntry.updateMany({
+      where: { id, OR: [...unbilledHours.OR, { hours: data.hours, date }] },
+      data: {
+        date,
+        hours: data.hours,
+        note: data.note || null,
+      },
+    }),
+  ]);
+  if (count === 0) {
+    return { ok: false, error: refusedChange(viewer.role, entry, "changing their hours or date") };
   }
 
-  await prisma.timeEntry.update({
-    where: { id },
-    data: {
-      date,
-      hours: data.hours,
-      note: data.note || null,
-    },
-  });
-
-  revalidateProject(entry.milestone.projectId);
+  revalidateEntry(entry);
   return { ok: true };
 }
 
 export async function deleteTimeEntry(id: string): Promise<ActionResult> {
   const viewer = await requireTeam();
-  const entry = await prisma.timeEntry.findUnique({
-    where: { id },
-    select: { milestone: { select: { projectId: true } }, ...billedSelect },
-  });
-  if (!entry) return { ok: false, error: "Time entry not found." };
-  const invoice = liveInvoice(entry);
-  if (invoice) {
-    return { ok: false, error: lockedMessage(viewer, invoice.invoiceNumber, "deleting them") };
+  // As in updateTimeEntry: only unbilled hours are deleted, in the write.
+  const [entry, { count }] = await Promise.all([
+    findEntry(id),
+    prisma.timeEntry.deleteMany({ where: { id, ...unbilledHours } }),
+  ]);
+  if (count === 0) {
+    return { ok: false, error: refusedChange(viewer.role, entry, "deleting them") };
   }
 
-  await prisma.timeEntry.delete({ where: { id } });
-
-  revalidateProject(entry.milestone.projectId);
+  revalidateEntry(entry);
   return { ok: true };
 }
