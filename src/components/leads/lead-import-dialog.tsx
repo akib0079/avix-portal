@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { importLeads } from "@/lib/actions/leads";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +27,6 @@ export function LeadImportDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const { track } = useActivity();
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -72,7 +70,6 @@ export function LeadImportDialog({
     setCsvText(null);
     setFileName(null);
     onOpenChange(false);
-    router.refresh();
   }
 
   return (

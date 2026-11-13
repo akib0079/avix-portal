@@ -344,7 +344,6 @@ export function LeadBoard({
       toast.error(result.error);
       return;
     }
-    router.refresh();
   }
 
   async function confirmLost() {
@@ -357,7 +356,6 @@ export function LeadBoard({
     setLosing(null);
     setLostReason("");
     toast.success("Marked as lost.");
-    router.refresh();
   }
 
   async function onConvert(lead: LeadView) {
@@ -368,7 +366,6 @@ export function LeadBoard({
     if (!result.ok) return void toast.error(result.error);
     toast.success("Client created — invite sent. Set up their first project.");
     router.push(`/admin/projects/new?clientId=${result.data!.clientId}`);
-    router.refresh();
   }
 
   const totalPipeline = items
@@ -535,7 +532,6 @@ export function LeadBoard({
                 toast.success(
                   kept > 0 ? `Lead deleted. ${kept} proposal${kept === 1 ? " was" : "s were"} kept.` : "Lead deleted.",
                 );
-                router.refresh();
               }}
             >
               {busy && <Loader2 className="animate-spin" />}

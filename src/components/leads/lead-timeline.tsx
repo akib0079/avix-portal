@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { addLeadEntry, deleteLeadEntry } from "@/lib/actions/leads";
 import { leadEntryKindLabels } from "@/lib/validation/lead";
 import type { LeadEntryView } from "@/lib/dal/leads";
@@ -58,7 +57,6 @@ export function LeadTimeline({
   leadId: string;
   entries: LeadEntryView[];
 }) {
-  const router = useRouter();
   const [kind, setKind] = useState<Kind>("NOTE");
   const [body, setBody] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -71,7 +69,6 @@ export function LeadTimeline({
       if (!res.ok) return void toast.error(res.error);
       setBody("");
       toast.success("Logged.");
-      router.refresh();
     });
   }
 
@@ -82,7 +79,6 @@ export function LeadTimeline({
       setDeletingId(null);
       if (!res.ok) return void toast.error(res.error);
       toast.success("Entry removed.");
-      router.refresh();
     });
   }
 

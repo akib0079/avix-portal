@@ -110,6 +110,7 @@ export async function updateLead(id: string, input: LeadInput): Promise<ActionRe
 
   await prisma.lead.update({ where: { id }, data: normalize(parsed.data) });
   revalidatePath("/admin/leads");
+  revalidatePath(`/admin/leads/${id}`);
   revalidatePath("/admin");
   return { ok: true };
 }
@@ -477,6 +478,9 @@ export async function convertLead(
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return { ok: false, error: "Lead not found." };
   if (lead.convertedClientId) {
+    // Converted elsewhere meanwhile: the page the button was on is stale.
+    revalidatePath("/admin/leads");
+    revalidatePath(`/admin/leads/${id}`);
     return { ok: true, data: { clientId: lead.convertedClientId } };
   }
   if (!lead.email) {
