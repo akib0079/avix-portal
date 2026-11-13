@@ -9,7 +9,6 @@ import {
   type TodayItem,
 } from "@/lib/dal/dashboard";
 import { rangeLabels, type DashboardRange } from "@/lib/dashboard-ranges";
-import { getPipelineSummary } from "@/lib/dal/leads";
 import { listActivity } from "@/lib/dal/activity";
 import { usd, projectTypeLabels, initials } from "@/lib/format";
 import { formatCurrency } from "@/lib/currency";
@@ -316,11 +315,8 @@ export async function TriagePanel() {
 /* ================================================================== */
 
 export async function PulseRow({ range }: { range: DashboardRange }) {
-  const [k, health, pipeline] = await Promise.all([
-    getDashboardKpis(range),
-    getBusinessHealth(),
-    getPipelineSummary(),
-  ]);
+  const [k, health] = await Promise.all([getDashboardKpis(range), getBusinessHealth()]);
+  const { pipeline } = k;
   const late = health.flags.filter((f) => f.kind === "late").length;
   const hoursDelta = k.hoursThisWeek - k.hoursLastWeek;
 

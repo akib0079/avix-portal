@@ -160,18 +160,3 @@ export async function listLeadOwners(): Promise<LeadOwnerOption[]> {
     name: `${u.firstName} ${u.lastName}`.trim() || u.email,
   }));
 }
-
-/** Open leads + overdue follow-ups, for the dashboard pipeline card. */
-export async function getPipelineSummary() {
-  await requireAdmin();
-  const [open, overdue] = await Promise.all([
-    prisma.lead.count({ where: { stage: { in: ["NEW", "CONTACTED", "PROPOSAL"] } } }),
-    prisma.lead.count({
-      where: {
-        stage: { in: ["NEW", "CONTACTED", "PROPOSAL"] },
-        nextFollowUp: { lt: new Date() },
-      },
-    }),
-  ]);
-  return { open, overdue };
-}
