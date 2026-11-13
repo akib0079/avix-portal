@@ -381,32 +381,33 @@ export async function restoreCancelled(
         await write(tx);
         // Read after the write, so lines the same edit removed don't count.
         // One statement: the other live invoices billing this one's work, and
-        // this invoice itself when an hourly line of it has lost its hours.
-        const found = await tx.invoice.findMany({
-          where: {
-            OR: [
-              {
-                id: { not: invoiceId },
-                status: { not: "CANCELLED" },
-                items: {
-                  some: {
-                    milestone: {
-                      invoiceItems: { some: { invoiceId, timeEntries: { none: {} } } },
-                    },
-                  },
-                },
-              },
-              {
-                id: invoiceId,
-                items: {
-                  some: { milestone: { pricingType: "HOURLY" }, timeEntries: { none: {} } },
-                },
-              },
-            ],
-          },
-          orderBy: { invoiceNumber: "asc" },
-          select: { id: true, invoiceNumber: true },
-        });
+        // this invoice itself when a line of it has lost its hours. That is
+        // keyed on what the line billed, not on its work's pricing now (which
+        // can change after billing): a line with no hours, while hours of its
+        // work logged before this invoice was made sit on a later invoice.
+        // Bill work rolls in every unbilled hour, so those were this line's.
+        const found = await tx.$queryRaw<{ id: string; invoiceNumber: string }[]>`
+          SELECT i."id", i."invoiceNumber" FROM "invoices" AS i
+          WHERE (
+            i."id" <> ${invoiceId} AND i."status" <> 'CANCELLED' AND EXISTS (
+              SELECT 1 FROM "invoice_items" AS o
+              JOIN "invoice_items" AS mine ON mine."milestoneId" = o."milestoneId"
+              WHERE o."invoiceId" = i."id" AND mine."invoiceId" = ${invoiceId}
+                AND NOT EXISTS (SELECT 1 FROM "time_entries" AS own WHERE own."invoiceItemId" = mine."id")
+            )
+          ) OR (
+            i."id" = ${invoiceId} AND EXISTS (
+              SELECT 1 FROM "invoice_items" AS mine
+              JOIN "time_entries" AS t ON t."milestoneId" = mine."milestoneId"
+              JOIN "invoice_items" AS took ON took."id" = t."invoiceItemId"
+              JOIN "invoices" AS later ON later."id" = took."invoiceId"
+              WHERE mine."invoiceId" = i."id"
+                AND NOT EXISTS (SELECT 1 FROM "time_entries" AS own WHERE own."invoiceItemId" = mine."id")
+                AND t."createdAt" < i."createdAt"
+                AND later."id" <> i."id" AND later."createdAt" > i."createdAt"
+            )
+          )
+          ORDER BY i."invoiceNumber" ASC`;
         const block = restoreBlock(invoiceId, found);
         if (block) throw new Rebilled(block);
       },
