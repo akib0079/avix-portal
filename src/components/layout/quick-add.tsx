@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,13 +36,10 @@ const ITEMS = [
 export function QuickAdd({ tone = "light" }: { tone?: "light" | "dark" }) {
   const router = useRouter();
 
-  // Prefetch the create routes so the jump is instant.
-  useEffect(() => {
-    ITEMS.forEach((i) => router.prefetch(i.href));
-  }, [router]);
-
+  // Prefetch the create routes when the menu opens, so the jump is instant
+  // without costing every admin page load five requests.
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => open && ITEMS.forEach((i) => router.prefetch(i.href))}>
       <DropdownMenuTrigger asChild>
         <Button
           variant={tone === "dark" ? "ghost" : "outline"}
