@@ -1,14 +1,14 @@
 import Link from "next/link";
-import { getMyProjectProposalId } from "@/lib/dal/proposals";
 import { FileSignature } from "lucide-react";
 
 /**
  * "Signed proposal" on a client's project, when the project came from one.
- * Its own small read, streamed in behind Suspense, so the project page never
- * waits on it.
+ * The page starts its small read (getMyProjectProposalId) with its own and
+ * hands it over; it streams in here behind Suspense, so the page never waits
+ * on it.
  */
-export async function SignedProposalLink({ projectId }: { projectId: string }) {
-  const id = await getMyProjectProposalId(projectId);
+export async function SignedProposalLink({ proposalId }: { proposalId: Promise<string | null> }) {
+  const id = await proposalId;
   if (!id) return null;
   return (
     <Link

@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin, requireClient } from "@/lib/dal/session";
+import { requireAdmin } from "@/lib/dal/session";
 import type { MeetingStatus } from "@prisma/client";
 
 /** Serialized meeting safe for client components (ISO strings only). */
@@ -19,7 +19,8 @@ export type MeetingView = {
   projectName: string | null;
 };
 
-const include = {
+/** What toView needs beside the meeting's own fields. */
+export const meetingViewInclude = {
   client: {
     select: { id: true, firstName: true, lastName: true, timezone: true },
   },
@@ -38,7 +39,7 @@ type Row = {
   project: { id: string; projectName: string } | null;
 };
 
-function toView(m: Row): MeetingView {
+export function toView(m: Row): MeetingView {
   return {
     id: m.id,
     title: m.title,
@@ -62,26 +63,14 @@ export async function listMeetings(from: Date, to: Date) {
     prisma.meeting.findMany({
       where: { startsAt: { gte: from, lt: to } },
       orderBy: { startsAt: "asc" },
-      include,
+      include: meetingViewInclude,
     }),
     prisma.meeting.findMany({
       where: { startsAt: { gte: new Date() }, status: "SCHEDULED" },
       orderBy: { startsAt: "asc" },
       take: 5,
-      include,
+      include: meetingViewInclude,
     }),
   ]);
   return { inRange: inRange.map(toView), upcoming: upcoming.map(toView) };
-}
-
-/** Client portal: their next scheduled meetings. */
-export async function listMyUpcomingMeetings(): Promise<MeetingView[]> {
-  const user = await requireClient();
-  const rows = await prisma.meeting.findMany({
-    where: { clientId: user.id, status: "SCHEDULED", startsAt: { gte: new Date() } },
-    orderBy: { startsAt: "asc" },
-    take: 3,
-    include,
-  });
-  return rows.map(toView);
 }
