@@ -142,9 +142,11 @@ export function Lane({
       </header>
       {hint && <p className="-mt-1 px-3 pb-2 text-[11px] leading-snug text-muted-foreground">{hint}</p>}
 
+      {/* Cards never shrink: in a capped, scrolling column the default flex-shrink
+          squashed every card to a sliver once a lane held more than fit. */}
       <div
         ref={bodyRef}
-        className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 sm:max-h-[min(70vh,52rem)] [scrollbar-width:thin]"
+        className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 sm:max-h-[min(70vh,52rem)] [scrollbar-width:thin] [&>*]:shrink-0"
       >
         {children}
         {empty}
