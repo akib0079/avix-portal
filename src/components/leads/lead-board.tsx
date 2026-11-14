@@ -110,7 +110,12 @@ function LeadCard({
           {initials(lead.name)}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-tight">{lead.name}</p>
+          <Link
+            href={`/admin/leads/${lead.id}`}
+            className="block text-sm leading-tight font-semibold hover:text-primary"
+          >
+            {lead.name}
+          </Link>
           {lead.company && (
             <p className="truncate text-xs text-muted-foreground">{lead.company}</p>
           )}
@@ -162,7 +167,7 @@ function LeadCard({
         )}
       </div>
 
-      {/* Compact meta — the full record lives on the detail page */}
+      {/* Compact meta. The name and Open show the full record in a popup over the board. */}
       {!dragging && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {lead.priority === "HIGH" && (
@@ -185,7 +190,7 @@ function LeadCard({
           ))}
           <Link
             href={`/admin/leads/${lead.id}`}
-            className="ml-auto text-[10px] font-medium text-primary hover:underline"
+            className="ml-auto rounded px-1 text-xs font-medium text-primary hover:underline"
           >
             Open →
           </Link>
